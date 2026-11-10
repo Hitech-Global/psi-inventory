@@ -2270,6 +2270,21 @@ function initDatabase() {
   // 兼容旧SQLite数据库：为WAC历史增加有效期结束日期。
   try { d.exec("ALTER TABLE wac_history ADD COLUMN effective_end_date TEXT DEFAULT ''"); } catch(e) {}
 
+  // WAC-FX-CORRECTION-01：锁定WAC历史不原位修改；汇率元数据更正以追加审计记录覆盖展示。
+  d.exec(`
+    CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections (
+      id TEXT PRIMARY KEY,
+      wac_history_id TEXT NOT NULL,
+      rmb_to_local_rate NUMERIC,
+      fx_rate_date TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      source_reference TEXT DEFAULT '',
+      corrected_by TEXT DEFAULT '',
+      corrected_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  d.exec('CREATE INDEX IF NOT EXISTS idx_wac_fx_snapshot_corrections_latest ON wac_fx_snapshot_corrections(wac_history_id, corrected_at DESC, id DESC)');
+
   // WAC-BATCH-EXCLUSION-01：可恢复的无需计算记录；不触碰物流批次、CI、PL、付款或WAC历史。
   d.exec(`CREATE TABLE IF NOT EXISTS wac_batch_exclusions (
     id TEXT PRIMARY KEY,

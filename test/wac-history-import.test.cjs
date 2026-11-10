@@ -34,6 +34,7 @@ function setupSchema() {
   const d = getDB();
   d.exec('PRAGMA foreign_keys=OFF;');
   d.exec(`
+    DROP TABLE IF EXISTS wac_fx_snapshot_corrections;
     DROP TABLE IF EXISTS wac_history;
     DROP TABLE IF EXISTS inventory;
     DROP TABLE IF EXISTS exchange_rates;
@@ -129,6 +130,17 @@ function setupSchema() {
       created_at TEXT DEFAULT ''
     );
     CREATE UNIQUE INDEX uq_test_wac_version ON wac_history(sku_code,country,warehouse,version_no);
+    CREATE TABLE wac_fx_snapshot_corrections (
+      id TEXT PRIMARY KEY,
+      wac_history_id TEXT NOT NULL,
+      rmb_to_local_rate NUMERIC,
+      fx_rate_date TEXT NOT NULL,
+      reason TEXT DEFAULT '',
+      source_reference TEXT DEFAULT '',
+      corrected_by TEXT DEFAULT '',
+      corrected_at TEXT NOT NULL DEFAULT ''
+    );
+    CREATE INDEX idx_test_wac_fx_corrections_latest ON wac_fx_snapshot_corrections(wac_history_id,corrected_at DESC,id DESC);
     CREATE TABLE roles (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -354,10 +366,21 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
 
   const noFxImport = await request('/api/wac/history-import','POST',{items:[noFx]});
   assert.equal(noFxImport.status,200);
+  const correctionTarget = one('SELECT id FROM wac_history WHERE sku_code = ?', ['NT-HISTORY-03']);
+  run('INSERT INTO wac_fx_snapshot_corrections (id,wac_history_id,rmb_to_local_rate,fx_rate_date,reason,source_reference,corrected_by,corrected_at) VALUES (?,?,?,?,?,?,?,?)',
+    ['fx-corr-test',correctionTarget.id,5.123456,'2026-11-10','test-only correction','test source','test','2026-11-10 12:00:00']);
   const matrix = await request('/api/wac/history-matrix','GET');
   assert.equal(matrix.status,200);
   const importedWithFx = matrix.body.rows.find(x=>x.sku_code==='NT-HISTORY-01');
   const importedWithoutFx = matrix.body.rows.find(x=>x.sku_code==='NT-HISTORY-02');
+  const correctedHistory = matrix.body.rows.find(x=>x.sku_code==='NT-HISTORY-03');
+  assert.equal(Number(correctedHistory.rmb_to_local_rate),5.123456,
+    'matrix must prefer the latest append-only FX correction over the immutable WAC snapshot');
+  assert.equal(correctedHistory.fx_rate_date,'2026-11-10');
+  const immutableBase = one('SELECT rmb_to_local_rate,fx_rate_date FROM wac_history WHERE id=?',[correctionTarget.id]);
+  assert.equal(Number(immutableBase.rmb_to_local_rate),5.009638);
+  assert.equal(immutableBase.fx_rate_date,'2026-11-09',
+    'the correction overlay must not mutate the locked WAC history row');
   assert.equal(query('SELECT id FROM inventory WHERE sku_code = ?', ['NT-HISTORY-02']).rows.length,0,
     'historical WAC sync must not create a missing inventory row');
   assert.equal(Number(importedWithFx.rmb_to_local_rate),2724.7956);
@@ -494,6 +517,11 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.equal((serverSource.match(/wc\.last_inbound_date AS wc_li/g)||[]).length,2,
     'both PostgreSQL refresh paths must carry WAC history inbound dates');
   // PostgreSQL production uses db.js worker_threads migrations, not db-pg.js initDatabase.
+  assert.ok(dbAdapterSource.includes('CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections'),
+    'PostgreSQL worker migration must create the append-only WAC FX correction table');
+  const sqliteDbSource = fs.readFileSync(require('node:path').join(__dirname, '..', 'db-sqlite.js'), 'utf8');
+  assert.ok(sqliteDbSource.includes('CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections'),
+    'SQLite migration must create the append-only WAC FX correction table');
   ['last_inbound_date','effective_end_date','local_currency','rmb_to_local_rate','fx_rate_date','source_type','import_batch_id'].forEach(function(column) {
     assert.ok(dbAdapterSource.includes('ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS ' + column),
       'worker_threads startup migration missing: ' + column);

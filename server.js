@@ -19864,7 +19864,10 @@ app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler
       "wh.new_avg_cost, wh.original_avg_cost, wh.original_qty, wh.inbound_qty, " +
       "wh.confirmed_at, wh.version_no, wh.ci_no, wh.po_no, wh.pi_no, wh.effective_end_date, " +
       "COALESCE(NULLIF(wh.last_inbound_date, ''), lb.actual_arrival_date) AS last_inbound_date, " +
-      "wh.local_currency, wh.rmb_to_local_rate, wh.fx_rate_date, COALESCE(wh.source_type, 'system') AS source_type " +
+      "wh.local_currency, " +
+      "COALESCE((SELECT c.rmb_to_local_rate FROM wac_fx_snapshot_corrections c WHERE c.wac_history_id = wh.id ORDER BY c.corrected_at DESC, c.id DESC LIMIT 1), wh.rmb_to_local_rate) AS rmb_to_local_rate, " +
+      "COALESCE(NULLIF((SELECT c.fx_rate_date FROM wac_fx_snapshot_corrections c WHERE c.wac_history_id = wh.id ORDER BY c.corrected_at DESC, c.id DESC LIMIT 1), ''), wh.fx_rate_date) AS fx_rate_date, " +
+      "COALESCE(wh.source_type, 'system') AS source_type " +
       "FROM wac_history wh LEFT JOIN logistics_batches lb ON lb.id = wh.logistics_batch_id " +
       "WHERE COALESCE(wh.is_locked, 0) = 1 " +
       "AND COALESCE(wh.confirmation_status, 'confirmed') NOT IN ('reversed', 'void', 'cancelled') " +

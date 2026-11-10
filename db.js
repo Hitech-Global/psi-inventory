@@ -325,6 +325,9 @@ if (driver === 'pg') {
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS fx_rate_date TEXT DEFAULT ''",
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS source_type TEXT DEFAULT 'system'",
         "ALTER TABLE wac_history ADD COLUMN IF NOT EXISTS import_batch_id TEXT DEFAULT ''",
+        // WAC-FX-CORRECTION-01：已锁定WAC保持不可变；汇率元数据更正通过独立追加记录呈现。
+        "CREATE TABLE IF NOT EXISTS wac_fx_snapshot_corrections (id TEXT PRIMARY KEY, wac_history_id TEXT NOT NULL, rmb_to_local_rate NUMERIC(24,8), fx_rate_date TEXT NOT NULL, reason TEXT DEFAULT '', source_reference TEXT DEFAULT '', corrected_by TEXT DEFAULT '', corrected_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        "CREATE INDEX IF NOT EXISTS idx_wac_fx_snapshot_corrections_latest ON wac_fx_snapshot_corrections(wac_history_id, corrected_at DESC, id DESC)",
         // WAC-BATCH-EXCLUSION-01：可恢复的无需计算记录，只影响WAC待确认队列，不修改物流/库存事实。
         "CREATE TABLE IF NOT EXISTS wac_batch_exclusions (id TEXT PRIMARY KEY, logistics_batch_id TEXT NOT NULL UNIQUE, batch_no TEXT DEFAULT '', reason TEXT DEFAULT '', status TEXT NOT NULL DEFAULT 'excluded', excluded_by TEXT DEFAULT '', excluded_by_name TEXT DEFAULT '', excluded_at TEXT DEFAULT '', restored_by TEXT DEFAULT '', restored_by_name TEXT DEFAULT '', restored_at TEXT DEFAULT '', created_at TEXT DEFAULT '', updated_at TEXT DEFAULT '')",
         "CREATE INDEX IF NOT EXISTS idx_wac_batch_exclusions_status ON wac_batch_exclusions(status, excluded_at)",
