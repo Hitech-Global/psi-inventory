@@ -167,6 +167,20 @@
       : (lang === 'id' ? 'Tanggal Jatuh Tempo Pelunasan' : '尾款到期日');
   }
 
+  function normalizeCIPaidAmountHeader(table) {
+    var heads = table && table.querySelectorAll ? table.querySelectorAll('thead th') : [];
+    var lang = typeof global.getLang === 'function' ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
+    var aliases = ['已付金额', 'ci已付金额', 'paid amount', 'ci paid amount', 'jumlah dibayar', 'ci telah dibayar'];
+    for (var i = 0; i < heads.length; i++) {
+      var label = String(heads[i].textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+      if (aliases.indexOf(label) === -1) continue;
+      heads[i].textContent = lang === 'en'
+        ? 'CI Paid Amount'
+        : (lang === 'id' ? 'CI Telah Dibayar' : 'CI已付金额');
+      return;
+    }
+  }
+
   function ensureColumnsAndCells() {
     var root = document.getElementById('ci-table');
     if (!root) return [];
@@ -176,6 +190,7 @@
       if (!isOperationalTable(table)) return;
       // Apply the shared final-balance column order and remove inbound status on the unified table.
       normalizeCIListColumns(table);
+      normalizeCIPaidAmountHeader(table);
       var heads = table.querySelectorAll('thead th');
       if (heads.length < 10) return;
       // Unified CI table: locate CI amount by header label, not the legacy fixed index.

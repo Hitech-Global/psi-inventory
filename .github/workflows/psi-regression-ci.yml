@@ -33,6 +33,9 @@ on:
       - 'assets/ci-summary-compact.js'
       - 'test/ci-summary-compact.test.cjs'
       - 'assets/ci-list-freight.js'
+      - 'assets/ci-shared-freight-display.js'
+      - 'shared-logistics-fee-server.js'
+      - 'test/ci-shared-freight-display.test.cjs'
       - 'scripts/ci-list-i18n-hotfix.cjs'
       - 'test/ci-list-i18n-hotfix.test.cjs'
       - 'scripts/ci-unified-data-binding-hotfix.cjs'
@@ -118,6 +121,9 @@ jobs:
           node --check ci-list-inline-logistics.js
           node --check test/ci-list-inline-logistics-dates.test.cjs
           node --check assets/ci-list-freight.js
+          node --check assets/ci-shared-freight-display.js
+          node --check test/ci-shared-freight-display.test.cjs
+          node --check shared-logistics-fee-server.js
           node --check assets/ci-summary-compact.js
           node --check test/ci-summary-compact.test.cjs
           node --check scripts/ci-edit-before-pl-hotfix.cjs
@@ -193,6 +199,8 @@ jobs:
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test compact CI procurement summary layout
         run: node test/ci-summary-compact.test.cjs
+      - name: Test CI shared freight summary and detail display
+        run: node --test test/ci-shared-freight-display.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test CI date and logistics carrier / mode field separation
