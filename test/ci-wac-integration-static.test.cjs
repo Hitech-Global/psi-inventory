@@ -1,0 +1,61 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+
+const root = path.join(__dirname, '..');
+const app = path.join(root, 'app.js');
+const server = path.join(root, 'server.js');
+const index = path.join(root, 'index.html');
+const ciLogistics = path.join(root, 'ci-list-inline-logistics.js');
+const integration = path.join(root, 'assets', 'ci-wac-integration.js');
+const patch = path.join(root, 'scripts', 'ci-wac-summary-hotfix.cjs');
+
+for (const file of [app, ciLogistics, integration, patch]) {
+  execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
+}
+
+// CI regression jobs install dependencies with --ignore-scripts. Apply the same
+// idempotent source patch explicitly before validating the backend.
+execFileSync(process.execPath, [patch], { stdio: 'pipe' });
+execFileSync(process.execPath, ['--check', server], { stdio: 'pipe' });
+
+const ciSrc = fs.readFileSync(ciLogistics, 'utf8');
+const integrationSrc = fs.readFileSync(integration, 'utf8');
+const serverSrc = fs.readFileSync(server, 'utf8');
+const indexSrc = fs.readFileSync(index, 'utf8');
+
+assert.ok(ciSrc.includes('wacActionsHtml(b, ciId)'), 'CI logistics rows must render WAC actions beside edit');
+assert.ok(ciSrc.includes('data-ci-logi-wac-confirm'), 'pending batches must expose WAC confirmation action');
+assert.ok(ciSrc.includes('data-ci-logi-wac-exclude'), 'pending batches must expose no-calculation action');
+assert.ok(ciSrc.includes('data-ci-logi-wac-restore'), 'excluded batches must expose restore action');
+assert.ok(ciSrc.includes('data-ci-logi-wac-cc'), 'confirmed batches must retain the supplemental CC action');
+assert.ok(ciSrc.includes('data-ci-logi-row'), 'clicking a logistics row must open the combined detail');
+assert.ok(ciSrc.includes('refreshCIListLogistics'), 'CI logistics panel must support a targeted refresh');
+
+assert.ok(integrationSrc.includes('viewLogWacDetail'), 'combined logistics/WAC detail entry missing');
+assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
+assert.ok(integrationSrc.includes('submitCIWacExclude'), 'CI no-calculation submission missing');
+assert.ok(integrationSrc.includes('submitCIWacRestore'), 'CI WAC restore submission missing');
+assert.ok(integrationSrc.includes('openWacCcFromCI'), 'confirmed-batch CC entry missing');
+assert.ok(integrationSrc.includes("page === 'inbound'"), 'legacy WAC page route must redirect');
+assert.ok(integrationSrc.includes("data-page=\"inbound\""), 'legacy WAC navigation entry must be hidden');
+
+const notificationPos = indexSrc.indexOf('<script src="wac-notification-ui.js"></script>');
+const integrationPos = indexSrc.indexOf('assets/ci-wac-integration.js');
+assert.ok(notificationPos >= 0 && integrationPos > notificationPos,
+  'CI WAC integration must load after WAC notification UI');
+assert.ok(indexSrc.includes('ci-list-inline-logistics.js'), 'CI logistics list module must remain loaded');
+
+assert.ok(serverSrc.includes('CI-WAC-STATUS-IN-CI-LOGISTICS-20261110'), 'CI logistics endpoint WAC status projection missing');
+assert.ok(serverSrc.includes('CI-WAC-SUMMARY-PROJECTION-20261110'), 'CI WAC summary helper missing');
+assert.ok(serverSrc.includes('refreshCIWacSummary(meta.ci_id || ci.id)'), 'WAC confirm must recompute CI completion');
+assert.ok(serverSrc.includes('CI-WAC-EXCLUSION-SUMMARY-20261110'), 'WAC exclusion must recompute CI completion');
+assert.ok(serverSrc.includes('CI-WAC-RESTORE-SUMMARY-20261110'), 'WAC restore must reopen CI completion');
+assert.ok(serverSrc.includes('CI-WAC-OPS-GET-SUMMARY-20261110'), 'ops-prep read must use current batch-level WAC state');
+assert.ok(serverSrc.includes('CI-WAC-OPS-POST-SUMMARY-20261110'), 'ops-prep write must enforce current batch-level WAC state');
+assert.ok(serverSrc.includes('CI-WAC-OPS-READY-SUMMARY-20261110'), 'ops-ready must enforce current batch-level WAC state');
+
+console.log('CI inline WAC integration static checks: PASS');
