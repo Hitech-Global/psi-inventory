@@ -431,6 +431,7 @@ test('Zhisu file upload automatically runs SKU/brand precheck and unlocks import
   assert.deepEqual(harness.calls, ['started']);
   assert.equal(harness.importButton.disabled, true);
   assert.ok(harness.statsElement.innerHTML.includes('正在校验 SKU 与品牌主数据'));
+  assert.ok(harness.statsElement.innerHTML.includes('role="progressbar"'));
 
   releasePrecheck();
   await upload;
