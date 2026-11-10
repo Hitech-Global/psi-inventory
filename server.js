@@ -5197,10 +5197,14 @@ function validateWacHistoryImportRows(items) {
     const rateRaw = item && (item.rmb_to_local_rate !== undefined ? item.rmb_to_local_rate : item.fx_rate);
     const hasRate = rateRaw !== undefined && rateRaw !== null && String(rateRaw).trim() !== '';
     const inputRate = hasRate ? Number(String(rateRaw).replace(/,/g, '').trim()) : null;
-    const fxDate = historyDate;
+    const fxDateRaw = item && (item.fx_rate_date !== undefined ? item.fx_rate_date :
+      (item['历史汇率日期'] !== undefined ? item['历史汇率日期'] : item['汇率日期']));
+    const hasFxDate = fxDateRaw !== undefined && fxDateRaw !== null && String(fxDateRaw).trim() !== '';
+    const fxDate = hasFxDate ? normalizeWacHistoryDate(fxDateRaw) : historyDate;
     let rowHasRequiredError = false;
 
     const requiredIssue = (type, reason) => { rowHasRequiredError = true; pushIssue(rowNo, skuCode, type, reason); };
+    if (hasFxDate && !fxDate) requiredIssue('FX_DATE_INVALID', '历史汇率日期格式无效，需使用 YYYY-MM-DD');
     if (!skuCode) requiredIssue('SKU_EMPTY', 'SKU不能为空');
     if (!country) requiredIssue('COUNTRY_EMPTY', '国家不能为空');
     if (!warehouse) requiredIssue('WAREHOUSE_EMPTY', '仓库不能为空');
@@ -19743,17 +19747,18 @@ app.get('/api/wac/confirmed-batches', requireApiPermission('ci_view'), asyncHand
 // WAC-HISTORY-IMPORT-01：历史WAC模板、只读预检查与原子导入。
 app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
   res.json({
-    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '1 RMB = 本币汇率'],
+    columns: ['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '历史汇率日期', '1 RMB = 本币汇率'],
     instructions: [
       ['字段', '要求与说明'],
       ['SKU', '必填；必须存在于SKU主数据'],
       ['品牌', '选填；填写时必须与SKU主数据完全一致；留空时自动匹配SKU主数据品牌'],
       ['国家、仓库', '必填；必须与系统仓库主数据中的国家和仓库名称一致'],
       ['历史WAC（本币）', '必填；填写该SKU在对应国家/仓库的历史本币WAC，必须大于0'],
-      ['最后入库日期', '必填；作为该条历史WAC的生效开始日期及历史汇率匹配日期，格式 YYYY-MM-DD'],
+      ['最后入库日期', '必填；作为该条历史WAC的生效开始日期，格式 YYYY-MM-DD'],
+      ['历史汇率日期', '选填；如实际成本按其他日期的汇率结算，请填写实际汇率日期；留空时默认使用最后入库日期'],
       ['结束日期', '选填；填写该条历史WAC的有效期结束日期，格式 YYYY-MM-DD，不能早于开始日期；留空表示未指定结束日期'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
-      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查最后入库日期对应的历史汇率，不会使用今天汇率'],
+      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查历史汇率日期对应的精确汇率，不会使用今天汇率'],
       ['重要说明', '本导入新增锁定的WAC历史记录，并自动同步库存总表的最新有效WAC和最后入库日期；不会修改库存数量或库存货值。']
     ]
   });
