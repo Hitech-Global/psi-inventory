@@ -16219,7 +16219,7 @@ async function wacConfirm(batchId){
         ? '<div class="wac-opbar"><span class="wac-import-status ok">✓ 已确认历史快照 · 只读展示</span></div>'
         : '<div class="wac-opbar">'+
           '<button class="btn btn-secondary btn-sm" onclick="exportWacOldInventoryTemplate()">📥 '+t('wac.btn_export_old','导出旧库存模板')+'</button>'+
-          '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+t('wac.btn_import_old','导入旧库存')+'</button>'+
+          '<button class="btn btn-secondary btn-sm" onclick="importWacOldInventory()">📤 '+((m.warehouse==='至速仓'&&(m.country==='泰国'||m.country==='马来西亚'))?t('wac.btn_import_zhisu','导入至速仓库存（自动反算）'):t('wac.btn_import_old','导入旧库存'))+'</button>'+
           '<span class="wac-import-status" id="wac-import-status"><span class="warn">'+t('wac.import_not_imported','未导入')+'</span></span>'+
         '</div>';
 
@@ -16422,6 +16422,11 @@ function wacValidateInputs(){
     const duplicateArr=st?st.duplicate:[];
     const invalidArr=st?st.invalid:[];
     parts.push('<span class="'+(matchedN?'ok':'')+'">'+t('wac.import_matched','已匹配')+': '+matchedN+'</span>');
+    if(st&&st.importMode==='zhisu_post_inbound'){
+      parts.push('<span class="ok">'+t('wac.zhisu_import_status','至速仓自动反算：快照 {snapshot}－本批到货 {arrival}',{
+        snapshot:esc(st.snapshotDate||'未识别'),arrival:esc(st.arrivalDate||'')
+      })+'</span>');
+    }
     if(missingN) parts.push('<span class="bad">'+t('wac.import_missing','缺失SKU')+': '+missingN+' ('+st.missing.join(', ')+')</span>');
     if(unknownArr.length) parts.push('<span class="bad">'+t('wac.import_unknown','未知SKU')+': '+unknownArr.length+' ('+unknownArr.join(', ')+')</span>');
     if(duplicateArr.length) parts.push('<span class="bad">'+t('wac.import_duplicate','重复SKU')+': '+duplicateArr.length+' ('+duplicateArr.join(', ')+')</span>');
@@ -16466,6 +16471,87 @@ async function importWacOldInventory(){
       try{
         const data=new Uint8Array(ev.target.result);
         const wb=XLSX.read(data,{type:'array'});
+        // 至速仓库存清单是本批次入库后的快照：用可用库存数减去当前物流批次实际到货数量，反算入库前库存。
+        // 只回填 WAC 弹窗的 old_qty，不写入或覆盖库存总表。
+        const zhisuAdapter=window.ZhisuInventoryImport;
+        const zhisuParsed=zhisuAdapter&&typeof zhisuAdapter.parseZhisuWorkbook==='function'
+          ?zhisuAdapter.parseZhisuWorkbook(wb,file.name,'',XLSX):null;
+        if(zhisuParsed&&zhisuAdapter&&typeof zhisuAdapter.deriveWacOldQtyFromZhisu==='function'){
+          const derived=zhisuAdapter.deriveWacOldQtyFromZhisu(zhisuParsed,{
+            country:p.meta&&p.meta.country,
+            warehouse:p.meta&&p.meta.warehouse,
+            actualArrivalDate:p.meta&&p.meta.actual_arrival_date,
+            items:p.items
+          });
+          const clearWacOldInputs=()=>{
+            p.items.forEach((it,i)=>{
+              const el=document.getElementById('wac-old-'+i);
+              if(el){el.value='';recalcWacRow(i);}
+            });
+          };
+          if(!derived.ready){
+            clearWacOldInputs();
+            st.uploaded=true;
+            st.matched=[];
+            st.missing=(derived.missing&&derived.missing.length)?derived.missing.slice():p.items.map(it=>it.sku_code);
+            st.unknown=[];
+            st.duplicate=(derived.duplicate||[]).slice();
+            st.invalid=(derived.invalid||[]).concat(derived.negative||[]).map(v=>String(v).split('（')[0]);
+            st.importMode='zhisu_post_inbound';
+            wacValidateInputs();
+            const detailParts=(derived.errors||[]).concat(
+              (derived.missing||[]).map(s=>'缺少SKU '+s),
+              (derived.duplicate||[]).map(s=>'重复SKU '+s),
+              (derived.invalid||[]),
+              (derived.negative||[])
+            );
+            showToast(t('wac.zhisu_import_errors','至速仓库存不能用于本批次反算：{errors}',{
+              errors:detailParts.join('；')||'文件校验未通过'
+            }),'danger');
+            return;
+          }
+          const confirmText=t('wac.zhisu_import_confirm',
+            '请确认该文件为本批次入库后的库存快照，且入库完成至快照日期之间没有销售、调拨或其他库存变动。系统将按可用库存数减去本批次到货数量反算原库存。是否继续？',{
+              country:derived.country,
+              warehouse:derived.warehouse,
+              snapshot:derived.snapshotDate||'文件名未识别',
+              arrival:derived.arrivalDate||'未提供',
+              count:derived.rows.length
+            });
+          if(!window.confirm(confirmText))return;
+          const derivedBySku=new Map(derived.rows.map(row=>[row.sku_code,row]));
+          const missingElements=[];
+          p.items.forEach((it,i)=>{
+            const row=derivedBySku.get(String(it.sku_code));
+            const el=document.getElementById('wac-old-'+i);
+            if(!row||!el){missingElements.push(String(it.sku_code));return;}
+            el.value=String(row.old_qty);
+            recalcWacRow(i);
+          });
+          if(missingElements.length){
+            clearWacOldInputs();
+            st.uploaded=true;st.matched=[];st.missing=missingElements;st.unknown=[];st.duplicate=[];st.invalid=[];
+            wacValidateInputs();
+            showToast(t('wac.zhisu_import_errors','至速仓库存不能用于本批次反算：{errors}',{
+              errors:'无法定位 WAC 数量输入行：'+missingElements.join(', ')
+            }),'danger');
+            return;
+          }
+          st.uploaded=true;
+          st.matched=derived.rows.map(row=>row.sku_code);
+          st.missing=[];st.unknown=[];st.duplicate=[];st.invalid=[];
+          st.importMode='zhisu_post_inbound';
+          st.snapshotDate=derived.snapshotDate||'';
+          st.arrivalDate=derived.arrivalDate||'';
+          st.sourceWarehouse=derived.sourceWarehouse||'';
+          wacValidateInputs();
+          showToast(t('wac.zhisu_import_summary',
+            '至速仓库存已识别：{count} 个 SKU 已自动反算原库存（快照：{snapshot}）。',{
+              count:derived.rows.length,
+              snapshot:derived.snapshotDate||'未从文件名识别'
+            }),'success');
+          return;
+        }
         const ws=wb.Sheets[wb.SheetNames[0]];
         const rows=XLSX.utils.sheet_to_json(ws,{header:1,defval:''});
         if(rows.length<2){showToast(t('wac.import_file_empty','文件为空或仅含表头'),'danger');return;}
