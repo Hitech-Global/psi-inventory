@@ -180,5 +180,5 @@ test('browser XLSX bundle is served from the installed local package, not an ext
  assert.doesNotMatch(html,/cdn\\.sheetjs\\.com/);
  assert.ok(pkg.dependencies&&pkg.dependencies.xlsx,'xlsx must remain a pinned project dependency');
  assert.ok(fs.existsSync(bundle),'the local browser bundle must exist after npm install');
- assert.match(server,/express\\.static\\(path\\.join\\(__dirname\\)\\)/,'Express must serve the project root containing node_modules');
+ assert.match(server,/app\\.use\\(express\\.static\\(path\\.join\\(__dirname\\),/,'Express must serve the project root containing node_modules');
 });
