@@ -400,7 +400,24 @@
     var countries = Object.keys(countryCounts || {}).map(function (name) {
       return name + ' ' + Number(countryCounts[name] || 0);
     }).join('；');
-    var html = '<div style="margin-bottom:10px;padding:12px 14px;border:1px solid #d6e4ff;background:#f5f8ff;border-radius:10px;font-size:12px;color:#333">' +
+    var blocking = Array.isArray(win._salesImportBlocking) ? win._salesImportBlocking : [];
+    var ready = win._salesImportPreviewReady === true;
+    var previewError = text(win._salesImportPreviewError);
+    var precheckHtml = '';
+    if (ready) {
+      precheckHtml = '<div style="margin-top:8px;padding:9px 11px;border-radius:7px;background:#f0fdf4;color:#15803d">✓ SKU / 品牌后台预检查通过，可以开始导入。</div>';
+    } else if (blocking.length) {
+      precheckHtml = '<div style="margin-top:8px;padding:10px 11px;border-radius:7px;background:#fff1f0;border:1px solid #ffccc7;color:#b91c1c">' +
+        '<b>SKU / 品牌后台预检查未通过：' + blocking.length + ' 条，整批暂不能导入。</b>' +
+        '<div style="margin-top:5px">请查看下方后台预检查错误明细并下载错误清单。</div></div>';
+    } else if (previewError) {
+      precheckHtml = '<div style="margin-top:8px;padding:10px 11px;border-radius:7px;background:#fff1f0;border:1px solid #ffccc7;color:#b91c1c">' +
+        '<b>SKU / 品牌后台预检查请求失败，暂不能导入。</b><div style="margin-top:5px">' +
+        escapeHtml(previewError) + '</div></div>';
+    } else {
+      precheckHtml = '<div style="margin-top:8px;padding:9px 11px;border-radius:7px;background:#fffbe6;color:#92400e">尚未完成 SKU / 品牌后台预检查，暂不能导入。</div>';
+    }
+    var html = '<div id="zhisu-sales-summary" style="margin-bottom:10px;padding:12px 14px;border:1px solid #d6e4ff;background:#f5f8ff;border-radius:10px;font-size:12px;color:#333">' +
       '<div style="font-weight:650;font-size:13px;margin-bottom:6px">已识别至速仓销售数据</div>' +
       '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;color:#555;margin-bottom:6px">' +
       '<span>仓库：' + escapeHtml(warehouses || '未识别') + '</span>' +
@@ -415,15 +432,17 @@
       ' 条；SKU 为空排除：' + Number(stats.excludedBlankSkuRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；同订单商品去重：' + Number(stats.duplicateOrderItemRows || 0).toLocaleString('en-US') +
-      ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
+      ' 条；文件字段校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
       (Number(stats.conflictGroups || 0) ? '<div style="color:#b45309;margin-top:5px">重复订单冲突：' +
         Number(stats.conflictGroups || 0) + ' 组，共 ' + Number(stats.conflictRows || 0) +
         ' 行暂不导入。请下载异常明细核对。</div>' +
         '<button type="button" id="zhisu-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
       '<div style="color:#888;margin-top:4px">本文件全部按线上渠道导入；仓库统一识别为至速仓，销售国家优先按店铺国家识别。支付方式为空、未支付的记录不导入；买方要求退回、已取消记为 False，其余状态记为 True。品牌由 PSI SKU 主数据匹配。</div>' +
-      '</div>';
-    el.innerHTML = '';
-    el.insertAdjacentHTML('beforeend', html);
+      precheckHtml + '</div>';
+    var oldSummary = el.querySelector && el.querySelector('#zhisu-sales-summary');
+    if (oldSummary && typeof oldSummary.remove === 'function') oldSummary.remove();
+    // Preserve the standard server-side preview block (SKU/brand errors and warnings).
+    el.insertAdjacentHTML('afterbegin', html);
     var button = win.document.getElementById('zhisu-sales-conflict-download');
     if (button) button.addEventListener('click', function () { downloadConflictReport(win, stats); });
   }
@@ -446,6 +465,8 @@
       win._salesImportZhisuCountryCounts = null;
       win._salesImportData = [];
       win._salesImportPreviewReady = false;
+      win._salesImportBlocking = [];
+      win._salesImportPreviewError = '';
       win._lastSalesImportErrors = [];
       var stats = win.document && win.document.getElementById('sales-preview-stats');
       if (stats) stats.innerHTML = '';
@@ -460,16 +481,34 @@
     };
 
     win.requestSalesPreview = async function () {
-      var result = await originalRequestSalesPreview.apply(this, arguments);
-      if (win._salesImportSourceMode === 'zhisu' && win._salesImportZhisuStats) {
-        renderSummary(
-          win,
-          win._salesImportZhisuStats,
-          win._salesImportZhisuWarehouseCounts,
-          win._salesImportZhisuCountryCounts
-        );
+      win._salesImportPreviewError = '';
+      var originalToast = win.showToast;
+      var capturedPreviewError = '';
+      if (typeof originalToast === 'function') {
+        win.showToast = function (message, type) {
+          if (type === 'danger' && String(message || '').indexOf('预览失败') >= 0) {
+            capturedPreviewError = String(message);
+          }
+          return originalToast.apply(this, arguments);
+        };
       }
-      return result;
+      try {
+        var result = await originalRequestSalesPreview.apply(this, arguments);
+        if (capturedPreviewError) win._salesImportPreviewError = capturedPreviewError;
+        if (win._salesImportSourceMode === 'zhisu' && win._salesImportZhisuStats) {
+          renderSummary(
+            win,
+            win._salesImportZhisuStats,
+            win._salesImportZhisuWarehouseCounts,
+            win._salesImportZhisuCountryCounts
+          );
+          var button = win.document && win.document.getElementById('sales-import-btn');
+          if (button) button.disabled = !win._salesImportPreviewReady;
+        }
+        return result;
+      } finally {
+        if (typeof originalToast === 'function') win.showToast = originalToast;
+      }
     };
 
     win.handleSalesFile = function (file) {

@@ -251,3 +251,89 @@ test('Zhisu re-import updates only status and True/False, preserving original da
     raw.close();
   }
 });
+
+
+function createZhisuUiHarness(precheck) {
+  const inserted = [];
+  const statsElement = {
+    innerHTML: '<div id="server-precheck-result">原始后台预检查结果：UNKNOWN-SKU</div>',
+    querySelector: () => null,
+    insertAdjacentHTML(position, html) {
+      inserted.push({ position, html });
+      this.innerHTML = position === 'afterbegin' ? html + this.innerHTML : this.innerHTML + html;
+    }
+  };
+  const importButton = { disabled: true };
+  const win = {
+    handleSalesFile() {},
+    openSalesBatchImport() {},
+    showToast() {},
+    document: {
+      getElementById(id) {
+        if (id === 'sales-preview-stats') return statsElement;
+        if (id === 'sales-import-btn') return importButton;
+        return null;
+      }
+    },
+    _salesImportSourceMode: 'zhisu',
+    _salesImportZhisuStats: {
+      sourceRows: 10,
+      includedRows: 8,
+      trueRows: 7,
+      falseRows: 1,
+      excludedBlankPaymentRows: 1,
+      excludedUnpaidRows: 0,
+      excludedBlankSkuRows: 1,
+      exactDuplicateRows: 0,
+      duplicateOrderItemRows: 0,
+      validationErrorRows: 0,
+      conflictGroups: 0
+    },
+    _salesImportZhisuWarehouseCounts: { '至速仓': 8 },
+    _salesImportZhisuCountryCounts: { '新加坡': 1, '马来西亚': 7 },
+    requestSalesPreview: async function () {
+      if (precheck.error) {
+        win.showToast(precheck.error, 'danger');
+        win._salesImportPreviewReady = false;
+        win._salesImportBlocking = [];
+        return;
+      }
+      win._salesImportPreviewReady = precheck.ready;
+      win._salesImportBlocking = precheck.blocking || [];
+      win._lastSalesImportErrors = (precheck.blocking || []).map(item => ({
+        row: item.row, reason: item.reason
+      }));
+    }
+  };
+  Zhisu.install(win);
+  return { win, statsElement, importButton, inserted };
+}
+
+test('Zhisu preview keeps backend SKU/brand blockers visible and keeps import disabled', async () => {
+  const harness = createZhisuUiHarness({
+    ready: false,
+    blocking: [{ row: 17, sku_code: 'UNKNOWN-SKU', reason: 'SKU 主数据不存在：UNKNOWN-SKU' }]
+  });
+  await harness.win.requestSalesPreview();
+  assert.equal(harness.importButton.disabled, true);
+  assert.ok(harness.statsElement.innerHTML.includes('原始后台预检查结果'));
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查未通过：1 条'));
+  assert.ok(harness.statsElement.innerHTML.includes('UNKNOWN-SKU'));
+  assert.equal(harness.inserted[0].position, 'afterbegin');
+});
+
+test('Zhisu preview enables import only after backend SKU/brand precheck passes', async () => {
+  const harness = createZhisuUiHarness({ ready: true, blocking: [] });
+  await harness.win.requestSalesPreview();
+  assert.equal(harness.importButton.disabled, false);
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查通过'));
+  assert.ok(harness.statsElement.innerHTML.includes('原始后台预检查结果'));
+});
+
+test('Zhisu preview displays backend preview request failures instead of hiding them', async () => {
+  const harness = createZhisuUiHarness({ error: '预览失败: HTTP 500' });
+  await harness.win.requestSalesPreview();
+  assert.equal(harness.importButton.disabled, true);
+  assert.ok(harness.statsElement.innerHTML.includes('SKU / 品牌后台预检查请求失败'));
+  assert.ok(harness.statsElement.innerHTML.includes('HTTP 500'));
+});
