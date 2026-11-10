@@ -256,7 +256,7 @@ test('Zhisu re-import updates only status and True/False, preserving original da
 function createZhisuUiHarness(precheck) {
   const inserted = [];
   const statsElement = {
-    innerHTML: '<div id="server-precheck-result">原始后台预检查结果</div>',
+    innerHTML: '<div id="server-precheck-result">原始后台预检查结果：UNKNOWN-SKU</div>',
     querySelector: () => null,
     insertAdjacentHTML(position, html) {
       inserted.push({ position, html });
