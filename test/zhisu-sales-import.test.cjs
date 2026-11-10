@@ -146,6 +146,35 @@ test('blank SKU rows are excluded; unknown warehouse and invalid quantity remain
   assert.ok(parsed.records.every(record => !record._errors.some(error => error.includes('SKU 为空'))));
 });
 
+test('FO SKU rows are excluded and Zhisu K686WB aliases normalize to PSI master SKUs', async () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    row({ 2: 'ORDER-FO-UPPER', 22: 'FO' }),
+    row({ 2: 'ORDER-FO-LOWER', 22: 'fo', 0: 'EC-MY-FO-2' }),
+    row({ 2: 'ORDER-K686-RS', 22: 'K686WB-RGB-PRO-RS', 0: 'EC-MY-RS' }),
+    row({ 2: 'ORDER-K686-BS', 22: 'K686WB-RGB-PRO-BS', 0: 'EC-MY-BS' })
+  ]), 'orders.xlsx', fakeXlsx());
+
+  assert.equal(parsed.stats.sourceRows, 4);
+  assert.equal(parsed.stats.excludedFoSkuRows, 2);
+  assert.equal(parsed.stats.includedRows, 2);
+  assert.equal(parsed.records.length, 2);
+  assert.deepEqual(parsed.records.map(record => record.sku_code), [
+    'RDK686WBRGBPRORS',
+    'RDK686WBRGBPROBS'
+  ]);
+
+  const rows = SalesImport.normalizeSalesRows(parsed.records);
+  const result = await SalesImport.validateSalesBrandRows({
+    loadSkuBrands: async () => new Map([
+      ['RDK686WBRGBPRORS', { sku_code: 'RDK686WBRGBPRORS', brand: 'Redragon' }],
+      ['RDK686WBRGBPROBS', { sku_code: 'RDK686WBRGBPROBS', brand: 'Redragon' }]
+    ])
+  }, rows);
+
+  assert.equal(result.failures.length, 0);
+  assert.deepEqual(rows.map(record => record.brand), ['Redragon', 'Redragon']);
+});
+
 test('brand is resolved by the existing PSI SKU-master validation, not source category text', async () => {
   const parsed = Zhisu.parseZhisuWorkbook(workbook([
     row({ 2: 'ORDER-BRAND', 22: 'M724' })
