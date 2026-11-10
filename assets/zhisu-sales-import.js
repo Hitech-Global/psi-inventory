@@ -429,20 +429,19 @@
     if (!el) return;
     var old = el.querySelector && el.querySelector('#zhisu-sales-progress');
     if (old && typeof old.remove === 'function') old.remove();
-    var bar = progress.indeterminate
-      ? '<div style="position:absolute;left:0;top:0;bottom:0;width:34%;border-radius:99px;background:#2563eb;animation:zhisuSalesProgress 1.25s ease-in-out infinite"></div>'
-      : '<div style="height:100%;width:' + progress.percent + '%;border-radius:99px;background:' +
-        (progress.state === 'error' ? '#dc2626' : progress.state === 'blocked' ? '#d97706' : '#2563eb') +
-        ';transition:width .2s ease"></div>';
+    // Show a determinate stage percentage throughout. FileReader reports real byte progress;
+    // Excel parsing and the existing one-shot backend precheck report stage milestones.
+    var bar = '<div style="height:100%;width:' + progress.percent + '%;border-radius:99px;background:' +
+      (progress.state === 'error' ? '#dc2626' : progress.state === 'blocked' ? '#d97706' : '#2563eb') +
+      ';transition:width .25s ease"></div>';
     var color = progress.state === 'error' ? '#b91c1c' :
       progress.state === 'blocked' ? '#92400e' :
       progress.state === 'done' ? '#15803d' : '#475569';
-    var html = '<style>@keyframes zhisuSalesProgress{0%{transform:translateX(-120%)}100%{transform:translateX(330%)}}</style>' +
-      '<div id="zhisu-sales-progress" role="status" aria-live="polite" style="margin:0 0 10px;padding:10px 13px;border:1px solid #dbeafe;background:#f8fbff;border-radius:9px">' +
+    var html = '<div id="zhisu-sales-progress" role="status" aria-live="polite" style="margin:0 0 10px;padding:10px 13px;border:1px solid #dbeafe;background:#f8fbff;border-radius:9px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px">' +
       '<span style="font-size:12px;font-weight:600;color:' + color + '">' + escapeHtml(progress.message) + '</span>' +
-      '<span style="font-size:11px;color:#64748b;white-space:nowrap">' +
-      (progress.indeterminate ? '处理中' : progress.percent + '%') + '</span></div>' +
+      '<span style="font-size:12px;font-weight:650;color:#475569;white-space:nowrap;font-variant-numeric:tabular-nums">' +
+      progress.percent + '%</span></div>' +
       '<div role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + progress.percent +
       '" style="height:6px;position:relative;overflow:hidden;background:#e5e7eb;border-radius:99px">' + bar + '</div></div>';
     el.insertAdjacentHTML('afterbegin', html);
