@@ -403,7 +403,7 @@
           statusCellHtml(b, 'listing_status', ciId) +
           '<td class="ci-list-logi-owners">' + (b.listing_owner_names && b.listing_owner_names.length ? esc(b.listing_owner_names.join('、')) : '—') + '</td>' +
           wacStatusCellHtml(b) +
-          '<td class="cell-actions"><div class="ci-list-logi-export-actions">'
+          '<td class="cell-actions"><div class="ci-list-logi-export-actions">' +
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
             wacActionsHtml(b, ciId) +
             '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(b.id) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
