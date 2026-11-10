@@ -26,7 +26,8 @@ if (!source.includes(statusMarker)) {
     "    \"WHEN EXISTS (SELECT 1 FROM wac_history wh WHERE wh.logistics_batch_id = lb.id) THEN 'confirmed'\",\n" +
     "    \"WHEN EXISTS (SELECT 1 FROM wac_batch_exclusions e WHERE e.logistics_batch_id = lb.id AND e.status = 'excluded') THEN 'excluded'\",\n" +
     "    \"WHEN lb.logistics_status = ? AND EXISTS (SELECT 1 FROM packing_lists pl WHERE pl.logistics_batch_id = lb.id AND EXISTS (SELECT 1 FROM packing_list_items pli WHERE pli.pl_id = pl.id AND COALESCE(pli.total_qty, 0) > 0)) THEN 'pending'\",\n" +
-    \"    \" + \"'ELSE \\\\\\\"not_ready\\\\\\\" END AS wac_status,'\" + \"\\n\" +\n    "    '(SELECT MAX(wh.confirmed_at) FROM wac_history wh WHERE wh.logistics_batch_id = lb.id) AS wac_confirmed_at,',\n" +
+    "    \"ELSE 'not_ready' END AS wac_status,\",\n" +
+    "    '(SELECT MAX(wh.confirmed_at) FROM wac_history wh WHERE wh.logistics_batch_id = lb.id) AS wac_confirmed_at,',\n" +
     "    \"(SELECT e.reason FROM wac_batch_exclusions e WHERE e.logistics_batch_id = lb.id AND e.status = 'excluded' LIMIT 1) AS wac_exclusion_reason,\",\n" +
     "    \"(SELECT e.excluded_at FROM wac_batch_exclusions e WHERE e.logistics_batch_id = lb.id AND e.status = 'excluded' LIMIT 1) AS wac_excluded_at\",\n" +
     "    'FROM logistics_batches lb WHERE lb.related_ci_id = ?'\n" +
