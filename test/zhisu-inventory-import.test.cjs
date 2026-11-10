@@ -174,3 +174,99 @@ test("date parser accepts valid filename snapshot dates and rejects invalid date
   assert.equal(Zhisu.dateFromFilename("stock_2026-11-05.xls"), "2026-11-05");
   assert.equal(Zhisu.dateFromFilename("stock_20261340.xls"), "");
 });
+
+
+test("derives WAC original stock from Thailand Zhisu post-inbound available stock and this batch quantity", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "M724", "RDM724B", "150", "0", "150"],
+    ["2", "泰国一号仓", "new SKU", "RDM916AKPRO", "40", "0", "40"],
+    ["3", "吉隆坡一号仓", "same SKU in Malaysia", "RDM724B", "999", "0", "999"],
+    ["4", "泰国一号仓", "unrelated SKU", "OTHER-SKU", "77", "0", "77"]
+  ]), "zhisu_stock_20261110.xls", "2026-11-10", fakeXlsx());
+
+  const result = Zhisu.deriveWacOldQtyFromZhisu(parsed, {
+    country: "泰国",
+    warehouse: "至速仓",
+    actualArrivalDate: "2026-11-07",
+    items: [
+      { sku_code: "RDM724B", batch_qty: 40 },
+      { sku_code: "RDM916AKPRO", batch_qty: 40 }
+    ]
+  });
+
+  assert.equal(result.ready, true);
+  assert.equal(result.sourceWarehouse, "泰国一号仓");
+  assert.equal(result.snapshotDate, "2026-11-10");
+  assert.deepEqual(result.rows.map(row => [row.sku_code, row.post_inbound_qty, row.batch_qty, row.old_qty]), [
+    ["RDM724B", 150, 40, 110],
+    ["RDM916AKPRO", 40, 40, 0]
+  ]);
+  assert.deepEqual(result.missing, []);
+  assert.deepEqual(result.negative, []);
+});
+
+test("blocks WAC Zhisu derivation when post-inbound stock is less than this batch quantity", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "M724", "RDM724B", "39", "0", "39"]
+  ]), "zhisu_stock_20261110.xls", "2026-11-10", fakeXlsx());
+  const result = Zhisu.deriveWacOldQtyFromZhisu(parsed, {
+    country: "泰国",
+    warehouse: "至速仓",
+    actualArrivalDate: "2026-11-07",
+    items: [{ sku_code: "RDM724B", batch_qty: 40 }]
+  });
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.negative, ["RDM724B（快照库存 39 < 本批到货 40）"]);
+});
+
+test("blocks WAC Zhisu derivation for missing and duplicate batch SKUs", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "duplicate 1", "RDM724B", "150", "0", "150"],
+    ["2", "泰国一号仓", "duplicate 2", "RDM724B", "151", "0", "151"]
+  ]), "zhisu_stock_20261110.xls", "2026-11-10", fakeXlsx());
+  const result = Zhisu.deriveWacOldQtyFromZhisu(parsed, {
+    country: "泰国",
+    warehouse: "至速仓",
+    actualArrivalDate: "2026-11-07",
+    items: [
+      { sku_code: "RDM724B", batch_qty: 40 },
+      { sku_code: "RDM916AKPRO", batch_qty: 40 }
+    ]
+  });
+  assert.equal(result.ready, false);
+  assert.deepEqual(result.duplicate, ["RDM724B"]);
+  assert.deepEqual(result.missing, ["RDM916AKPRO"]);
+});
+
+test("blocks WAC Zhisu derivation when stock snapshot predates actual arrival", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "M724", "RDM724B", "150", "0", "150"]
+  ]), "zhisu_stock_20261106.xls", "2026-11-10", fakeXlsx());
+  const result = Zhisu.deriveWacOldQtyFromZhisu(parsed, {
+    country: "泰国",
+    warehouse: "至速仓",
+    actualArrivalDate: "2026-11-07",
+    items: [{ sku_code: "RDM724B", batch_qty: 40 }]
+  });
+  assert.equal(result.ready, false);
+  assert.match(result.errors[0], /早于本批次实际到货日期/);
+});
+
+test("blocks WAC Zhisu derivation when the current WAC target is not the matching Zhisu warehouse", () => {
+  const parsed = Zhisu.parseZhisuWorkbook(workbook([
+    headers,
+    ["1", "泰国一号仓", "M724", "RDM724B", "150", "0", "150"]
+  ]), "zhisu_stock_20261110.xls", "2026-11-10", fakeXlsx());
+  const result = Zhisu.deriveWacOldQtyFromZhisu(parsed, {
+    country: "印度尼西亚",
+    warehouse: "Bekasi Warehouse",
+    actualArrivalDate: "2026-11-07",
+    items: [{ sku_code: "RDM724B", batch_qty: 40 }]
+  });
+  assert.equal(result.ready, false);
+  assert.match(result.errors[0], /目标仓库不是至速仓/);
+});
