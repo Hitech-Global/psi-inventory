@@ -125,6 +125,32 @@ test("invalid before/after arithmetic blocks the row from matching", () => {
   assert.deepEqual(applied.invalid, ["SKU-A"]);
 });
 
+test("extra SKUs in the same receipt do not invalidate a complete CI match", () => {
+  const parsed = BigSellerOld.parseBigSellerWorkbook(workbook([
+    headers,
+    ["SKU-A", "2026-11-07 09:10", "10", "+ 100", "110", "入库 / 手动入库", "IN-001", "Redragon Warehouse"],
+    ["SKU-B", "2026-11-07 09:10", "0", "+ 40", "40", "入库 / 手动入库", "IN-001", "Redragon Warehouse"],
+    ["SKU-EXTRA", "2026-11-07 09:10", "2", "+ 8", "10", "入库 / 手动入库", "IN-001", "Redragon Warehouse"]
+  ]), fakeXlsx());
+  const matched = BigSellerOld.matchCandidates(parsed, [
+    { sku_code: "SKU-A", batch_qty: 100 },
+    { sku_code: "SKU-B", batch_qty: 40 }
+  ], "2026-11-07");
+  assert.equal(matched.autoCandidateIndex, 0);
+  assert.deepEqual(matched.candidates[0].extraSkus, ["SKU-EXTRA"]);
+  assert.equal(matched.candidates[0].exactMatch, true);
+});
+
+test("the WAC importer is wired to the parser and the parser is loaded by index.html", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const app = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
+  const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
+  assert.match(app, /WacBigSellerOldInventory\.parseBigSellerWorkbook/);
+  assert.match(app, /selectWacBigSellerCandidate/);
+  assert.match(html, /assets\/wac-bigseller-old-inventory\.js/);
+});
+
 test("non-BigSeller workbook is not captured", () => {
   const parsed = BigSellerOld.parseBigSellerWorkbook(workbook([
     ["SKU", "原库存数量", "备注"],
