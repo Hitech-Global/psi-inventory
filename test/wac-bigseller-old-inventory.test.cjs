@@ -150,6 +150,8 @@ test("the WAC importer is wired to the parser and the parser is loaded by index.
   const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
   assert.match(app, /WacBigSellerOldInventory\.parseBigSellerWorkbook/);
   assert.match(app, /selectWacBigSellerCandidate/);
+  assert.ok(app.includes("matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'',(p.meta||{}).country||'')"));
+  assert.match(html, /app\.js\?v=20261110-2/);
   assert.match(html, /assets\/wac-bigseller-old-inventory\.js/);
 });
 
