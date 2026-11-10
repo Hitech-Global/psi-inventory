@@ -128,17 +128,22 @@ test('exact duplicate source rows are deduplicated and conflicting duplicate ord
     .every(record => record._errors.some(error => error.includes('内容不一致'))));
 });
 
-test('unknown warehouse, missing SKU and invalid quantity remain visible as blocking row errors', () => {
+test('blank SKU rows are excluded; unknown warehouse and invalid quantity remain blocking errors', () => {
   const parsed = Zhisu.parseZhisuWorkbook(workbook([
     row({ 2: 'ORDER-UNKNOWN-WH', 6: '未知仓库' }),
     row({ 2: 'ORDER-NO-SKU', 22: '' }),
-    row({ 2: 'ORDER-NO-QTY', 25: '' })
+    row({ 2: 'ORDER-NO-QTY', 25: '' }),
+    row({ 2: 'ORDER-NO-SKU-OR-QTY', 22: '', 25: '' })
   ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.stats.sourceRows, 4);
+  assert.equal(parsed.stats.excludedBlankSkuRows, 2);
   assert.equal(parsed.stats.unknownWarehouseRows, 1);
-  assert.equal(parsed.stats.validationErrorRows, 3);
+  assert.equal(parsed.stats.validationErrorRows, 2);
+  assert.equal(parsed.records.length, 2);
   assert.ok(parsed.records[0]._errors.some(error => error.includes('无法识别至速仓发货仓库与销售国家')));
-  assert.ok(parsed.records[1]._errors.some(error => error.includes('SKU 为空')));
-  assert.ok(parsed.records[2]._errors.some(error => error.includes('发货数量')));
+  assert.ok(parsed.records[1]._errors.some(error => error.includes('发货数量')));
+  assert.ok(parsed.records.every(record => record.sku_code));
+  assert.ok(parsed.records.every(record => !record._errors.some(error => error.includes('SKU 为空'))));
 });
 
 test('brand is resolved by the existing PSI SKU-master validation, not source category text', async () => {
