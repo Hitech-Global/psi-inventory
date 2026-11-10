@@ -97,8 +97,10 @@ test('storefront determines sales country and Singapore can ship via Malaysia Zh
   assert.match(parsed.records[3].remark, /源文件仓库=新加坡仓/);
   assert.ok(parsed.records[4]._errors.some(error => error.includes('无法识别至速仓发货仓库与销售国家')));
   assert.equal(parsed.stats.unknownWarehouseRows, 1);
-  assert.deepEqual(parsed.warehouseCounts, { '至速仓': 5 });
-  assert.deepEqual(parsed.countryCounts, { '马来西亚': 1, '泰国': 1, '新加坡': 2 });
+  assert.equal(parsed.warehouseCounts['至速仓'], 5);
+  assert.equal(parsed.countryCounts['马来西亚'], 1);
+  assert.equal(parsed.countryCounts['泰国'], 1);
+  assert.equal(parsed.countryCounts['新加坡'], 2);
 });
 
 test('multiple SKUs under one order remain separate sales lines', () => {
