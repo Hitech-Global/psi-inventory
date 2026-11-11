@@ -3,7 +3,7 @@
 
 const SESSION_KEY='quotation_import_id';
 const MAX_ROWS=5000;
-const MAX_FILE_BYTES=10*1024*1024;
+const MAX_FILE_BYTES=50*1024*1024;
 let pollTimer=null;
 let elapsedTimer=null;
 let currentModal=null;
@@ -264,7 +264,7 @@ function openModal(){
   selectedBrand=typeof window.getQuotationManagementBrand==='function'?window.getQuotationManagementBrand():'Netac';
   selectedQuoteDate=new Date().toISOString().slice(0,10);
   quoteDateTouched=false;
-  m.innerHTML='<div class="qm-dialog qip-dialog"><div class="qip-titlebar"><div class="qip-dots"><span class="qip-dot r"></span><span class="qip-dot y"></span><span class="qip-dot g"></span></div><div class="qip-title">智能导入报价</div></div><div class="qip-body"><div class="qip-setup"><div class="qip-fields"><div class="qip-field"><label>供应商</label><select id="qip-supplier" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>品牌（工作表未提供品牌时使用）</label><select id="qip-brand" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>默认报价日期</label><input type="date" id="qip-date" value="'+selectedQuoteDate+'"></div></div><div class="qip-drop"><input type="file" id="qm-file" accept=".xlsx,.xls,.csv" disabled><div class="qip-sub" style="margin-top:10px">自动识别 Excel 所有工作表、表头位置和常见供应商字段，不需要先改成 PSI 模板。</div><div class="qip-sub" style="margin-top:5px">未匹配 PSI SKU 的供应商料号也可以导入；FOB 空白或 0 表示未报价。</div></div><div class="qip-options"><div>重复供应商 + SKU/料号 + 品牌 + 报价日期</div><select id="qm-mode"><option value="skip">跳过已有记录</option><option value="overwrite">覆盖已有记录</option></select></div><div id="qm-preview"></div></div><div id="qm-import-live"></div></div><div class="qip-footer"><button class="qip-btn" id="qm-cancel">取消</button><button class="qip-btn primary" id="qm-submit" disabled>开始导入</button></div></div>';
+  m.innerHTML='<div class="qm-dialog qip-dialog"><div class="qip-titlebar"><div class="qip-dots"><span class="qip-dot r"></span><span class="qip-dot y"></span><span class="qip-dot g"></span></div><div class="qip-title">智能导入报价</div></div><div class="qip-body"><div class="qip-setup"><div class="qip-fields"><div class="qip-field"><label>供应商</label><select id="qip-supplier" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>品牌（工作表未提供品牌时使用）</label><select id="qip-brand" disabled><option>正在加载…</option></select></div><div class="qip-field"><label>默认报价日期</label><input type="date" id="qip-date" value="'+selectedQuoteDate+'"></div></div><div class="qip-drop"><input type="file" id="qm-file" accept=".xlsx,.xls,.csv" disabled><div class="qip-sub" style="margin-top:10px">自动识别 Excel 所有工作表、表头位置和常见供应商字段，不需要先改成 PSI 模板。</div><div class="qip-sub" style="margin-top:5px">未匹配 PSI SKU 的供应商料号也可以导入；FOB 空白或 0 表示未报价。单个文件最大 50MB，单次最多 5,000 行。</div></div><div class="qip-options"><div>重复供应商 + SKU/料号 + 品牌 + 报价日期</div><select id="qm-mode"><option value="skip">跳过已有记录</option><option value="overwrite">覆盖已有记录</option></select></div><div id="qm-preview"></div></div><div id="qm-import-live"></div></div><div class="qip-footer"><button class="qip-btn" id="qm-cancel">取消</button><button class="qip-btn primary" id="qm-submit" disabled>开始导入</button></div></div>';
   document.body.appendChild(m);currentRows=[];currentRun=null;needsRefresh=false;previewOffset=0;recognizedSheets=[];ignoredSheets=[];
   const active=getId();
   if(active){
@@ -292,7 +292,7 @@ function openModal(){
   };
   $('#qm-file',m).onchange=async e=>{
     const f=e.target.files[0];if(!f)return;
-    if(f.size>MAX_FILE_BYTES)return fileError(m,'文件过大。单个报价导入文件最大 10MB，请拆分后重试。');
+    if(f.size>MAX_FILE_BYTES)return fileError(m,'文件过大。单个报价导入文件最大 50MB，请压缩无关图片或拆分工作表后重试。');
     try{
       const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});
       const sheets=wb.SheetNames.map(name=>({name,rows:XLSX.utils.sheet_to_json(wb.Sheets[name],{header:1,defval:''})}));
