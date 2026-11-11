@@ -160,6 +160,8 @@ assert.match(management,/currency_symbols/,'quotation management should render u
 assert.doesNotMatch(fast,/const BRAND_CCY\s*=/,'fast import must not hardcode brand currencies');
 assert.match(server,/default_quote_currency/,'quotation server should use brand settings for currency');
 assert.match(progress,/setBrandCurrencies/,'smart-import preview should initialize dynamic currency settings');
+assert.match(progress,/const MAX_FILE_BYTES=50\*1024\*1024/,'smart quotation import should accept Excel workbooks up to 50MB');
+assert.match(progress,/单个文件最大 50MB/,'smart quotation import UI should state the new workbook size limit');
 assert.match(progress,/parseSheetRows/,'browser import should parse every worksheet');
 assert.match(progress,/inferQuoteDate\(sheets,f\.name\)/,'browser import should infer quote date from workbook title or filename');
 assert.match(progress,/quoteDateTouched/,'a manually selected quote date must not be overwritten by inference');
@@ -175,6 +177,8 @@ assert.doesNotMatch(bootstrap.patchQuotationServerSource(server),/BRAND_CCY/,'se
 const serverEntry=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
 const patchedServer=bootstrap.patchServerSource(serverEntry);
 assert.match(patchedServer,/QUOTATION-IMPORT-BODY-GUARD-V1/,'bootstrap should add the import body-size guard');
+assert.match(patchedServer,/quotationImportJsonParser = express\.json\(\{ limit: '25mb' \}\)/,'bootstrap should allow up to 25MB for parsed quotation import rows');
+assert.match(patchedServer,/limit: '25mb'/,'bootstrap error payload should report the 25MB quotation import body limit');
 assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, transaction, genId/,'bootstrap should register smart import with transaction support');
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
