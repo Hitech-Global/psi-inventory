@@ -194,10 +194,14 @@ const fakeApp={
 };
 const fakeQuery=(sql,params)=>{
   operationOrder.push('query:'+sql.slice(0,40));
-  if(sql.includes('FROM suppliers WHERE status='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};\n  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};
+  if(sql.includes('FROM suppliers WHERE status='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};
+  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};
   if(sql.includes('FROM brand_settings'))return {rows:[{brand:'Netac',procurement_status:'active',default_quote_currency:'USD'}]};
   if(sql.includes('FROM currencies WHERE status='))return {rows:[{code:'USD'}]};
-  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',product_name:'SSD Drive',color_spec:'256GB',barcode:'123'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',product_name:'USB Drive',color_spec:'128GB',barcode:'456'}]};\n  if(sql.includes('FROM skus WHERE brand IS NOT NULL'))return {rows:[{brand:'Netac'}]};\n  if(sql.includes('FROM quotation_prices WHERE brand IS NOT NULL'))return {rows:[]};\n  if(sql.includes('FROM quotation_sku_mappings')&&!sql.includes('WHERE supplier_id='))return {rows:[{supplier_id:'supplier-netac',brand:'Netac',supplier_part_no:'LEGACY-01',supplier_part_no_key:'LEGACY-01',psi_sku_code:'SKU-2'}]};
+  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',product_name:'SSD Drive',color_spec:'256GB',barcode:'123'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',product_name:'USB Drive',color_spec:'128GB',barcode:'456'}]};
+  if(sql.includes('FROM skus WHERE brand IS NOT NULL'))return {rows:[{brand:'Netac'}]};
+  if(sql.includes('FROM quotation_prices WHERE brand IS NOT NULL'))return {rows:[]};
+  if(sql.includes('FROM quotation_sku_mappings')&&!sql.includes('WHERE supplier_id='))return {rows:[{supplier_id:'supplier-netac',brand:'Netac',supplier_part_no:'LEGACY-01',supplier_part_no_key:'LEGACY-01',psi_sku_code:'SKU-2'}]};
   if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
   if(sql.includes('WITH incoming'))return {rows:[{supplier_id:'supplier-netac',sku_code:'SKU-2',brand:'Netac',quote_date:'2026-11-04'}]};
   return {rows:[]};
