@@ -325,9 +325,49 @@ module.exports=function installQuotationImportFast(deps){
       try{await savePgRun(importId,{status:'failed',phase:'failed',percent:0,error:e&&e.message?e.message:String(e),message:'报价导入失败'});}catch(e2){console.error('[quotation-import] failed to persist failure',importId,e2&&e2.message?e2.message:e2);}
     }
   }
+  function buildImportOptions(){
+    const supplierRows=query("SELECT id,name,associated_brands,default_currency,status FROM suppliers WHERE status='active' ORDER BY name").rows;
+    const suppliers=supplierRows.map(x=>({
+      id:clean(x.id),
+      name:clean(x.name),
+      brands:parseIdList(x.associated_brands),
+      default_currency:clean(x.default_currency).toUpperCase()
+    })).filter(x=>x.id&&x.name);
+    const skuRows=query("SELECT sku_code,brand,category,model,product_name,color_spec,barcode FROM skus WHERE COALESCE(status,'normal')<>'deleted' ORDER BY brand,sku_code").rows;
+    const skus=skuRows.map(x=>({
+      sku_code:clean(x.sku_code),
+      brand:clean(x.brand),
+      category:clean(x.category),
+      model:clean(x.model),
+      product_name:clean(x.product_name),
+      color_spec:clean(x.color_spec),
+      barcode:clean(x.barcode)
+    })).filter(x=>x.sku_code&&x.brand);
+    const mappingRows=query("SELECT supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code FROM quotation_sku_mappings").rows;
+    const mappings=mappingRows.map(x=>({
+      supplier_id:clean(x.supplier_id),
+      brand:clean(x.brand),
+      supplier_part_no:clean(x.supplier_part_no||x.supplier_part_no_key),
+      supplier_part_no_key:clean(x.supplier_part_no_key),
+      psi_sku_code:clean(x.psi_sku_code)
+    }));
+    const brandSet=new Map();
+    query("SELECT brand FROM brand_settings WHERE brand IS NOT NULL AND brand<>''").rows.forEach(x=>{
+      const name=clean(x.brand);if(name)brandSet.set(name.toLowerCase(),name);
+    });
+    skus.forEach(x=>brandSet.set(x.brand.toLowerCase(),x.brand));
+    query("SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>''").rows.forEach(x=>{
+      const name=clean(x.brand);if(name&&!brandSet.has(name.toLowerCase()))brandSet.set(name.toLowerCase(),name);
+    });
+    suppliers.forEach(x=>x.brands.forEach(name=>{
+      const brand=clean(name);if(brand&&!brandSet.has(brand.toLowerCase()))brandSet.set(brand.toLowerCase(),brand);
+    }));
+    return {suppliers,skus,mappings,brands:[...brandSet.values()].sort((a,b)=>a.localeCompare(b))};
+  }
+
   app.get('/api/quotation-management/import-options',requireApiPermission('quotation_view'),asyncHandler((req,res)=>{
     try{
-      const base=importOptions()||{};
+      const base=buildImportOptions();
       const brandCurrencies={};
       query("SELECT brand, default_quote_currency FROM brand_settings WHERE default_quote_currency IS NOT NULL AND default_quote_currency<>''").rows.forEach(x=>{brandCurrencies[clean(x.brand)]=clean(x.default_quote_currency).toUpperCase();});
       const currencies=query("SELECT code,name,symbol FROM currencies WHERE status='active' ORDER BY sort_order").rows;

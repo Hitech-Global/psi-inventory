@@ -194,10 +194,14 @@ const fakeApp={
 };
 const fakeQuery=(sql,params)=>{
   operationOrder.push('query:'+sql.slice(0,40));
-  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'RMB',status:'active'}]};
+  if(sql.includes('FROM suppliers WHERE status='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};
+  if(sql.includes('FROM suppliers WHERE id='))return {rows:[{id:'supplier-netac',name:'Netac',associated_brands:'["Netac"]',default_currency:'USD',status:'active'}]};
   if(sql.includes('FROM brand_settings'))return {rows:[{brand:'Netac',procurement_status:'active',default_quote_currency:'USD'}]};
   if(sql.includes('FROM currencies WHERE status='))return {rows:[{code:'USD'}]};
-  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',color_spec:'256GB'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',color_spec:'128GB'}]};
+  if(sql.includes('FROM skus WHERE COALESCE'))return {rows:[{sku_code:'SKU-1',brand:'Netac',category:'SSD',model:'Model 1',product_name:'SSD Drive',color_spec:'256GB',barcode:'123'},{sku_code:'SKU-2',brand:'Netac',category:'USB',model:'Model 2',product_name:'USB Drive',color_spec:'128GB',barcode:'456'}]};
+  if(sql.includes('FROM skus WHERE brand IS NOT NULL'))return {rows:[{brand:'Netac'}]};
+  if(sql.includes('FROM quotation_prices WHERE brand IS NOT NULL'))return {rows:[]};
+  if(sql.includes('FROM quotation_sku_mappings')&&!sql.includes('WHERE supplier_id='))return {rows:[{supplier_id:'supplier-netac',brand:'Netac',supplier_part_no:'LEGACY-01',supplier_part_no_key:'LEGACY-01',psi_sku_code:'SKU-2'}]};
   if(sql.includes('FROM quotation_sku_mappings WHERE supplier_id='))return {rows:[]};
   if(sql.includes('WITH incoming'))return {rows:[{supplier_id:'supplier-netac',sku_code:'SKU-2',brand:'Netac',quote_date:'2026-11-04'}]};
   return {rows:[]};
@@ -213,6 +217,16 @@ fastModule({
   requireApiPermission:()=>()=>{}
 });
 const response={statusCode:200,status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};
+const optionsResponse={statusCode:200,status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};
+await routes['GET /api/quotation-management/import-options']({},optionsResponse);
+assert.equal(optionsResponse.statusCode,200,'smart quotation import options endpoint should return successfully');
+assert.equal(optionsResponse.body.suppliers[0].id,'supplier-netac','supplier options should come from active supplier master');
+assert.deepEqual(optionsResponse.body.suppliers[0].brands,['Netac'],'supplier brand associations should be parsed');
+assert.equal(optionsResponse.body.suppliers[0].default_currency,'USD','supplier default currency should be exposed');
+assert.equal(optionsResponse.body.skus.length,2,'active SKU master records should be returned');
+assert.equal(optionsResponse.body.skus[0].brand,'Netac','SKU brand should be included for exact matching');
+assert.equal(optionsResponse.body.mappings[0].psi_sku_code,'SKU-2','saved supplier part mappings should be returned');
+assert(optionsResponse.body.brands.includes('Netac'),'brand options should include the active SKU brand');
 await routes['POST /api/quotation-management/import']({
   body:{
     supplier_id:'supplier-netac',brand:'Netac',quote_date:'2026-11-04',duplicate_mode:'skip',import_id:'test-import',
