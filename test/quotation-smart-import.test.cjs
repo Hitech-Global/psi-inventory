@@ -183,7 +183,7 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261105b/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261111a/,'bootstrap should load smart-import normalizer');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 
