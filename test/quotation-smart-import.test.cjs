@@ -172,6 +172,10 @@ assert.match(progress,/currentModal=m;m\.className='qm-modal qip-modal'/,'quotat
 assert.match(progress,/\.qip-dialog\{[^}]*max-height:calc\(100dvh - 32px\)[^}]*display:flex;flex-direction:column/s,'quotation dialog must be a viewport-bounded flex column');
 assert.match(progress,/\.qip-body\{[^}]*flex:1 1 auto;min-height:0;overflow-y:auto/s,'long SKU preview must scroll inside the dialog');
 assert.match(progress,/\.qip-footer\{[^}]*flex:0 0 auto/s,'start import and cancel actions must remain visible below scrollable content');
+assert.match(progress,/cancel\.hidden=terminal\(run\)/,'after import ends the extra secondary Close button must be hidden');
+assert.match(progress,/cancel\.style\.display=terminal\(run\)\?'none':''/,'terminal-state secondary action must be visually removed');
+assert.match(progress,/if\(terminal\(run\)\)\{submit\.disabled=false;submit\.textContent='关闭';submit\.dataset\.close='1';\}/,'the primary action stays usable as the single Close button');
+assert.match(progress,/if\(!terminal\(run\)\)cancel\.textContent='后台继续'/,'running imports retain the background-continue action');
 assert.match(progress,/\.qip-preview-wrap\{overflow:auto;max-height:330px/,'the unmatched SKU table must keep independent scrolling');
 assert.match(progress,/@media \(max-width:700px\)/,'quotation import dialog must adapt to narrow viewports');
 
@@ -192,10 +196,10 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261112b/,'bootstrap should load smart-import normalizer');
-assert.match(patchedIndex,/quotation-locale\.js\?v=20261112b/,'bootstrap must load quotation page locale');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261112c/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-locale\.js\?v=20261112c/,'bootstrap must load quotation page locale');
 assert(patchedIndex.indexOf('quotation-locale.js')<patchedIndex.indexOf('quotation-management.js'),'locale must load before quotation management');
-assert.match(patchedIndex,/quotation-import-progress\.js\?v=20261112b/,'bootstrap must invalidate the previous cached quote import dialog');
+assert.match(patchedIndex,/quotation-import-progress\.js\?v=20261112c/,'bootstrap must invalidate the previous cached quote import dialog');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 
