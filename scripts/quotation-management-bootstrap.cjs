@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const SERVER_MARKER='// QUOTATION-MANAGEMENT-V1';
 const BODY_GUARD_MARKER='// QUOTATION-IMPORT-BODY-GUARD-V1';
-const ASSET_VERSION='20261111a';
+const ASSET_VERSION='20261112a';
 const INDEX_MARKER='<script src="quotation-management.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_NORMALIZER_MARKER='<script src="quotation-import-normalizer.js?v='+ASSET_VERSION+'"></script>';
 const IMPORT_PROGRESS_MARKER='<script src="quotation-import-progress.js?v='+ASSET_VERSION+'"></script>';

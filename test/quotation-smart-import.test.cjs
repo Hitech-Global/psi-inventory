@@ -166,6 +166,15 @@ assert.match(progress,/parseSheetRows/,'browser import should parse every worksh
 assert.match(progress,/inferQuoteDate\(sheets,f\.name\)/,'browser import should infer quote date from workbook title or filename');
 assert.match(progress,/quoteDateTouched/,'a manually selected quote date must not be overwritten by inference');
 assert.match(progress,/未关联的报价仍可导入/,'unlinked rows should be explicitly allowed in preview');
+
+// The quote preview can be taller than the viewport; its action footer must stay visible.
+assert.match(progress,/currentModal=m;m\.className='qm-modal qip-modal'/,'quotation import must use its own modal layout scope');
+assert.match(progress,/\.qip-dialog\{[^}]*max-height:calc\(100dvh - 32px\)[^}]*display:flex;flex-direction:column/s,'quotation dialog must be a viewport-bounded flex column');
+assert.match(progress,/\.qip-body\{[^}]*flex:1 1 auto;min-height:0;overflow-y:auto/s,'long SKU preview must scroll inside the dialog');
+assert.match(progress,/\.qip-footer\{[^}]*flex:0 0 auto/s,'start import and cancel actions must remain visible below scrollable content');
+assert.match(progress,/\.qip-preview-wrap\{overflow:auto;max-height:330px/,'the unmatched SKU table must keep independent scrolling');
+assert.match(progress,/@media \(max-width:700px\)/,'quotation import dialog must adapt to narrow viewports');
+
 assert.match(fast,/quotation_sku_mappings/,'server should persist supplier part-number mappings');
 assert.match(fast,/match_status/,'server should store SKU match status');
 assert.match(server,/event\.match_status === 'unlinked'/,'unlinked rows must not use internal purchase baselines');
@@ -183,7 +192,8 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261111a/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261112a/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-import-progress\.js\?v=20261112a/,'bootstrap must invalidate the previous cached quote import dialog');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 
