@@ -35,6 +35,8 @@ on:
       - 'test/ci-list-inline-logistics-static.test.cjs'
       - 'test/ci-list-inline-logistics-dates.test.cjs'
       - 'test/ci-wac-status-column.test.cjs'
+      - 'test/ci-wac-english-mode.test.cjs'
+      - 'wac-notification-ui.js'
       - 'test/global-import-progress-regression.test.cjs'
       - 'assets/ci-summary-compact.js'
       - 'test/ci-summary-compact.test.cjs'
@@ -135,6 +137,7 @@ jobs:
           node --check test/ci-list-inline-logistics-static.test.cjs
           node --check test/ci-list-inline-logistics-dates.test.cjs
           node --check test/ci-wac-status-column.test.cjs
+          node --check test/ci-wac-english-mode.test.cjs
           node --check test/global-import-progress-regression.test.cjs
           node --check assets/ci-list-freight.js
           node --check assets/ci-shared-freight-display.js
@@ -239,6 +242,8 @@ jobs:
         run: node --test test/ci-list-inline-logistics-dates.test.cjs
       - name: Test explicit WAC status and batch-level actions
         run: node --test test/ci-wac-status-column.test.cjs
+      - name: Test English CI WAC and CC labels
+        run: node --test test/ci-wac-english-mode.test.cjs
       - name: Test staged progress across sales and inventory imports
         run: node --test test/global-import-progress-regression.test.cjs
       - name: Test CI inline WAC integration
