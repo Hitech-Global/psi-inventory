@@ -13,6 +13,33 @@
   function tr(key, fallback) {
     return typeof global.t === 'function' ? global.t(key, fallback) : fallback;
   }
+  // Only translate fixed module UI phrases; never rewrite SKU, batch, price, or note values.
+  var CI_WAC_EN = {"该物流批次尚未进入 WAC 待确认阶段。请检查物流状态是否已到仓，以及 PL 是否存在有效商品数量；满足条件后系统会将状态更新为待确认 WAC。":"This batch is not eligible for WAC confirmation yet. Verify warehouse arrival and positive PL quantities; it will then become pending WAC confirmation.","不会删除物流批次、CI、PL、付款记录，也不会修改库存数量、当前WAC或WAC历史。":"This does not delete logistics, CI, PL, or payment records, and does not change inventory quantities, current WAC, or WAC history.","恢复后需要重新导入原库存并手动确认，不会自动计算。":"After restoring, reimport opening inventory and confirm manually. No calculation is triggered automatically.","当前批次暂时无法加载WAC计算详情，请检查物流批次、PL明细及WAC阻断原因后重试。":"WAC calculation details cannot be loaded. Check the batch, PL items, and any WAC blockers before retrying.","历史批次已人工核算，无需再次计算":"Historical batch calculated manually; no further WAC calculation is required","该物流批次已标记为无需计算":"This logistics batch was marked as no calculation required","确定将物流批次":"Mark logistics batch","标记为无需计算吗？":"as no WAC calculation required?","确定恢复物流批次":"Restore logistics batch","的WAC待确认任务吗？":"to the pending WAC queue?","WAC处理状态":"WAC Processing Status","物流批次详情 / WAC成本详情":"Logistics Batch / WAC Cost Details","物流批次详情 / WAC":"Logistics Batch / WAC","物流批次详情":"Logistics Batch Details","物流费用概览":"Logistics Cost Overview","PL装箱明细":"PL Packing Details","CTN数量":"Cartons","总数量":"Total Quantity","总毛重(KG)":"Gross Weight (kg)","总净重(KG)":"Net Weight (kg)","总体积(CBM)":"Total Volume (CBM)","清关方式":"Customs Clearance","天":"days","无需计算":"No Calculation Required","暂不可计算":"Not Ready for WAC","WAC预览":"WAC Preview","处理原因（必填）":"Reason (required)","标记无需计算":"Mark as No Calculation","确认标记无需计算":"Confirm No Calculation","恢复WAC待确认任务":"Restore WAC Pending","确认恢复":"Confirm Restore","取消":"Cancel","关闭":"Close","请填写无需计算的原因":"Enter a reason for skipping WAC","处理中":"Processing","已标记为无需计算":"Marked as no calculation required","标记无需计算失败":"Failed to mark WAC as not required","恢复中":"Restoring","批次已恢复到WAC待确认列表":"Batch restored to pending WAC confirmation","恢复失败，请刷新后重试":"Restore failed. Refresh and retry","物流批次详情加载失败":"Failed to load logistics batch details","当前版本未加载WAC CC功能，请刷新页面后重试":"WAC CC is unavailable in this version. Refresh and retry","可以在CI列表对应物流批次行点击 CC 补充发送。":"You can send additional CC notifications from the logistics batch row in the CI list."};
+  var CI_WAC_EN_TERMS = Object.entries(CI_WAC_EN).sort(function(a,b){return b[0].length-a[0].length;});
+  function localizeCiWacModal() {
+    if(typeof global.getLang!=='function'||global.getLang()!=='en')return;
+    var dialog=document.getElementById('modal-content')||document.querySelector('#modal-overlay .modal');
+    if(!dialog||!document.createTreeWalker)return;
+    var walker=document.createTreeWalker(dialog,4);
+    var node;
+    while((node=walker.nextNode())){
+      var parent=node.parentElement;
+      if(parent&&/^(INPUT|TEXTAREA|SCRIPT|STYLE)$/.test(parent.tagName))continue;
+      var value=node.nodeValue||'';
+      if(!/[\u3400-\u9fff]/.test(value))continue;
+      var next=value;
+      for(var i=0;i<CI_WAC_EN_TERMS.length;i++){
+        var phrase=CI_WAC_EN_TERMS[i];
+        if(next.indexOf(phrase[0])!==-1)next=next.split(phrase[0]).join(phrase[1]);
+      }
+      if(next!==value)node.nodeValue=next;
+    }
+  }
+  function openLocalizedCiWacModal() {
+    global.openModal.apply(global,arguments);
+    localizeCiWacModal();
+  }
+
   function date(value) {
     return value ? (typeof global.fmtDate === 'function' ? global.fmtDate(value) : value) : '—';
   }
@@ -104,7 +131,7 @@
       '<div style="padding:12px 14px;border:1px solid var(--border);border-radius:9px;background:var(--bg-secondary)">' +
       '<strong>无需计算</strong><div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">' +
       esc(reason || '该物流批次已标记为无需计算') + '</div></div></div></div>';
-    global.openModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
+    openLocalizedCiWacModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
       '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
       'modal-wac');
   }
@@ -117,7 +144,7 @@
       '<strong>暂不可计算</strong><div style="margin-top:6px;font-size:12px;color:var(--text-secondary)">' +
       '该物流批次尚未进入 WAC 待确认阶段。请检查物流状态是否已到仓，以及 PL 是否存在有效商品数量；满足条件后系统会将状态更新为待确认 WAC。' +
       '</div></div></div></div>';
-    global.openModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
+    openLocalizedCiWacModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
       '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
       'modal-wac');
   }
@@ -156,8 +183,9 @@
         }
         var title = modal.querySelector('.modal-title');
         if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + (log.batch_no || id);
+        localizeCiWacModal();
       } else {
-        global.openModal('物流批次详情 - ' + (log.batch_no || id),
+        openLocalizedCiWacModal('物流批次详情 - ' + (log.batch_no || id),
           '<div class="form-card" style="box-shadow:none;padding:0">' + renderLogisticsDetail(log, plData) +
           '<div class="detail-section"><h3>WAC预览</h3><div style="color:var(--text-secondary);font-size:12px">当前批次暂时无法加载WAC计算详情，请检查物流批次、PL明细及WAC阻断原因后重试。</div></div></div>',
           '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
@@ -178,7 +206,7 @@
       '<label for="ci-wac-exclusion-reason" style="display:block;margin-bottom:6px;font-size:12px;color:var(--text-secondary)">处理原因（必填）</label>' +
       '<textarea id="ci-wac-exclusion-reason" rows="3" style="width:100%;box-sizing:border-box;border:1px solid var(--border-color);border-radius:8px;padding:9px 10px;resize:vertical">历史批次已人工核算，无需再次计算</textarea>' +
       '<div style="margin-top:9px;font-size:12px;color:var(--text-secondary)">不会删除物流批次、CI、PL、付款记录，也不会修改库存数量、当前WAC或WAC历史。</div>';
-    global.openModal('标记无需计算 - ' + (excludeContext.batchNo || excludeContext.batchId), body,
+    openLocalizedCiWacModal('标记无需计算 - ' + (excludeContext.batchNo || excludeContext.batchId), body,
       '<button class="btn btn-secondary" onclick="closeModal()">取消</button>' +
       '<button class="btn btn-primary" id="ci-wac-exclusion-submit" onclick="submitCIWacExclude()">确认标记无需计算</button>',
       'modal-wac');
@@ -216,7 +244,7 @@
     restoreContext = { batchId: String(batchId || ''), ciId: String(ciId || ''), batchNo: String(batchNo || '') };
     var body = '<div style="font-size:13px">确定恢复物流批次 <strong>' + esc(restoreContext.batchNo || restoreContext.batchId) +
       '</strong> 的WAC待确认任务吗？恢复后需要重新导入原库存并手动确认，不会自动计算。</div>';
-    global.openModal('恢复WAC待确认任务', body,
+    openLocalizedCiWacModal('恢复WAC待确认任务', body,
       '<button class="btn btn-secondary" onclick="closeModal()">取消</button>' +
       '<button class="btn btn-primary" id="ci-wac-restore-submit" onclick="submitCIWacRestore()">确认恢复</button>',
       'modal-wac');
