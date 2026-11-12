@@ -32,11 +32,14 @@ const right={
   querySelector(selector){
     if(selector==='.qm-brand')return brand;
     if(selector==='.qm-report-title')return reportTitle;
+    if(selector==='.qm-report-title .qm-brand .qm-badge')return badge;
+    if(selector==='[data-qm-brief="1"]')return brief;
     return null;
   },
   contains(){return true;}
 };
 const context={
+  window:{QuotationLocale:null},
   document:{getElementById:id=>id==='qm-right'?right:null},
   latestSummary:{report:{brand:'Netac',avg_change_pct:1}},
   ensureCss(){},
