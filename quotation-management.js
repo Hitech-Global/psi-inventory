@@ -152,11 +152,11 @@ function list(){
   const rows=(S.data&&S.data.rows)||[];
   const up=rows.filter(x=>typeof x.vs_previous_pct==='number'&&x.vs_previous_pct>0).length;
   const down=rows.filter(x=>typeof x.vs_previous_pct==='number'&&x.vs_previous_pct<0).length;
-  $('#qm-count').textContent='共 '+rows.length+' 个有效 SKU';
-  for(const [mode,count,label] of [['up',up,'↑ 涨价 '],['down',down,'↓ 降价 ']]){
+  $('#qm-count').textContent=qmLabel('共 ')+rows.length+qmLabel(' 个有效 SKU');
+  for(const [mode,count,label] of [['up',up,'↑ '],['down',down,'↓ ']]){
     const button=$('#qm-sort-'+mode);
     if(!button)continue;
-    button.textContent=label+count;
+    button.textContent=label+qmLabel(mode==='up'?'涨价':'降价')+' '+count;
     button.classList.toggle('active',S.sort===mode);
     button.classList.toggle(mode,true);
     button.setAttribute('aria-pressed',String(S.sort===mode));

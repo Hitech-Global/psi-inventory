@@ -89,7 +89,8 @@ const ui={
     {sku_code:'C',psi_sku_code:'C',brand:'Netac',product_type:'SSD',vs_previous_pct:-10,vs_purchase_pct:null,latest_date:'2026-11-11'},
     {sku_code:'D',psi_sku_code:'D',brand:'Netac',product_type:'SSD',vs_previous_pct:5,vs_purchase_pct:null,latest_date:'2026-11-11'},
   ]},sort:''},
-  $:selector=>nodes[selector],E:v=>String(v||''),change:()=>'',quoteMoney:()=>'',sku:()=>{}
+  $:selector=>nodes[selector],E:v=>String(v||''),change:()=>'',quoteMoney:()=>'',sku:()=>{},
+  qmLabel:key=>({'涨价':'Price Increases','降价':'Price Decreases','共 ':'Total ',' 个有效 SKU':' active SKUs'}[key]||key)
 };
 vm.runInNewContext(browser.slice(a,b)+'\nthis.testList=list;',ui);
 const positions=()=>[...nodes['#qm-body'].innerHTML.matchAll(/data-s="([^"]+)"/g)].map(m=>m[1]);
@@ -99,7 +100,9 @@ ui.S.sort='up';ui.testList();
 assert.deepEqual(positions(),['B','D','A','C'],'increases lead, largest increase first');
 ui.S.sort='down';ui.testList();
 assert.deepEqual(positions(),['C','A','B','D'],'decreases lead without hiding other SKUs');
-assert.equal(nodes['#qm-count'].textContent,'共 4 个有效 SKU');
+assert.equal(nodes['#qm-count'].textContent,'Total 4 active SKUs');
+assert.equal(nodes['#qm-sort-up'].textContent,'↑ Price Increases 2');
+assert.equal(nodes['#qm-sort-down'].textContent,'↓ Price Decreases 1');
 const headerStart=browser.indexOf('<thead><tr><th>SKU</th>');
 const headerEnd=browser.indexOf('</tr></thead>',headerStart);
 assert(headerStart>=0&&headerEnd>headerStart);

@@ -43,6 +43,12 @@ test('quotation locale translates English labels without touching business data'
   assert.equal(window.QuotationLocale.label('报价管理'),'Quotation Management');
   assert.equal(window.QuotationLocale.label('导入报价'),'Import Quotes');
   assert.equal(window.QuotationLocale.label('报价日期'),'Quote Date');
+  assert.equal(window.QuotationLocale.label('涨价'),'Price Increases');
+  assert.equal(window.QuotationLocale.label('降价'),'Price Decreases');
+  assert.equal(window.QuotationLocale.label('共 '),'Total ');
+  assert.equal(window.QuotationLocale.label(' 个有效 SKU'),' active SKUs');
+  assert.match(source,/qmLabel\('共 '\)\+rows\.length\+qmLabel\(' 个有效 SKU'\)/);
+  assert.match(source,/qmLabel\(mode==='up'\?'涨价':'降价'\)/);
   assert.equal(window.QuotationLocale.convert('Netac 品牌报告','en'),'Netac Brand Report');
   assert.equal(window.QuotationLocale.convert('NT01N535S-240G-S3X','en'),'NT01N535S-240G-S3X');
   window.getLang=()=> 'zh';
@@ -52,7 +58,7 @@ test('quotation locale translates English labels without touching business data'
 test('quotation bootstrap inserts locale script before page scripts',()=>{
   const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
   const patched=bootstrap.patchIndexSource(index);
-  assert(patched.includes('quotation-locale.js?v=20261112d'));
+  assert(patched.includes('quotation-locale.js?v=20261112e'));
   assert(patched.indexOf('quotation-locale.js')<patched.indexOf('quotation-management.js'));
   assert.equal(bootstrap.patchIndexSource(patched),patched);
 });

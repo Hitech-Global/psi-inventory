@@ -196,10 +196,10 @@ assert.match(patchedServer,/quotation-import-fast\.js'\)\(\{ app, query, run, tr
 assert.equal(bootstrap.patchServerSource(patchedServer),patchedServer,'server bootstrap patch should be idempotent');
 const indexEntry=fs.readFileSync(path.join(__dirname,'..','index.html'),'utf8');
 const patchedIndex=bootstrap.patchIndexSource(indexEntry);
-assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261112d/,'bootstrap should load smart-import normalizer');
-assert.match(patchedIndex,/quotation-locale\.js\?v=20261112d/,'bootstrap must load quotation page locale');
+assert.match(patchedIndex,/quotation-import-normalizer\.js\?v=20261112e/,'bootstrap should load smart-import normalizer');
+assert.match(patchedIndex,/quotation-locale\.js\?v=20261112e/,'bootstrap must load quotation page locale');
 assert(patchedIndex.indexOf('quotation-locale.js')<patchedIndex.indexOf('quotation-management.js'),'locale must load before quotation management');
-assert.match(patchedIndex,/quotation-import-progress\.js\?v=20261112d/,'bootstrap must invalidate the previous cached quote import dialog');
+assert.match(patchedIndex,/quotation-import-progress\.js\?v=20261112e/,'bootstrap must invalidate the previous cached quote import dialog');
 assert.equal(bootstrap.patchIndexSource(patchedIndex),patchedIndex,'index bootstrap patch should be idempotent');
 
 
