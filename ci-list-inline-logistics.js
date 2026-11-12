@@ -52,7 +52,7 @@
       cc: { zh: 'CC', en: 'CC', id: 'CC' },
       view: { zh: '查看原因', en: 'View reason', id: 'Lihat alasan' },
       status: { zh: 'WAC 状态', en: 'WAC Status', id: 'Status WAC' },
-      notReadyReason: { zh: wacUiText('notReadyReason'), en: 'This batch is not yet eligible for WAC confirmation. Check the logistics batch details and PL quantity.', id: 'Batch ini belum siap dikonfirmasi untuk WAC. Periksa detail logistik dan jumlah PL.' }
+      notReadyReason: { zh: '该批次尚未进入 WAC 待确认阶段；请查看物流批次详情及 PL 数量。', en: 'This batch is not yet eligible for WAC confirmation. Check the logistics batch details and PL quantity.', id: 'Batch ini belum siap dikonfirmasi untuk WAC. Periksa detail logistik dan jumlah PL.' }
     };
     return (labels[key] && (labels[key][lang] || labels[key].zh)) || key;
   }
@@ -67,7 +67,7 @@
     };
     var item = labels[status] || labels.not_ready;
     var title = status === 'not_ready'
-      ? '该批次尚未进入 WAC 待确认阶段；请查看物流批次详情及 PL 数量。'
+      ? wacUiText('notReadyReason')
       : '';
     return '<td class="ci-list-wac-status-cell" title="' + esc(title) + '">' +
       '<span class="ci-list-wac-badge ci-list-wac-badge-' + item[1] + '">' +
