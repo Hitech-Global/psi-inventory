@@ -200,18 +200,43 @@ module.exports = function installQuotationManagement(deps) {
   const activeSkuJoinSql = ` INNER JOIN skus sm ON UPPER(TRIM(sm.sku_code))=UPPER(TRIM(COALESCE(NULLIF(q.psi_sku_code,''),q.sku_code))) AND LOWER(TRIM(sm.brand))=LOWER(TRIM(q.brand))`;
   const activeSkuWhereSql = "LOWER(TRIM(COALESCE(sm.status,'normal'))) NOT IN ('stopped','discontinued','inactive','停产','已停产','eol','end_of_life') AND LOWER(TRIM(COALESCE(sm.lifecycle_status,''))) NOT IN ('stopped','discontinued','停产','已停产','eol','end_of_life')";
 
+  // The SKU master is authoritative when its top-level category is filled.
+  // Legacy Netac SKUs have blank category fields, so fold supplier subcategories
+  // into stable parent categories without altering either source table.
+  function primaryQuotationCategory(masterCategory, importedType) {
+    const master = String(masterCategory || '').trim();
+    if (master && master !== '未分类') return master;
+    const type = String(importedType || '').trim();
+    if (!type) return '未分类';
+    const v = type.toLowerCase();
+    if (/dram|dimm|ddr[345]/i.test(v)) return 'DRAM';
+    if (/microsd|sdhc|sdxc|cfexpress|memory\s*card/i.test(v)) return 'Memory Card';
+    if (/card\s*reader/i.test(v)) return 'Card Reader';
+    if (/ssd\s*enclosure|usb\s*hub|mini\s*pc\s*hub|data\s*cable|charging\s*cable|power\s*bank/i.test(v)) return 'Accessories';
+    if (/ssd/i.test(v)) return 'SSD';
+    if (/hdd|hard\s*drive/i.test(v)) return 'HDD';
+    if (/usb|write\s*protect\s*drive/i.test(v)) return 'USB Flash';
+    if (/tws|headset|headphone|earphone|earbud/i.test(v)) return 'Audio';
+    if (/keyboard/i.test(v)) return 'Keyboard';
+    if (/mouse/i.test(v)) return 'Mouse';
+    return type;
+  }
+
   function buildSummary(req) {
     const brand = String(req.query.brand || '').trim(), type = String(req.query.product_type || '').trim(), kw = String(req.query.keyword || '').trim().toLowerCase(), from = String(req.query.date_from || '').trim(), to = String(req.query.date_to || '').trim();
     let sql = `SELECT q.*,sm.sku_code AS master_sku_code,${masterCategorySql} AS master_category FROM quotation_prices q${activeSkuJoinSql} WHERE ${activeSkuWhereSql}`, ps = [];
     if (brand) { sql += ' AND q.brand=?'; ps.push(brand); }
-    if (type) { sql += ` AND ${masterCategorySql}=?`; ps.push(type); }
     if (kw) { sql += ` AND (LOWER(q.sku_code) LIKE ? OR LOWER(q.product_type) LIKE ? OR LOWER(q.brand) LIKE ? OR LOWER(sm.sku_code) LIKE ? OR LOWER(sm.category) LIKE ?)`; const q = '%' + kw + '%'; ps.push(q, q, q, q, q); }
     if (from) { sql += ' AND q.quote_date>=?'; ps.push(from); }
     if (to) { sql += ' AND q.quote_date<=?'; ps.push(to); }
     sql += ' ORDER BY q.brand,q.sku_code,q.quote_date DESC,q.created_at DESC';
 
-    const history = query(sql, ps).rows, by = new Map();
-    for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+    const allHistory = query(sql, ps).rows, grouped = new Map();
+    for (const r of allHistory) { const k = pairKey(r.brand, r.sku_code); if (!grouped.has(k)) grouped.set(k, []); grouped.get(k).push(r); }
+    // Filter by the latest quote's primary category, keeping every historical
+    // record in the selected SKU group for accurate previous-price comparisons.
+    const by = new Map([...grouped].filter(([, a]) => !type || primaryQuotationCategory(a[0].master_category, a[0].product_type) === type));
+    const history = [...by.values()].flat();
     const brandCurrencies = getBrandCurrencyMap();
     const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked').map(a => ({ brand: a[0].brand, sku: a[0].master_sku_code, currency: a[0].currency })), brandCurrencies);
     const rows = [];
@@ -220,7 +245,7 @@ module.exports = function installQuotationManagement(deps) {
       const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = event.match_status === 'unlinked' ? null : (pmap.get(pairKey(event.brand, event.master_sku_code)) || null);
       const sameCurrency = !!latest && !!p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
       rows.push({
-        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.master_sku_code, match_status: event.match_status === 'unlinked' ? 'unlinked' : 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.master_category || '未分类',
+        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.master_sku_code, match_status: event.match_status === 'unlinked' ? 'unlinked' : 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: primaryQuotationCategory(event.master_category, event.product_type),
         latest_price: latest ? Number(latest.quote_price) : null, currency: event.currency, latest_date: event.quote_date,
         quote_status: latest ? 'quoted' : 'no_quote', previous_price: prev ? Number(prev.quote_price) : null,
         vs_previous_pct: latest && prev ? pct(latest.quote_price, prev.quote_price) : null,
@@ -240,10 +265,9 @@ module.exports = function installQuotationManagement(deps) {
     rows.sort((a, b) => String(a.sku_code).localeCompare(String(b.sku_code)));
 
     const actual = query("SELECT brand FROM skus WHERE brand IS NOT NULL AND brand<>'' UNION SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>'' ORDER BY brand").rows.map(r => r.brand), brands = actual;
-    let tsql = `SELECT DISTINCT ${masterCategorySql} AS product_type FROM quotation_prices q${activeSkuJoinSql} WHERE ${activeSkuWhereSql}`, tps = [];
+    let tsql = `SELECT DISTINCT sm.category AS master_category,q.product_type AS imported_type FROM quotation_prices q${activeSkuJoinSql} WHERE ${activeSkuWhereSql}`, tps = [];
     if (brand) { tsql += ' AND q.brand=?'; tps.push(brand); }
-    tsql += ' ORDER BY product_type';
-    const productTypes = query(tsql, tps).rows.map(r => r.product_type);
+    const productTypes = [...new Set(query(tsql, tps).rows.map(r => primaryQuotationCategory(r.master_category, r.imported_type)))].sort((a,b) => a.localeCompare(b));
 
     const changes = rows.map(r => r.vs_previous_pct).filter(v => v !== null), pchanges = rows.map(r => r.vs_purchase_pct).filter(v => v !== null), types = {};
     rows.forEach(r => types[r.product_type || '未分类'] = (types[r.product_type || '未分类'] || 0) + 1);
