@@ -304,3 +304,5 @@ jobs:
         run: node test/quotation-smart-import.test.cjs
       - name: Test quotation English navigation and content
         run: node --test test/quotation-english-mode.test.cjs
+      - name: Verify Render-equivalent production postinstall checks
+        run: RENDER=1 npm run postinstall
