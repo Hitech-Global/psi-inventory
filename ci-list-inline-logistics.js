@@ -50,7 +50,9 @@
       excluded: { zh: '无需计算', en: 'Skipped', id: 'Dilewati' },
       restore: { zh: '恢复待确认', en: 'Restore', id: 'Pulihkan' },
       cc: { zh: 'CC', en: 'CC', id: 'CC' },
-      view: { zh: '查看原因', en: 'View reason', id: 'Lihat alasan' }
+      view: { zh: '查看原因', en: 'View reason', id: 'Lihat alasan' },
+      status: { zh: 'WAC 状态', en: 'WAC Status', id: 'Status WAC' },
+      notReadyReason: { zh: wacUiText('notReadyReason'), en: 'This batch is not yet eligible for WAC confirmation. Check the logistics batch details and PL quantity.', id: 'Batch ini belum siap dikonfirmasi untuk WAC. Periksa detail logistik dan jumlah PL.' }
     };
     return (labels[key] && (labels[key][lang] || labels[key].zh)) || key;
   }
@@ -431,7 +433,7 @@
           '<th>' + esc(tr('logistics.col.status', '状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.listing_status', 'Listing状态')) + '</th>' +
           '<th>' + esc(tr('logistics.col.owners', '负责人')) + '</th>' +
-          '<th>WAC 状态</th>' +
+          '<th>' + esc(wacUiText('status')) + '</th>' +
           '<th>' + esc(tr('common.actions', '操作')) + '</th>' +
         '</tr></thead><tbody>' + rowsHtml + '</tbody></table></div>'
       : '<div class="ci-list-logi-empty">' + esc(tr('logistics.no_batch', '该CI暂无关联物流批次')) + '</div>';
