@@ -18,6 +18,10 @@ const quoteMoney=(v,c,status)=>status==='no_quote'||v==null?'<span class="qm-noq
 const change=v=>v==null?'—':`<span class="qm-change ${v>0?'up':v<0?'down':''}">${v>0?'↑ +':v<0?'↓ ':''}${Number(v).toFixed(2)}%</span>`;
 const call=(u,m='GET',b)=>window.api(u,m,b);
 const canView=()=>typeof window.hasPermission==='function'&&window.hasPermission('quotation_view');
+const qmLabel=text=>window.QuotationLocale?window.QuotationLocale.label(text):text;
+function localizeQuotation(root){
+  if(window.QuotationLocale)window.QuotationLocale.apply(root||$('#qm'));
+}
 
 function lruSet(map,key,value,max){if(map.has(key))map.delete(key);map.set(key,value);while(map.size>max)map.delete(map.keys().next().value);}
 function summaryKey(){return [S.brand||'',S.type||'',S.keyword||'',S.from||'',S.to||''].join('|');}
@@ -32,10 +36,32 @@ function css(){
 }
 
 function nav(){
-  const n=$('#sidebar-nav');if(!n||$('#qm-nav'))return;
-  if(!canView())return;
-  if(![...n.querySelectorAll('.sidebar-item')].some(x=>/PO管理|PI管理|CI\/PL/.test(x.textContent)))return;
-  const e=document.createElement('div');e.id='qm-nav';e.className='sidebar-item';e.innerHTML='<span class="icon">🏷️</span><span>报价管理</span>';e.onclick=show;n.appendChild(e);
+  const n=$('#sidebar-nav');if(!n||!canView())return;
+  // The procurement sidebar is rebuilt on language changes. Match stable
+  // navigation keys and values instead of only Chinese labels.
+  const labels=[
+    typeof window.t==='function'?window.t('nav.po','PO管理'):'PO管理',
+    typeof window.t==='function'?window.t('nav.pi','PI管理'):'PI管理',
+    typeof window.t==='function'?window.t('nav.ci','CI/PL管理'):'CI/PL管理'
+  ];
+  const isProcurement=[...n.querySelectorAll('.sidebar-item')].some(el=>{
+    const name=String(el.textContent||'').trim();
+    return labels.some(label=>name===label||name.endsWith(label))||
+      /^(?:PO管理|PI管理|CI\/PL管理|Purchase Orders|Proforma Invoices|Commercial Invoices \/ PL|PO|PI|CI \/ PL)$/i.test(name);
+  });
+  const existing=$('#qm-nav');
+  if(!isProcurement){if(existing)existing.remove();return;}
+  if(existing){
+    const title=existing.querySelector('[data-quotation-nav-label]');
+    if(title)title.textContent=qmLabel('报价管理');
+    existing.classList.toggle('active',!!$('#qm'));
+    return;
+  }
+  const e=document.createElement('div');e.id='qm-nav';
+  e.className='sidebar-item'+($('#qm')?' active':'');
+  e.setAttribute('data-page','quotation-management');
+  e.innerHTML='<span class="icon">🏷️</span><span data-quotation-nav-label>'+E(qmLabel('报价管理'))+'</span>';
+  e.onclick=show;n.appendChild(e);
 }
 
 function show(){
@@ -72,6 +98,7 @@ function renderBase(){
   const brands=initialBrands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
   $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">品牌默认报价币种以「系统管理 → 品牌设置」为准；可选币种以「系统管理 → 币种设置」中启用的币种为准。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
+  localizeQuotation($('#qm'));
 }
 
 function bind(){
@@ -91,6 +118,7 @@ function renderSkeleton(){
   count.innerHTML='<span class="qm-loading-tag">加载中…</span>';
   body.innerHTML=Array.from({length:7},()=>'<tr>'+Array.from({length:10},(_,i)=>`<td><div class="qm-skeleton qm-sk-line" style="width:${i===0?86:i===9?42:64}px">.</div></td>`).join('')+'</tr>').join('');
   right.innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-skeleton qm-sk-line" style="width:120px;height:22px">.</div><div class="qm-skeleton qm-sk-line" style="width:150px;margin-top:9px">.</div></div></div><div class="qm-kpis">${Array.from({length:4},()=>'<div class="qm-skeleton qm-sk-card">.</div>').join('')}</div><div class="qm-skeleton" style="height:180px;border-radius:12px;margin-top:16px">.</div><div class="qm-two qm-section"><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div></div></div>`;
+  localizeQuotation($('#qm'));
 }
 
 async function load({useCache=false,background=false}={}){
@@ -104,11 +132,11 @@ async function load({useCache=false,background=false}={}){
     S.data=d;renderSummary();
   }catch(e){
     if(seq!==loadSeq||key!==summaryKey()||!$('#qm'))return;
-    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="10" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';}
+    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="10" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';localizeQuotation($('#qm'));}
   }
 }
 
-function renderSummary(){filters();list();report();}
+function renderSummary(){filters();list();report();localizeQuotation($('#qm'));}
 function filters(){
   const d=S.data||{};
   const brands=BRAND_OPTIONS.length?BRAND_OPTIONS:(d.brands||[]);
@@ -127,12 +155,26 @@ function chart(points,ccy,field='avg_price'){
   const min=Math.min(...v),max=Math.max(...v),w=520,h=180,p=22,span=max-min||1,xy=v.map((n,i)=>[p+(w-p*2)*(i/(v.length-1)),h-p-(h-p*2)*((n-min)/span)]),path=xy.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join(' ');
   return `<svg viewBox="0 0 ${w} ${h}" class="qm-chart"><path d="${path}" fill="none" stroke="#238636" stroke-width="2.5"/>${xy.map(q=>`<circle cx="${q[0]}" cy="${q[1]}" r="3.5" fill="#238636"/>`).join('')}<text x="22" y="16" font-size="11" fill="#888">${E(ccy||'')}</text></svg>`;
 }
-function brief(r){if(!r||!r.sku_count)return '当前品牌暂无报价数据。';const a=r.avg_change_pct==null?'暂无足够历史数据':`最新有效报价平均较上次${r.avg_change_pct>=0?'上涨':'下降'} ${Math.abs(r.avg_change_pct).toFixed(2)}%`,n=r.no_quote_count?`，其中 ${r.no_quote_count} 个条目最新记录为未报价`:'';const u=r.unlinked_count?`，另有 ${r.unlinked_count} 条供应商料号尚未关联 PSI SKU，不参与内部采购价对比`:'';return `${r.brand||S.brand} 当前覆盖 ${r.sku_count} 个报价条目，共 ${r.history_count} 条历史记录${n}${u}；${a}。与最近采购价可比的 SKU 中，${r.above_purchase_count} 个高于上次采购价，${r.below_purchase_count} 个低于上次采购价。`;}
+function brief(r){
+  if(typeof window.getLang==='function'&&window.getLang()==='en'){
+    if(!r||!r.sku_count)return 'No quote data for this brand.';
+    const trend=r.avg_change_pct==null?'not enough historical data to assess price direction':
+      'the latest valid quote average '+(r.avg_change_pct>=0?'increased':'decreased')+' '+Math.abs(r.avg_change_pct).toFixed(2)+'% vs. the previous quote';
+    const unquoted=r.no_quote_count?', including '+r.no_quote_count+' currently unquoted entries':'';
+    const unlinked=r.unlinked_count?'; '+r.unlinked_count+' supplier part numbers are not linked to PSI SKUs and are excluded from internal purchase-price comparisons':'';
+    return (r.brand||S.brand)+' has '+r.sku_count+' quote entries and '+r.history_count+
+      ' historical records'+unquoted+unlinked+'. Latest quote trend: '+trend+
+      '. Among comparable SKUs, '+r.above_purchase_count+' are above and '+r.below_purchase_count+
+      ' are below the latest purchase price.';
+  }
+  if(!r||!r.sku_count)return '当前品牌暂无报价数据。';const a=r.avg_change_pct==null?'暂无足够历史数据':`最新有效报价平均较上次${r.avg_change_pct>=0?'上涨':'下降'} ${Math.abs(r.avg_change_pct).toFixed(2)}%`,n=r.no_quote_count?`，其中 ${r.no_quote_count} 个条目最新记录为未报价`:'';const u=r.unlinked_count?`，另有 ${r.unlinked_count} 条供应商料号尚未关联 PSI SKU，不参与内部采购价对比`:'';return `${r.brand||S.brand} 当前覆盖 ${r.sku_count} 个报价条目，共 ${r.history_count} 条历史记录${n}${u}；${a}。与最近采购价可比的 SKU 中，${r.above_purchase_count} 个高于上次采购价，${r.below_purchase_count} 个低于上次采购价。`;
+}
 function mini(a,k){return(a||[]).length?a.map(x=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin:8px 0"><span>${E(x.sku_code)}</span>${change(x[k])}</div>`).join(''):'<div class="qm-sub">暂无可比数据</div>';}
 function report(){
   const d=S.data||{},r=d.report||{};
-  $('#qm-right').innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-brand">${E(r.brand||S.brand)} <span class="qm-badge">品牌报告</span></div><div class="qm-sub">自动生成 · 当前筛选口径</div></div><button class="qm-btn" id="qm-export">⇩ 导出品牌报告</button></div><div class="qm-kpis"><div class="qm-kpi"><span>报价条目</span><b>${r.sku_count||0}</b></div><div class="qm-kpi"><span>历史记录</span><b>${r.history_count||0}</b></div><div class="qm-kpi"><span>本月更新</span><b>${r.updated_this_month||0}</b></div><div class="qm-kpi"><span>当前未报价</span><b>${r.no_quote_count||0}</b></div></div><div class="qm-section"><h4>品牌报价趋势</h4>${chart(r.trend,r.currency)}</div><div class="qm-two qm-section"><div class="qm-mini"><h4>价格波动较大的 SKU</h4>${mini(r.top_movers,'vs_previous_pct')}</div><div class="qm-mini"><h4>较上次采购价差异</h4>${mini(r.top_purchase_gaps,'vs_purchase_pct')}</div></div><div class="qm-section"><h4>产品类型分布</h4>${Object.entries(r.product_types||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin:7px 0"><span>${E(k)}</span><b>${v}</b></div>`).join('')||'—'}</div><div class="qm-section qm-mini"><h4>品牌简报</h4><div style="font-size:13px;line-height:1.8;color:#555">${E(brief(r))}</div></div></div>`;
+  $('#qm-right').innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-brand">${E(r.brand||S.brand)} <span class="qm-badge">品牌报告</span></div><div class="qm-sub">自动生成 · 当前筛选口径</div></div><button class="qm-btn" id="qm-export">⇩ 导出品牌报告</button></div><div class="qm-kpis"><div class="qm-kpi"><span>报价条目</span><b>${r.sku_count||0}</b></div><div class="qm-kpi"><span>历史记录</span><b>${r.history_count||0}</b></div><div class="qm-kpi"><span>本月更新</span><b>${r.updated_this_month||0}</b></div><div class="qm-kpi"><span>当前未报价</span><b>${r.no_quote_count||0}</b></div></div><div class="qm-section"><h4>品牌报价趋势</h4>${chart(r.trend,r.currency)}</div><div class="qm-two qm-section"><div class="qm-mini"><h4>价格波动较大的 SKU</h4>${mini(r.top_movers,'vs_previous_pct')}</div><div class="qm-mini"><h4>较上次采购价差异</h4>${mini(r.top_purchase_gaps,'vs_purchase_pct')}</div></div><div class="qm-section"><h4>产品类型分布</h4>${Object.entries(r.product_types||{}).map(([k,v])=>`<div style="display:flex;justify-content:space-between;font-size:12px;margin:7px 0"><span>${E(k)}</span><b>${v}</b></div>`).join('')||'—'}</div><div class="qm-section qm-mini" data-qm-brief="1"><h4>品牌简报</h4><div style="font-size:13px;line-height:1.8;color:#555">${E(brief(r))}</div></div></div>`;
   $('#qm-export').onclick=exportReport;
+  localizeQuotation($('#qm'));
 }
 
 async function sku(s,b){
@@ -152,6 +194,7 @@ function renderSku(){
   const d=S.detail,h=d.history||[],l=h[0]||{},p=d.purchase,quotedHistory=h.filter(x=>x.quote_status!=='no_quote'&&x.quote_price!=null);
   $('#qm-right').innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-brand">${E(d.sku_code)} <span class="qm-badge">${E(d.brand)}</span></div><div class="qm-sub">${d.match_status==='unlinked'?'供应商料号：'+E(d.supplier_part_no||d.sku_code)+' · 未关联 PSI SKU':'PSI SKU：'+E(d.psi_sku_code||d.sku_code)+' · 供应商料号：'+E(d.supplier_part_no||d.sku_code)} · ${E(l.product_type||'')} · ${E([l.model,l.spec].filter(Boolean).join(' / '))}</div></div><button class="qm-btn" id="qm-back">← 返回品牌报告</button></div><div class="qm-kpis"><div class="qm-kpi"><span>最新 FOB</span><b>${quoteMoney(l.quote_price,l.currency,l.quote_status)}</b></div><div class="qm-kpi"><span>记录日期</span><b style="font-size:15px">${E(l.quote_date||'—')}</b></div><div class="qm-kpi"><span>较上次报价</span><b style="font-size:16px">${l.vs_previous_pct==null?'—':l.vs_previous_pct.toFixed(2)+'%'}</b></div><div class="qm-kpi"><span>较上次采购价</span><b style="font-size:16px">${l.vs_purchase_pct==null?'—':l.vs_purchase_pct.toFixed(2)+'%'}</b></div></div><div class="qm-section"><h4>FOB 价格趋势</h4>${chart([...quotedHistory].reverse(),l.currency,'quote_price')}</div><div class="qm-section"><h4>最近采购基准（CI）</h4><div class="qm-mini" style="font-size:12px">${d.match_status==='unlinked'?'该报价尚未关联 PSI SKU，不参与内部采购价对比':p&&p.status==='exact'?`${E(p.ci_no)} · ${money(p.unit_price,p.currency)} · ${E(p.purchase_date||'')}`:p&&p.status==='ambiguous'?'最近 CI 同 SKU 存在不同原单价，已阻止比较':'暂无可比采购价'}</div></div><div class="qm-section"><h4>历史报价记录</h4><div class="qm-table-wrap" style="max-height:280px"><table class="qm-table"><thead><tr><th>报价日期</th><th>FOB</th><th>币种</th><th>较上一有效报价</th><th>备注</th></tr></thead><tbody>${h.map(x=>`<tr><td>${E(x.quote_date)}</td><td>${quoteMoney(x.quote_price,x.currency,x.quote_status)}</td><td>${E(x.currency)}</td><td>${change(x.vs_previous_pct)}</td><td>${E(x.remark||'—')}</td></tr>`).join('')}</tbody></table></div></div></div>`;
   $('#qm-back').onclick=()=>{S.detail=null;S.detailKey='';report();};
+  localizeQuotation($('#qm'));
 }
 
 function template(){
@@ -159,6 +202,7 @@ function template(){
 }
 function importModal(){
   const m=document.createElement('div');m.className='qm-modal';m.innerHTML=`<div class="qm-dialog"><h3>导入报价</h3><div class="qm-drop"><input type="file" id="qm-file" accept=".xlsx,.xls,.csv"><div class="qm-sub" style="margin-top:8px">字段：SKU、品牌、产品类型、FOB价格、币种、报价日期、备注（可选）</div><div class="qm-sub" style="margin-top:5px">FOB 填 0 = 当日未报价；会保留记录，但不会作为价格参与趋势或环比。</div></div><div style="margin-top:12px;font-size:13px">重复 SKU + 品牌 + 报价日期： <select id="qm-mode"><option value="skip">跳过已有记录</option><option value="overwrite">覆盖已有记录</option></select></div><div id="qm-preview" class="qm-sub" style="margin-top:8px"></div><div class="qm-dialog-actions"><button class="qm-btn" id="qm-cancel">取消</button><button class="qm-btn primary" id="qm-submit">开始导入</button></div></div>`;document.body.appendChild(m);let rows=[];
+  localizeQuotation(m);
   $('#qm-cancel',m).onclick=()=>m.remove();
   $('#qm-file',m).onchange=async e=>{const f=e.target.files[0];if(!f)return;const wb=XLSX.read(await f.arrayBuffer(),{type:'array'});rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});$('#qm-preview',m).textContent='已读取 '+rows.length+' 行，提交时整批校验。';};
   $('#qm-submit',m).onclick=async()=>{if(!rows.length)return alert('请先选择文件');try{const r=await call('/api/quotation-management/import','POST',{rows,duplicate_mode:$('#qm-mode',m).value});m.remove();alert(`导入完成：新增 ${r.inserted}，更新 ${r.updated}，跳过 ${r.skipped}，未报价 ${r.no_quote||0}`);summaryCache.clear();detailCache.clear();S.data=null;renderSkeleton();load({useCache:false,background:false});}catch(e){alert(e.message||'导入失败')}};
@@ -178,6 +222,17 @@ window.showQuotationManagement=show;
 function boot(){
   css();nav();
   const n=$('#sidebar-nav');if(n)new MutationObserver(nav).observe(n,{childList:true,subtree:true});
+  document.addEventListener('change',event=>{
+    if(!event.target||event.target.id!=='lang-switcher'||!$('#qm'))return;
+    const activeModal=!!document.querySelector('.qm-modal');
+    // Run after the shell's own setLang handler. Keep the current quotation view
+    // rather than following the previous main-app currentPage by mistake.
+    queueMicrotask(()=>{
+      if(activeModal){nav();return;}
+      nav();
+      show();
+    });
+  },true);
   const warm=()=>prefetchDefault();
   if('requestIdleCallback'in window)window.requestIdleCallback(warm,{timeout:1800});else setTimeout(warm,900);
 }
