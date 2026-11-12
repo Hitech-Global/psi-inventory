@@ -10,6 +10,24 @@
           return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);
         });
   }
+  // Localize only labels inside WAC CC; leave real user/group names intact.
+  var WAC_CC_EN={"补充 CC 只读取已保存的 WAC 历史，不会重新计算或修改成本。":"Additional CC sends only the saved WAC history; it never recalculates or modifies costs.","深圳群接收中文报告，BIC 群接收英文报告；已抄送过的群也可再次选择。":"The Shenzhen group receives Chinese reports and the BIC group receives English reports. Previously CC'd groups can be selected again.","选择需要接收本批次报告的飞书人员，可多选；已有抄送记录的人员也可再次选择。":"Select Feishu users to receive this batch report. Multiple recipients and repeat CC are supported.","按群语言发送报告；已配置的群可重复选择。":"Reports are sent in each group's configured language. Repeat CC to configured groups is supported.","尚未配置群聊 ID":"Group chat ID not configured","已有抄送记录，可再次 CC":"Previously CC'd; can send again","已配置":"Configured","暂无群组配置":"No groups configured","暂无可抄送人员":"No eligible recipients","目前没有抄送记录。":"No CC history yet.","已有抄送记录":"CC History","选择抄送对象":"Choose CC Recipients","物流批次：":"Logistics Batch:","人员":"Recipients","飞书群":"Feishu Groups","取消":"Cancel","发送 CC":"Send CC","发送中":"Sending","群组列表加载失败":"Failed to load groups","抄送对象加载失败":"Failed to load CC recipients","请至少选择一位人员或一个群组":"Select at least one person or group","补充 CC 失败":"Additional CC failed","没有创建新的 CC 通知任务，请检查所选对象":"No new CC tasks were created. Check the selected recipients.","已创建":"Created","位人员":"users","个群组的 CC 任务，共":"group CC tasks, total","条通知":"notifications","收件对象":"Recipients","中文":"Chinese","暂":"Pending"};
+  var WAC_CC_PHRASES=Object.entries(WAC_CC_EN).sort(function(a,b){return b[0].length-a[0].length;});
+  function ccEnglishMode(){return typeof window.getLang==='function'&&window.getLang()==='en';}
+  function localizeWacCc(root){
+    if(!ccEnglishMode()||!root||!document.createTreeWalker)return;
+    var walker=document.createTreeWalker(root,4),node;
+    while((node=walker.nextNode())){
+      var value=node.nodeValue||'',next=value;
+      if(!/[\u3400-\u9fff]/.test(value))continue;
+      for(var i=0;i<WAC_CC_PHRASES.length;i++){
+        var phrase=WAC_CC_PHRASES[i];
+        if(next.indexOf(phrase[0])!==-1)next=next.split(phrase[0]).join(phrase[1]);
+      }
+      if(next!==value)node.nodeValue=next;
+    }
+  }
+  function ccLabel(zh){return ccEnglishMode()?(WAC_CC_EN[zh]||zh):zh;}
   function injectStyles() {
     if (document.getElementById('wac-mac-cc-styles')) return;
     var style = document.createElement('style');
@@ -106,6 +124,7 @@
       try {
         var data = await window.api('/api/wac/cc-groups');
         section.insertAdjacentHTML('beforeend', renderGroupSection(data && data.groups, 'wac-cc-group-list', 'wac-cc-group-cb'));
+        localizeWacCc(section);
       } catch (error) {
         section.insertAdjacentHTML('beforeend', '<div class="wac-mac-cc-inline" style="color:#c33">群组列表加载失败：' + html(error && error.message || error) + '</div>');
       }
@@ -152,7 +171,7 @@
       var footer = '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="wac-cc-add-submit" ' + ((candidates.some(function (u) { return u && u.status === 'active'; }) || (groupData.groups || []).some(function (g) { return g.configured && Number(g.chat_count) > 0; })) ? '' : 'disabled ') + 'onclick="submitWacCc(\'' + html(id).replace(/'/g, '&#39;') + '\')">发送 CC</button>';
       window.openModal('选择抄送对象', body, footer);
       var modal = document.getElementById('modal-content');
-      if (modal) modal.classList.add('wac-cc-macos');
+      if (modal) {modal.classList.add('wac-cc-macos');localizeWacCc(modal);}
     } catch (error) {
       window.showToast(error && error.message || '抄送对象加载失败', 'danger');
     }
@@ -166,7 +185,7 @@
       return;
     }
     var button = document.getElementById('wac-cc-add-submit');
-    if (button) { button.disabled = true; button.textContent = '发送中…'; }
+    if (button) { button.disabled = true; button.textContent = ccLabel('发送中')+'…'; }
     try {
       var result = await window.api('/api/wac/notifications/' + encodeURIComponent(batchId) + '/cc', 'POST', {
         cc_user_ids: userIds,
@@ -183,7 +202,7 @@
       }
     } catch (error) {
       window.showToast(error && error.message || '补充 CC 失败', 'danger');
-      if (button) { button.disabled = false; button.textContent = '发送 CC'; }
+      if (button) { button.disabled = false; button.textContent = ccLabel('发送 CC'); }
     }
   };
 

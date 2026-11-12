@@ -9,7 +9,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'ci-list-inline-logist
 test('every logistics batch renders an explicit WAC status column', () => {
   assert.match(source, /function wacStatusCellHtml\(batch\)/);
   assert.match(source, /wacStatusCellHtml\(b\)/);
-  assert.match(source, /<th>WAC 状态<\/th>/);
+  assert.match(source, /wacUiText\('status'\)/);
   assert.match(source, /ci-list-wac-badge-not-ready/);
 });
 
