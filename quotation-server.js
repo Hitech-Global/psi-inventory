@@ -193,27 +193,34 @@ module.exports = function installQuotationManagement(deps) {
     return out;
   }
 
+  // Quote categories are supplier-controlled; only the linked SKU master decides
+  // whether a quote can appear in active procurement analysis and its top-level category.
+  // Historical quotation_prices records remain untouched for audit/re-import.
+  const masterCategorySql = "COALESCE(NULLIF(TRIM(sm.category),''),'未分类')";
+  const activeSkuJoinSql = ` INNER JOIN skus sm ON UPPER(TRIM(sm.sku_code))=UPPER(TRIM(COALESCE(NULLIF(q.psi_sku_code,''),q.sku_code))) AND LOWER(TRIM(sm.brand))=LOWER(TRIM(q.brand))`;
+  const activeSkuWhereSql = "LOWER(TRIM(COALESCE(sm.status,'normal'))) NOT IN ('stopped','discontinued','inactive','停产','已停产','eol','end_of_life') AND LOWER(TRIM(COALESCE(sm.lifecycle_status,''))) NOT IN ('stopped','discontinued','停产','已停产','eol','end_of_life')";
+
   function buildSummary(req) {
     const brand = String(req.query.brand || '').trim(), type = String(req.query.product_type || '').trim(), kw = String(req.query.keyword || '').trim().toLowerCase(), from = String(req.query.date_from || '').trim(), to = String(req.query.date_to || '').trim();
-    let sql = 'SELECT * FROM quotation_prices WHERE 1=1', ps = [];
-    if (brand) { sql += ' AND brand=?'; ps.push(brand); }
-    if (type) { sql += ' AND product_type=?'; ps.push(type); }
-    if (kw) { sql += ' AND (LOWER(sku_code) LIKE ? OR LOWER(product_type) LIKE ? OR LOWER(brand) LIKE ?)'; const q = '%' + kw + '%'; ps.push(q, q, q); }
-    if (from) { sql += ' AND quote_date>=?'; ps.push(from); }
-    if (to) { sql += ' AND quote_date<=?'; ps.push(to); }
-    sql += ' ORDER BY brand,sku_code,quote_date DESC,created_at DESC';
+    let sql = `SELECT q.*,sm.sku_code AS master_sku_code,${masterCategorySql} AS master_category FROM quotation_prices q${activeSkuJoinSql} WHERE ${activeSkuWhereSql}`, ps = [];
+    if (brand) { sql += ' AND q.brand=?'; ps.push(brand); }
+    if (type) { sql += ` AND ${masterCategorySql}=?`; ps.push(type); }
+    if (kw) { sql += ` AND (LOWER(q.sku_code) LIKE ? OR LOWER(q.product_type) LIKE ? OR LOWER(q.brand) LIKE ? OR LOWER(sm.sku_code) LIKE ? OR LOWER(sm.category) LIKE ?)`; const q = '%' + kw + '%'; ps.push(q, q, q, q, q); }
+    if (from) { sql += ' AND q.quote_date>=?'; ps.push(from); }
+    if (to) { sql += ' AND q.quote_date<=?'; ps.push(to); }
+    sql += ' ORDER BY q.brand,q.sku_code,q.quote_date DESC,q.created_at DESC';
 
     const history = query(sql, ps).rows, by = new Map();
     for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
     const brandCurrencies = getBrandCurrencyMap();
-    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked' && (a[0].psi_sku_code || a[0].sku_code)).map(a => ({ brand: a[0].brand, sku: a[0].psi_sku_code || a[0].sku_code, currency: a[0].currency })), brandCurrencies);
+    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked').map(a => ({ brand: a[0].brand, sku: a[0].master_sku_code, currency: a[0].currency })), brandCurrencies);
     const rows = [];
 
     for (const [k, a] of by) {
-      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = event.match_status === 'unlinked' ? null : (pmap.get(pairKey(event.brand, event.psi_sku_code || event.sku_code)) || null);
+      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = event.match_status === 'unlinked' ? null : (pmap.get(pairKey(event.brand, event.master_sku_code)) || null);
       const sameCurrency = !!latest && !!p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
       rows.push({
-        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.psi_sku_code || '', match_status: event.match_status || 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.product_type,
+        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.master_sku_code, match_status: event.match_status === 'unlinked' ? 'unlinked' : 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.master_category || '未分类',
         latest_price: latest ? Number(latest.quote_price) : null, currency: event.currency, latest_date: event.quote_date,
         quote_status: latest ? 'quoted' : 'no_quote', previous_price: prev ? Number(prev.quote_price) : null,
         vs_previous_pct: latest && prev ? pct(latest.quote_price, prev.quote_price) : null,
@@ -233,8 +240,8 @@ module.exports = function installQuotationManagement(deps) {
     rows.sort((a, b) => String(a.sku_code).localeCompare(String(b.sku_code)));
 
     const actual = query("SELECT brand FROM skus WHERE brand IS NOT NULL AND brand<>'' UNION SELECT brand FROM quotation_prices WHERE brand IS NOT NULL AND brand<>'' ORDER BY brand").rows.map(r => r.brand), brands = actual;
-    let tsql = "SELECT DISTINCT product_type FROM quotation_prices WHERE product_type IS NOT NULL AND product_type<>''", tps = [];
-    if (brand) { tsql += ' AND brand=?'; tps.push(brand); }
+    let tsql = `SELECT DISTINCT ${masterCategorySql} AS product_type FROM quotation_prices q${activeSkuJoinSql} WHERE ${activeSkuWhereSql}`, tps = [];
+    if (brand) { tsql += ' AND q.brand=?'; tps.push(brand); }
     tsql += ' ORDER BY product_type';
     const productTypes = query(tsql, tps).rows.map(r => r.product_type);
 

@@ -95,6 +95,7 @@ on:
       - 'test/quotation-english-mode.test.cjs'
       - 'test/ci-logistics-quotation-permissions.test.cjs'
       - 'quotation-management.js'
+      - 'test/quotation-active-master-category-sort.test.cjs'
       - 'quotation-procurement-brief.js'
       - 'test/quotation-procurement-brief-observer.test.cjs'
       - 'scripts/quotation-management-bootstrap.cjs'
@@ -199,6 +200,7 @@ jobs:
           node --check test/quotation-english-mode.test.cjs
           node --check test/ci-logistics-quotation-permissions.test.cjs
           node --check quotation-management.js
+          node --check test/quotation-active-master-category-sort.test.cjs
           node --check scripts/quotation-management-bootstrap.cjs
           node --check test/quotation-smart-import.test.cjs
           node --check wac-notification-ui.js
@@ -304,6 +306,8 @@ jobs:
         run: node test/wac-batch-exclusion.test.cjs
       - name: Test quotation procurement brief observer idempotence
         run: node test/quotation-procurement-brief-observer.test.cjs
+      - name: Test quote master-category eligibility and price priority sort
+        run: node test/quotation-active-master-category-sort.test.cjs
       - name: Test smart quotation import and supplier SKU mapping
         run: node test/quotation-smart-import.test.cjs
       - name: Test quotation English navigation and content

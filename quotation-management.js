@@ -9,7 +9,7 @@ const summaryCache=new Map();
 const detailCache=new Map();
 let loadSeq=0;
 let detailSeq=0;
-let S={brand:'Netac',type:'',keyword:'',from:'',to:'',data:null,detail:null,detailKey:''};
+let S={brand:'Netac',type:'',keyword:'',from:'',to:'',sort:'',data:null,detail:null,detailKey:''};
 
 const $=(s,r=document)=>r.querySelector(s);
 const E=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -32,6 +32,7 @@ function css(){
   if($('#qm-css'))return;
   const x=document.createElement('style');x.id='qm-css';
   x.textContent=`#qm{color:#1d1d1f}.qm-head,.qm-filter,.qm-card{background:#fff;border:1px solid #ececef;border-radius:16px;box-shadow:0 2px 12px rgba(0,0,0,.045)}.qm-head{padding:18px 20px;display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}.qm-title{font-size:24px;font-weight:750}.qm-sub{font-size:12px;color:#86868b}.qm-actions{display:flex;gap:8px}.qm-btn{border:1px solid #d8dadd;background:#fff;border-radius:9px;padding:8px 13px;cursor:pointer;font-size:13px}.qm-btn.primary{background:#238636;color:#fff;border-color:#238636}.qm-filter{padding:12px;display:grid;grid-template-columns:170px 170px minmax(220px,1fr) 145px 145px;gap:10px;margin-bottom:12px}.qm-field label{display:block;font-size:11px;color:#666;margin:0 0 4px 2px}.qm-field input,.qm-field select{width:100%;height:36px;border:1px solid #dfe1e5;border-radius:9px;padding:0 10px;background:#fff}.qm-note{font-size:12px;color:#446;background:#eef6ff;border-radius:10px;padding:8px 12px;margin-bottom:12px}.qm-grid{display:grid;grid-template-columns:minmax(650px,1.15fr) minmax(470px,.85fr);gap:12px;align-items:start}.qm-card{overflow:hidden}.qm-card-h{padding:14px 16px;border-bottom:1px solid #eee;display:flex;justify-content:space-between}.qm-table-wrap{overflow:auto;max-height:650px}.qm-table{width:100%;border-collapse:collapse;font-size:12px}.qm-table th{position:sticky;top:0;background:#f7f8fa;color:#666;text-align:left;padding:9px 10px;border-bottom:1px solid #e5e7eb;z-index:1}.qm-table td{padding:9px 10px;border-bottom:1px solid #f0f1f2;white-space:nowrap}.qm-table tr:hover{background:#f8fbf8}.qm-table tr.sel{background:#ecf8ef}.qm-link{color:#1677ff;cursor:pointer}.qm-change.up{color:#e53935}.qm-change.down{color:#188b45}.qm-noquote{display:inline-block;color:#86868b;background:#f2f2f4;border-radius:999px;padding:2px 8px;font-size:11px;font-weight:600}.qm-report{padding:16px}.qm-report-title{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.qm-brand{font-size:21px;font-weight:750}.qm-badge{font-size:11px;background:#e8f5e9;color:#238636;padding:3px 7px;border-radius:999px}.qm-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}.qm-kpi{background:#f7f8fa;border-radius:12px;padding:12px}.qm-kpi span{font-size:11px;color:#888}.qm-kpi b{display:block;font-size:20px;margin-top:4px}.qm-section{margin-top:16px}.qm-section h4{font-size:14px;margin-bottom:8px}.qm-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.qm-mini{background:#fafafa;border:1px solid #eee;border-radius:12px;padding:10px}.qm-chart{width:100%;height:180px;background:#fcfcfd;border:1px solid #eee;border-radius:12px}.qm-empty{padding:55px 15px;text-align:center;color:#999}.qm-modal{position:fixed;inset:0;background:rgba(0,0,0,.28);z-index:9999;display:flex;align-items:center;justify-content:center}.qm-dialog{width:min(650px,92vw);background:#fff;border-radius:18px;box-shadow:0 24px 80px rgba(0,0,0,.25);padding:20px}.qm-drop{border:1.5px dashed #cfd3d8;border-radius:12px;padding:24px;text-align:center;background:#fafafa}.qm-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}.qm-skeleton{position:relative;overflow:hidden;background:#f2f3f5;border-radius:7px;color:transparent!important;user-select:none}.qm-skeleton:after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.75),transparent);animation:qmShimmer 1.15s infinite}.qm-sk-line{height:12px;min-width:55px}.qm-sk-card{height:54px;border-radius:12px}.qm-loading-tag{font-size:11px;color:#86868b}@keyframes qmShimmer{100%{transform:translateX(100%)}}@media(max-width:1200px){.qm-grid{grid-template-columns:1fr}.qm-filter{grid-template-columns:repeat(2,1fr)}}`;
+  x.textContent+='.qm-list-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap}.qm-sort-buttons{display:flex;align-items:center;gap:6px}.qm-sort{font-size:12px;padding:6px 9px;border:1px solid #e1e4e7;border-radius:8px;background:#fff;color:#444;cursor:pointer}.qm-sort:hover{background:#f5f7f8}.qm-sort.active.up{background:#fff0ee;border-color:#efc3bf;color:#b42318}.qm-sort.active.down{background:#ecf8f0;border-color:#bfe4c8;color:#19713a}.qm-card-h{align-items:center;gap:10px;flex-wrap:wrap}.qm-table td:first-child{font-weight:600}.qm-table .qm-price{font-weight:650;white-space:nowrap}.qm-grid{grid-template-columns:minmax(0,1.3fr) minmax(360px,.7fr)}@media(max-width:1320px){.qm-grid{grid-template-columns:1fr}}';
   document.head.appendChild(x);
 }
 
@@ -97,15 +98,17 @@ function loadBrandOptions(){
 function renderBase(){
   const initialBrands=BRAND_OPTIONS.length?BRAND_OPTIONS:(S.brand?[S.brand]:[]);
   const brands=initialBrands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
-  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>产品类型</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU、产品类型或品牌"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">品牌默认报价币种以「系统管理 → 品牌设置」为准；可选币种以「系统管理 → 币种设置」中启用的币种为准。FOB=0 表示当日未报价，会保留历史记录，但不参与价格趋势、报价环比或采购价环比。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><span id="qm-count"></span></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>品牌</th><th>产品类型</th><th>最新FOB</th><th>币种</th><th>报价日期</th><th>较上次报价</th><th>较上次采购价</th><th>历史次数</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
+  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>一级类目</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU 或一级类目"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">仅展示 SKU 主数据中已建档且未停产的商品；报价历史继续保留。FOB=0 表示未报价，不参与价格涨跌比较。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><div class="qm-list-tools"><span id="qm-count" class="qm-sub"></span><div class="qm-sort-buttons"><button type="button" class="qm-sort" id="qm-sort-up" aria-pressed="false">↑ 涨价 SKU</button><button type="button" class="qm-sort" id="qm-sort-down" aria-pressed="false">↓ 降价 SKU</button></div></div></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>一级类目</th><th>最新FOB</th><th>较上次报价</th><th>较上次采购价</th><th>报价日期</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
   localizeQuotation($('#qm'));
 }
 
 function bind(){
-  [['qm-brand','brand'],['qm-type','type'],['qm-from','from'],['qm-to','to']].forEach(([id,k])=>$('#'+id).onchange=e=>{S[k]=e.target.value;S.detail=null;S.detailKey='';switchView();});
+  [['qm-brand','brand'],['qm-type','type'],['qm-from','from'],['qm-to','to']].forEach(([id,k])=>$('#'+id).onchange=e=>{S[k]=e.target.value;if(k==='brand')S.type='';S.detail=null;S.detailKey='';switchView();});
   let t;$('#qm-key').oninput=e=>{clearTimeout(t);t=setTimeout(()=>{S.keyword=e.target.value.trim();S.detail=null;S.detailKey='';switchView();},220)};
   $('#qm-template').onclick=template;$('#qm-import').onclick=importModal;
+  $('#qm-sort-up').onclick=()=>{S.sort=S.sort==='up'?'':'up';list();};
+  $('#qm-sort-down').onclick=()=>{S.sort=S.sort==='down'?'':'down';list();};
 }
 
 function switchView(){
@@ -117,7 +120,7 @@ function switchView(){
 function renderSkeleton(){
   const body=$('#qm-body'),right=$('#qm-right'),count=$('#qm-count');if(!body||!right)return;
   count.innerHTML='<span class="qm-loading-tag">加载中…</span>';
-  body.innerHTML=Array.from({length:7},()=>'<tr>'+Array.from({length:10},(_,i)=>`<td><div class="qm-skeleton qm-sk-line" style="width:${i===0?86:i===9?42:64}px">.</div></td>`).join('')+'</tr>').join('');
+  body.innerHTML=Array.from({length:7},()=>'<tr>'+Array.from({length:7},(_,i)=>`<td><div class="qm-skeleton qm-sk-line" style="width:${i===0?86:i===6?42:64}px">.</div></td>`).join('')+'</tr>').join('');
   right.innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-skeleton qm-sk-line" style="width:120px;height:22px">.</div><div class="qm-skeleton qm-sk-line" style="width:150px;margin-top:9px">.</div></div></div><div class="qm-kpis">${Array.from({length:4},()=>'<div class="qm-skeleton qm-sk-card">.</div>').join('')}</div><div class="qm-skeleton" style="height:180px;border-radius:12px;margin-top:16px">.</div><div class="qm-two qm-section"><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div></div></div>`;
   localizeQuotation($('#qm'));
 }
@@ -133,7 +136,7 @@ async function load({useCache=false,background=false}={}){
     S.data=d;renderSummary();
   }catch(e){
     if(seq!==loadSeq||key!==summaryKey()||!$('#qm'))return;
-    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="10" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';localizeQuotation($('#qm'));}
+    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="7" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';localizeQuotation($('#qm'));}
   }
 }
 
@@ -146,8 +149,31 @@ function filters(){
   $('#qm-type').innerHTML='<option value="">全部</option>'+(d.product_types||[]).map(t=>`<option value="${E(t)}" ${t===S.type?'selected':''}>${E(t)}</option>`).join('');
 }
 function list(){
-  const r=(S.data&&S.data.rows)||[];$('#qm-count').textContent='共 '+r.length+' 条报价条目';
-  $('#qm-body').innerHTML=r.length?r.map(x=>`<tr data-s="${E(x.sku_code)}" data-b="${E(x.brand)}"><td><b>${E(x.match_status==='unlinked'?(x.supplier_part_no||x.sku_code):x.psi_sku_code||x.sku_code)}</b>${x.match_status==='unlinked'?' <span class="qm-noquote">未关联</span>':''}</td><td>${E(x.brand)}</td><td>${E(x.product_type)}</td><td><b>${quoteMoney(x.latest_price,x.currency,x.quote_status)}</b></td><td>${E(x.currency)}</td><td>${E(x.latest_date)}</td><td>${change(x.vs_previous_pct)}</td><td>${change(x.vs_purchase_pct)}</td><td>${x.history_count}</td><td><span class="qm-link">查看</span></td></tr>`).join(''):'<tr><td colspan="10" class="qm-empty">暂无报价数据，请先导入</td></tr>';
+  const rows=(S.data&&S.data.rows)||[];
+  const up=rows.filter(x=>typeof x.vs_previous_pct==='number'&&x.vs_previous_pct>0).length;
+  const down=rows.filter(x=>typeof x.vs_previous_pct==='number'&&x.vs_previous_pct<0).length;
+  $('#qm-count').textContent='共 '+rows.length+' 个有效 SKU';
+  for(const [mode,count,label] of [['up',up,'↑ 涨价 '],['down',down,'↓ 降价 ']]){
+    const button=$('#qm-sort-'+mode);
+    if(!button)continue;
+    button.textContent=label+count;
+    button.classList.toggle('active',S.sort===mode);
+    button.classList.toggle(mode,true);
+    button.setAttribute('aria-pressed',String(S.sort===mode));
+  }
+  const sorted=[...rows].sort((a,b)=>{
+    if(S.sort==='up'||S.sort==='down'){
+      const qualifies=x=>typeof x.vs_previous_pct==='number'&&(S.sort==='up'?x.vs_previous_pct>0:x.vs_previous_pct<0);
+      const aMatch=qualifies(a),bMatch=qualifies(b);
+      if(aMatch!==bMatch)return aMatch?-1:1;
+      if(aMatch&&bMatch){
+        const difference=S.sort==='up'?b.vs_previous_pct-a.vs_previous_pct:a.vs_previous_pct-b.vs_previous_pct;
+        if(difference)return difference;
+      }
+    }
+    return String(a.psi_sku_code||a.sku_code).localeCompare(String(b.psi_sku_code||b.sku_code));
+  });
+  $('#qm-body').innerHTML=sorted.length?sorted.map(x=>`<tr data-s="${E(x.sku_code)}" data-b="${E(x.brand)}"><td>${E(x.psi_sku_code||x.sku_code)}</td><td>${E(x.product_type||'未分类')}</td><td class="qm-price">${quoteMoney(x.latest_price,x.currency,x.quote_status)}</td><td>${change(x.vs_previous_pct)}</td><td>${change(x.vs_purchase_pct)}</td><td>${E(x.latest_date)}</td><td><span class="qm-link">查看</span></td></tr>`).join(''):'<tr><td colspan="7" class="qm-empty">暂无符合条件的有效 SKU 报价</td></tr>';
   $('#qm-body').querySelectorAll('tr[data-s]').forEach(tr=>tr.onclick=()=>sku(tr.dataset.s,tr.dataset.b));
 }
 function chart(points,ccy,field='avg_price'){
