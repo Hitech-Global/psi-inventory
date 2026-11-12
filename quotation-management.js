@@ -53,7 +53,7 @@ function nav(){
   if(!isProcurement){if(existing)existing.remove();return;}
   if(existing){
     const title=existing.querySelector('[data-quotation-nav-label]');
-    if(title)title.textContent=qmLabel('报价管理');
+    if(title&&title.textContent!==qmLabel('报价管理'))title.textContent=qmLabel('报价管理');
     existing.classList.toggle('active',!!$('#qm'));
     return;
   }
