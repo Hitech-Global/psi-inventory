@@ -98,7 +98,7 @@ function loadBrandOptions(){
 function renderBase(){
   const initialBrands=BRAND_OPTIONS.length?BRAND_OPTIONS:(S.brand?[S.brand]:[]);
   const brands=initialBrands.map(b=>`<option value="${E(b)}" ${b===S.brand?'selected':''}>${E(b)}</option>`).join('');
-  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>一级类目</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU 或一级类目"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">仅展示 SKU 主数据中已建档且未停产的商品；报价历史继续保留。FOB=0 表示未报价，不参与价格涨跌比较。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><div class="qm-list-tools"><span id="qm-count" class="qm-sub"></span><div class="qm-sort-buttons"><button type="button" class="qm-sort" id="qm-sort-up" aria-pressed="false">↑ 涨价 SKU</button><button type="button" class="qm-sort" id="qm-sort-down" aria-pressed="false">↓ 降价 SKU</button></div></div></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>一级类目</th><th>最新FOB</th><th>较上次报价</th><th>较上次采购价</th><th>报价日期</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
+  $('#qm').innerHTML=`<div class="qm-head"><div><div class="qm-title">🏷️ 报价管理</div><div class="qm-sub">FOB 报价、价格趋势、最近采购价对比与品牌报告</div></div><div class="qm-actions"><button class="qm-btn" id="qm-template">⇩ 下载模板</button><button class="qm-btn primary" id="qm-import">⇧ 导入报价</button></div></div><div class="qm-filter"><div class="qm-field"><label>品牌</label><select id="qm-brand">${brands}</select></div><div class="qm-field"><label>一级类目</label><select id="qm-type"><option value="">全部</option></select></div><div class="qm-field"><label>SKU / 关键词</label><input id="qm-key" value="${E(S.keyword)}" placeholder="搜索 SKU 或一级类目"></div><div class="qm-field"><label>开始日期</label><input type="date" id="qm-from" value="${E(S.from)}"></div><div class="qm-field"><label>结束日期</label><input type="date" id="qm-to" value="${E(S.to)}"></div></div><div class="qm-note">仅展示 SKU 主数据中已建档且未停产的商品；报价历史继续保留。FOB=0 表示未报价，不参与价格涨跌比较。</div><div class="qm-grid"><section class="qm-card"><div class="qm-card-h"><b>SKU 列表</b><div class="qm-list-tools"><span id="qm-count" class="qm-sub"></span><div class="qm-sort-buttons"><button type="button" class="qm-sort" id="qm-sort-up" aria-pressed="false">↑ 涨价 SKU</button><button type="button" class="qm-sort" id="qm-sort-down" aria-pressed="false">↓ 降价 SKU</button></div></div></div><div class="qm-table-wrap"><table class="qm-table"><thead><tr><th>SKU</th><th>一级类目</th><th>最新FOB</th><th>较上次报价</th><th>报价日期</th><th></th></tr></thead><tbody id="qm-body"></tbody></table></div></section><section class="qm-card" id="qm-right"></section></div>`;
   bind();
   localizeQuotation($('#qm'));
 }
@@ -120,7 +120,7 @@ function switchView(){
 function renderSkeleton(){
   const body=$('#qm-body'),right=$('#qm-right'),count=$('#qm-count');if(!body||!right)return;
   count.innerHTML='<span class="qm-loading-tag">加载中…</span>';
-  body.innerHTML=Array.from({length:7},()=>'<tr>'+Array.from({length:7},(_,i)=>`<td><div class="qm-skeleton qm-sk-line" style="width:${i===0?86:i===6?42:64}px">.</div></td>`).join('')+'</tr>').join('');
+  body.innerHTML=Array.from({length:7},()=>'<tr>'+Array.from({length:6},(_,i)=>`<td><div class="qm-skeleton qm-sk-line" style="width:${i===0?86:i===5?42:64}px">.</div></td>`).join('')+'</tr>').join('');
   right.innerHTML=`<div class="qm-report"><div class="qm-report-title"><div><div class="qm-skeleton qm-sk-line" style="width:120px;height:22px">.</div><div class="qm-skeleton qm-sk-line" style="width:150px;margin-top:9px">.</div></div></div><div class="qm-kpis">${Array.from({length:4},()=>'<div class="qm-skeleton qm-sk-card">.</div>').join('')}</div><div class="qm-skeleton" style="height:180px;border-radius:12px;margin-top:16px">.</div><div class="qm-two qm-section"><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div><div class="qm-skeleton" style="height:120px;border-radius:12px">.</div></div></div>`;
   localizeQuotation($('#qm'));
 }
@@ -136,7 +136,7 @@ async function load({useCache=false,background=false}={}){
     S.data=d;renderSummary();
   }catch(e){
     if(seq!==loadSeq||key!==summaryKey()||!$('#qm'))return;
-    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="7" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';localizeQuotation($('#qm'));}
+    if(!background&&!S.data){$('#qm-body').innerHTML='<tr><td colspan="6" class="qm-empty">加载失败：'+E(e.message)+'</td></tr>';$('#qm-right').innerHTML='<div class="qm-empty">加载失败：'+E(e.message)+'</div>';$('#qm-count').textContent='';localizeQuotation($('#qm'));}
   }
 }
 
@@ -173,7 +173,7 @@ function list(){
     }
     return String(a.psi_sku_code||a.sku_code).localeCompare(String(b.psi_sku_code||b.sku_code));
   });
-  $('#qm-body').innerHTML=sorted.length?sorted.map(x=>`<tr data-s="${E(x.sku_code)}" data-b="${E(x.brand)}"><td>${E(x.psi_sku_code||x.sku_code)}</td><td>${E(x.product_type||'未分类')}</td><td class="qm-price">${quoteMoney(x.latest_price,x.currency,x.quote_status)}</td><td>${change(x.vs_previous_pct)}</td><td>${change(x.vs_purchase_pct)}</td><td>${E(x.latest_date)}</td><td><span class="qm-link">查看</span></td></tr>`).join(''):'<tr><td colspan="7" class="qm-empty">暂无符合条件的有效 SKU 报价</td></tr>';
+  $('#qm-body').innerHTML=sorted.length?sorted.map(x=>`<tr data-s="${E(x.sku_code)}" data-b="${E(x.brand)}"><td>${E(x.psi_sku_code||x.sku_code)}</td><td>${E(x.product_type||'未分类')}</td><td class="qm-price">${quoteMoney(x.latest_price,x.currency,x.quote_status)}</td><td>${change(x.vs_previous_pct)}</td><td>${E(x.latest_date)}</td><td><span class="qm-link">查看</span></td></tr>`).join(''):'<tr><td colspan="6" class="qm-empty">暂无符合条件的有效 SKU 报价</td></tr>';
   $('#qm-body').querySelectorAll('tr[data-s]').forEach(tr=>tr.onclick=()=>sku(tr.dataset.s,tr.dataset.b));
 }
 function chart(points,ccy,field='avg_price'){

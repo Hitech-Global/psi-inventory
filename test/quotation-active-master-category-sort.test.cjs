@@ -100,5 +100,19 @@ assert.deepEqual(positions(),['B','D','A','C'],'increases lead, largest increase
 ui.S.sort='down';ui.testList();
 assert.deepEqual(positions(),['C','A','B','D'],'decreases lead without hiding other SKUs');
 assert.equal(nodes['#qm-count'].textContent,'共 4 个有效 SKU');
+const headerStart=browser.indexOf('<thead><tr><th>SKU</th>');
+const headerEnd=browser.indexOf('</tr></thead>',headerStart);
+assert(headerStart>=0&&headerEnd>headerStart);
+const header=browser.slice(headerStart,headerEnd);
+assert.equal((header.match(/<th>/g)||[]).length,6,'SKU list header should have six columns');
+assert(!header.includes('<th>较上次采购价</th>'),'purchase-price comparison must not appear in SKU list header');
+const displayedRow=nodes['#qm-body'].innerHTML.match(/<tr data-s="C"[^]*?<\/tr>/)?.[0];
+assert(displayedRow,'price-change sort retains the row');
+assert.equal((displayedRow.match(/<td[ >]/g)||[]).length,6,'SKU row should have six aligned cells');
+assert(!browser.slice(a,b).includes('change(x.vs_purchase_pct)'),'SKU list must not display purchase comparison');
+const skeletonStart=browser.indexOf('function renderSkeleton(){');
+const skeletonEnd=browser.indexOf('async function load(',skeletonStart);
+assert(browser.slice(skeletonStart,skeletonEnd).includes('Array.from({length:6},(_,i)=>'),'skeleton columns match the reduced table');
+
 db.close();
 console.log('quotation-active-master-category-sort: PASS');
