@@ -108,7 +108,7 @@ assert.equal((header.match(/<th>/g)||[]).length,6,'SKU list header should have s
 assert(!header.includes('<th>较上次采购价</th>'),'purchase-price comparison must not appear in SKU list header');
 const displayedRow=nodes['#qm-body'].innerHTML.match(/<tr data-s="C"[^]*?<\/tr>/)?.[0];
 assert(displayedRow,'price-change sort retains the row');
-assert.equal((displayedRow.match(/<td(?:\\s|>)/g)||[]).length,6,'SKU row should have six aligned cells');
+assert.equal((displayedRow.match(/<td[ >]/g)||[]).length,6,'SKU row should have six aligned cells');
 assert(!browser.slice(a,b).includes('change(x.vs_purchase_pct)'),'SKU list must not display purchase comparison');
 const skeletonStart=browser.indexOf('function renderSkeleton(){');
 const skeletonEnd=browser.indexOf('async function load(',skeletonStart);
