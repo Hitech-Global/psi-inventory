@@ -92,6 +92,8 @@ on:
       - 'quotation-locale.js'
       - 'test/quotation-english-mode.test.cjs'
       - 'quotation-management.js'
+      - 'quotation-procurement-brief.js'
+      - 'test/quotation-procurement-brief-observer.test.cjs'
       - 'scripts/quotation-management-bootstrap.cjs'
       - 'test/quotation-smart-import.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
@@ -293,6 +295,8 @@ jobs:
         run: node test/wac-history-import.test.cjs
       - name: Test WAC batch exclusion and restore
         run: node test/wac-batch-exclusion.test.cjs
+      - name: Test quotation procurement brief observer idempotence
+        run: node test/quotation-procurement-brief-observer.test.cjs
       - name: Test smart quotation import and supplier SKU mapping
         run: node test/quotation-smart-import.test.cjs
       - name: Test quotation English navigation and content
