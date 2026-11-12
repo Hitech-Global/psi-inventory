@@ -213,14 +213,14 @@ module.exports = function installQuotationManagement(deps) {
     const history = query(sql, ps).rows, by = new Map();
     for (const r of history) { const k = pairKey(r.brand, r.sku_code); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
     const brandCurrencies = getBrandCurrencyMap();
-    const pmap = purchaseBaselines([...by.values()].map(a => ({ brand: a[0].brand, sku: a[0].master_sku_code, currency: a[0].currency })), brandCurrencies);
+    const pmap = purchaseBaselines([...by.values()].filter(a => a[0].match_status !== 'unlinked').map(a => ({ brand: a[0].brand, sku: a[0].master_sku_code, currency: a[0].currency })), brandCurrencies);
     const rows = [];
 
     for (const [k, a] of by) {
-      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = pmap.get(pairKey(event.brand, event.master_sku_code)) || null;
+      const event = a[0], latest = isQuoted(event) ? event : null, prev = latest ? a.slice(1).find(isQuoted) || null : null, p = event.match_status === 'unlinked' ? null : (pmap.get(pairKey(event.brand, event.master_sku_code)) || null);
       const sameCurrency = !!latest && !!p && p.status === 'exact' && p.unit_price != null && String(p.currency || '').toUpperCase() === String(latest.currency || '').toUpperCase();
       rows.push({
-        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.master_sku_code, match_status: 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.master_category || '未分类',
+        sku_code: event.sku_code, supplier_part_no: event.supplier_part_no || event.sku_code, psi_sku_code: event.master_sku_code, match_status: event.match_status === 'unlinked' ? 'unlinked' : 'matched', supplier_id: event.supplier_id || '', model: event.model || '', spec: event.spec || '', brand: event.brand, product_type: event.master_category || '未分类',
         latest_price: latest ? Number(latest.quote_price) : null, currency: event.currency, latest_date: event.quote_date,
         quote_status: latest ? 'quoted' : 'no_quote', previous_price: prev ? Number(prev.quote_price) : null,
         vs_previous_pct: latest && prev ? pct(latest.quote_price, prev.quote_price) : null,
