@@ -22,7 +22,36 @@ function ensureCss(){
   s.textContent=`.qm-procurement-brief{margin:0 0 14px!important;padding:14px 15px!important;background:linear-gradient(180deg,#f7fbf8 0%,#f4f7f5 100%)!important;border:1px solid #dfe9e2!important;border-radius:14px!important}.qm-procurement-brief h4{display:flex;align-items:center;gap:7px;margin:0 0 10px!important;font-size:14px!important}.qm-procurement-headline{font-size:13px;line-height:1.7;color:#2b2f33;margin-bottom:10px}.qm-procurement-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.qm-procurement-item{background:#fff;border:1px solid #e8ece9;border-radius:10px;padding:9px 10px}.qm-procurement-item b{display:block;font-size:12px;color:#1d1d1f;margin-bottom:3px}.qm-procurement-item span{display:block;font-size:11px;line-height:1.5;color:#686d72}.qm-procurement-item.good b{color:#19713a}.qm-procurement-item.warn b{color:#9a6700}.qm-procurement-item.risk b{color:#b42318}.qm-procurement-item.muted b{color:#6e6e73}@media(max-width:1100px){.qm-procurement-grid{grid-template-columns:1fr}}`;
   document.head.appendChild(s);
 }
+function makeEnglishBrief(r){
+  const brand=esc(r.brand||document.getElementById('qm-brand')?.value||'Current brand');
+  const avg=r.avg_change_pct;
+  const lower=Number(r.below_purchase_count)||0;
+  const higher=Number(r.above_purchase_count)||0;
+  const noQuote=Number(r.no_quote_count)||0;
+  const mismatch=Number(r.currency_mismatch_count)||0;
+  const comparable=Number(r.comparable_purchase_count)||(lower+higher);
+  const up=Number(r.up_count)||0;
+  const down=Number(r.down_count)||0;
+  let headline='';
+  if(avg==null)headline=brand+' has insufficient quote history to establish a price trend.';
+  else if(avg<0)headline=brand+' valid quotes fell by '+Math.abs(avg).toFixed(2)+'% on average. Review discounted SKUs alongside inventory and replenishment needs.';
+  else if(avg>0)headline=brand+' valid quotes rose by '+Math.abs(avg).toFixed(2)+'% on average. Check the largest increases before placing an order.';
+  else headline=brand+' valid quotes were flat overall. Focus on individual SKU changes and the latest purchase-price differences.';
+  const items=[];
+  if(comparable>0){
+    items.push('<div class="qm-procurement-item good"><b>'+lower+' SKUs below last purchase price</b><span>Review these potentially attractive quotes against replenishment needs.</span></div>');
+    items.push('<div class="qm-procurement-item '+(higher?'risk':'muted')+'"><b>'+higher+' SKUs above last purchase price</b><span>'+(higher?'Negotiate or verify the increase before ordering.':'No comparable SKUs are above the last purchase price.')+'</span></div>');
+  }else if(mismatch>0){
+    items.push('<div class="qm-procurement-item warn"><b>'+mismatch+' SKUs with currency mismatch</b><span>Different currencies are not converted automatically and are excluded from comparisons.</span></div>');
+  }else{
+    items.push('<div class="qm-procurement-item warn"><b>No comparable purchase price</b><span>No historical CI/PI purchase in the same currency matches the selected quote SKUs.</span></div>');
+  }
+  items.push('<div class="qm-procurement-item '+(noQuote?'warn':'muted')+'"><b>'+noQuote+' SKUs currently unquoted</b><span>'+(noQuote?'Request the missing quotes before ranking prices.':'No unquoted SKUs in the current selection.')+'</span></div>');
+  items.push('<div class="qm-procurement-item muted"><b>'+down+' price decreases · '+up+' increases</b><span>Review the largest movements to decide whether to lock prices, negotiate, or postpone purchases.</span></div>');
+  return '<h4>🧭 Procurement Brief</h4><div class="qm-procurement-headline">'+headline+'</div><div class="qm-procurement-grid">'+items.join('')+'</div>';
+}
 function makeBrief(r){
+  if(typeof window.getLang==='function'&&window.getLang()==='en')return makeEnglishBrief(r);
   const brand=r.brand||document.getElementById('qm-brand')?.value||'当前品牌';
   const avg=r.avg_change_pct;
   const lower=Number(r.below_purchase_count)||0;
@@ -56,14 +85,14 @@ function apply(){
   ensureCss();
   const right=document.getElementById('qm-right');
   if(!right)return;
-  const badge=[...right.querySelectorAll('.qm-badge')].find(x=>x.textContent.includes('品牌报告'));
+  const badge=right.querySelector('.qm-report-title .qm-brand .qm-badge');
   if(!badge)return;
   const report=latestSummary&&latestSummary.report;
   if(!report)return;
   const brandInDom=(right.querySelector('.qm-brand')?.childNodes?.[0]?.textContent||'').trim();
   if(report.brand&&brandInDom&&report.brand!==brandInDom)return;
   const sections=[...right.querySelectorAll('.qm-section')];
-  let brief=sections.find(s=>s.querySelector('h4')?.textContent.includes('品牌简报'))||sections.find(s=>s.classList.contains('qm-procurement-brief'));
+  let brief=right.querySelector('[data-qm-brief="1"]')||sections.find(s=>s.classList.contains('qm-procurement-brief'))||sections.find(s=>s.querySelector('h4')?.textContent.includes('品牌简报'));
   if(!brief)return;
   brief.classList.add('qm-procurement-brief');
   const html=makeBrief(report);
@@ -72,6 +101,7 @@ function apply(){
   if(brief.dataset.qmProcurementBriefHtml!==html){
     brief.innerHTML=html;
     brief.dataset.qmProcurementBriefHtml=html;
+    if(window.QuotationLocale)window.QuotationLocale.apply(brief);
   }
   const reportTitle=right.querySelector('.qm-report-title');
   if(reportTitle&&brief.previousElementSibling!==reportTitle)reportTitle.insertAdjacentElement('afterend',brief);
