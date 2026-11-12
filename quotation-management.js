@@ -36,7 +36,8 @@ function css(){
 }
 
 function nav(){
-  const n=$('#sidebar-nav');if(!n||!canView())return;
+  const n=$('#sidebar-nav');if(!n)return;
+  if(!canView())return;
   // The procurement sidebar is rebuilt on language changes. Match stable
   // navigation keys and values instead of only Chinese labels.
   const labels=[
