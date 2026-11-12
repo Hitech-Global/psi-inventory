@@ -52,7 +52,7 @@ test('quotation locale translates English labels without touching business data'
 test('quotation bootstrap inserts locale script before page scripts',()=>{
   const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
   const patched=bootstrap.patchIndexSource(index);
-  assert(patched.includes('quotation-locale.js?v=20261112b'));
+  assert(patched.includes('quotation-locale.js?v=20261112c'));
   assert(patched.indexOf('quotation-locale.js')<patched.indexOf('quotation-management.js'));
   assert.equal(bootstrap.patchIndexSource(patched),patched);
 });

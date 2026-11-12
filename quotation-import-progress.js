@@ -135,7 +135,13 @@ function renderModalProgress(run){
     if(terminal(run)){submit.disabled=false;submit.textContent='关闭';submit.dataset.close='1';}
     else{submit.disabled=true;submit.textContent='正在导入';submit.dataset.close='';}
   }
-  const cancel=$('#qm-cancel',currentModal);if(cancel)cancel.textContent=terminal(run)?'关闭':'后台继续';
+  // Terminal states have one primary Close action. The secondary button is only for continuing in background.
+  const cancel=$('#qm-cancel',currentModal);
+  if(cancel){
+    cancel.hidden=terminal(run);
+    cancel.style.display=terminal(run)?'none':'';
+    if(!terminal(run))cancel.textContent='后台继续';
+  }
   if(terminal(run))stopElapsedTicker();else startElapsedTicker();
 }
 
