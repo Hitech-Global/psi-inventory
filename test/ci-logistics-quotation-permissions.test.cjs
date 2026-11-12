@@ -56,7 +56,7 @@ must(
 must(server, /role_admin[\s\S]{0,800}perms\.push\('quotation_view'\)/, 'role_admin quotation compatibility migration missing');
 
 must(quotationUi, /const canView=\(\)=>typeof window\.hasPermission==='function'&&window\.hasPermission\('quotation_view'\)/, 'quotation UI permission helper missing');
-must(quotationUi, /function nav\(\)[\s\S]{0,180}if\(!canView\(\)\)return;/, 'quotation nav must be hidden without permission');
+must(quotationUi, /function nav\(\)[\s\S]{0,180}if\(!n\|\|!canView\(\)\)return;/, 'quotation nav must be hidden without permission');
 must(quotationUi, /function show\(\)[\s\S]{0,120}if\(!canView\(\)\)return;/, 'direct quotation page open must be blocked without permission');
 must(quotationUi, /async function prefetchDefault\(\)\{[\s\S]{0,80}if\(!canView\(\)\)return;/, 'quotation prefetch must not run without permission');
 
