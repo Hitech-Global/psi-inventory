@@ -98,6 +98,7 @@ on:
       - 'quotation-locale.js'
       - 'test/quotation-english-mode.test.cjs'
       - 'test/ci-logistics-quotation-permissions.test.cjs'
+      - 'test/ci-amount-permission.test.cjs'
       - 'quotation-management.js'
       - 'test/quotation-active-master-category-sort.test.cjs'
       - 'quotation-procurement-brief.js'
@@ -207,6 +208,7 @@ jobs:
           node --check quotation-locale.js
           node --check test/quotation-english-mode.test.cjs
           node --check test/ci-logistics-quotation-permissions.test.cjs
+          node --check test/ci-amount-permission.test.cjs
           node --check quotation-management.js
           node --check test/quotation-active-master-category-sort.test.cjs
           node --check scripts/quotation-management-bootstrap.cjs
@@ -326,3 +328,5 @@ jobs:
         run: node --test test/quotation-english-mode.test.cjs
       - name: Test CI and quotation permission guards
         run: node test/ci-logistics-quotation-permissions.test.cjs
+      - name: Test CI amount permission and shared freight display
+        run: node test/ci-amount-permission.test.cjs
