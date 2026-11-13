@@ -88,8 +88,16 @@ test('A) 预检查 pending（precheckOk=false）→ 按钮禁用', () => {
   assert.equal(R.invImportShouldEnable(Object.assign({}, ENABLED_BASE, { precheckOk: false })), false);
 });
 
-test('B) 存在 blocking（blockingCount>0）→ 按钮禁用', () => {
+test('B) 存在 blocking 且没有可导入数量信息 → 保持旧式整批阻断保护', () => {
   assert.equal(R.invImportShouldEnable(Object.assign({}, ENABLED_BASE, { blockingCount: 3 })), false);
+});
+
+test('B2) 存在阻断行但仍有可导入 SKU → 允许部分导入', () => {
+  assert.equal(R.invImportShouldEnable(Object.assign({}, ENABLED_BASE, { blockingCount: 3, importableCount: 2, hasLocalError: true })), true);
+});
+
+test('B3) 所有行都被阻断、没有可导入 SKU → 按钮禁用', () => {
+  assert.equal(R.invImportShouldEnable(Object.assign({}, ENABLED_BASE, { blockingCount: 3, importableCount: 0 })), false);
 });
 
 test('C) 预检查 ok 但 fingerprint 已变化 → 按钮禁用', () => {
@@ -123,6 +131,8 @@ test('E) bulk-import blocked:true → 状态恢复为 blocked，指纹失效，�
   assert.equal(st.passedFingerprint, null, '422 后通过指纹必须失效');
   assert.equal(st.precheck.blocking.length, 1, 'blocking 明细必须保留');
   assert.equal(st.precheck.blocking[0].issue_type, 'BRAND_MISMATCH');
+  assert.equal(st.precheck.can_import, false);
+  assert.equal(st.precheck.importable_count, 0);
   // 与按钮不变量组合：blocked 态 → 禁用
   const enabled = R.invImportShouldEnable({
     hasRows: true, hasLocalError: false,
@@ -165,6 +175,12 @@ test('fingerprint：新增/删除任一行即改变', () => {
   const base = R.computeInvImportFingerprint([rec({ sku_code: 'SKU-A' })], '2026-07-05');
   assert.notEqual(base, R.computeInvImportFingerprint([rec({ sku_code: 'SKU-A' }), rec({ sku_code: 'SKU-B' })], '2026-07-05'), '新增一行必须改变');
   assert.notEqual(base, R.computeInvImportFingerprint([], '2026-07-05'), '删除所有行必须改变');
+});
+
+test('fingerprint：本地行级阻断原因变化也会使预检查指纹失效', () => {
+  const base = [rec({ _errors: [] })];
+  const blocked = [rec({ _errors: ['重复 SKU，需确认合并'] })];
+  assert.notEqual(R.computeInvImportFingerprint(base, '2026-07-05'), R.computeInvImportFingerprint(blocked, '2026-07-05'));
 });
 
 test('fingerprint：weighted_avg_cost 变化即改变', () => {

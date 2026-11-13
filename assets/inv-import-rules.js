@@ -37,7 +37,8 @@
     var rows = (records || []).map(function (r) {
       return [
         r.sku_code, r.brand, r.import_date, r.country, r.warehouse,
-        r.available_qty, r.weighted_avg_cost, r.snapshot_cutoff_date
+        r.available_qty, r.weighted_avg_cost, r.snapshot_cutoff_date,
+        (Array.isArray(r._local_errors) ? r._local_errors : (Array.isArray(r._errors) ? r._errors : [])).join('\u0003')
       ].join('\u0001');
     }).join('\u0000');
     return rows + '\u0002' + (snapshotCutoffDate || '');
@@ -48,10 +49,14 @@
   function invImportShouldEnable(opts) {
     opts = opts || {};
     if (!opts.hasRows) return false;
-    if (opts.hasLocalError) return false;
     if (!opts.hasDate) return false;
     if (!opts.precheckOk) return false;
-    if ((opts.blockingCount || 0) > 0) return false;
+    if (opts.importableCount !== undefined && opts.importableCount !== null) {
+      if (!(Number(opts.importableCount) > 0)) return false;
+    } else {
+      if (opts.hasLocalError) return false;
+      if ((opts.blockingCount || 0) > 0) return false;
+    }
     if (!opts.fingerprintMatch) return false;
     return true;
   }
@@ -75,6 +80,9 @@
         blocking: blocking,
         summary: summary,
         blocking_count: blocking.length,
+        blocked_row_count: Array.from(new Set(blocking.map(function (b) { return Number(b.row) || 0; }).filter(Boolean))).length,
+        importable_count: 0,
+        can_import: false,
         total_rows: totalRows
       },
       passedFingerprint: null

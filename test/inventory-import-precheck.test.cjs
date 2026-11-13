@@ -7,12 +7,12 @@
  * 库存导入不负责补 SKU 主数据；Excel 品牌仅用于与 skus.brand 一致性校验，绝不回写。
  *
  * 覆盖 6 个场景：
- *   1) SKU 不存在于 skus → 整批阻断
- *   2) SKU 存在但主数据品牌为空 → 整批阻断
- *   3) Excel 品牌与 SKU 主数据品牌不一致 → 整批阻断（严格逐字符一致：区分大小写与首尾空格，REDRAGON != Redragon）
+ *   1) SKU 不存在于 skus → 该行阻断；若同批有合法行，合法行仍可导入
+ *   2) SKU 存在但主数据品牌为空 → 该行阻断
+ *   3) Excel 品牌与 SKU 主数据品牌不一致 → 该行阻断（严格逐字符一致：区分大小写与首尾空格，REDRAGON != Redragon）
  *   4) Excel 无品牌但主数据有品牌 → 允许（品牌权威来源是 SKU 主数据）
  *   5) 全部合法 → 预检查通过，且真实路由实际写入 inventory_imports
- *   6) 校验失败时 → 真实路由整批拒绝（422），数据库零写入（无部分写入）
+ *   6) 混合批次 → 仅跳过阻断行，其他合法行正常写入；全部行均阻断时才 422 零写入
  *
  * 设计说明：
  *   · 场景 1-5 直接调用导出函数 validateInventoryImportRows（纯只读、确定性）。
@@ -360,27 +360,24 @@ test('5b) 真实路由：全部合法 → 预检查通过并实际写入 invento
 });
 
 // ==================== 场景 6：校验失败 → 整批拒绝 + 数据库零写入 ====================
-test('6) 真实路由：含阻断行的批次整批拒绝（422），数据库零写入（无部分写入）', async () => {
+test('6) 真实路由：混合批次仅跳过阻断行，合法行正常写入', async () => {
   getDB().exec('DELETE FROM skus; DELETE FROM inventory_imports; DELETE FROM inventory;');
-  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','Redragon')"); // 仅 SKU-A 合法
-  // 批次混合：1 行合法(SKU-A) + 1 行 SKU 不存在(SKU-UNKNOWN)
+  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-A','Redragon')");
   const items = [
     { sku_code: 'SKU-A', import_date: '2026-07-05', brand: 'Redragon', available_qty: 10, weighted_avg_cost: 80, _row_num: 2 },
     { sku_code: 'SKU-UNKNOWN', import_date: '2026-07-05', brand: 'Logitech', available_qty: 5, weighted_avg_cost: 90, _row_num: 3 }
   ];
   const beforeImp = count('inventory_imports');
-  const beforeInv = count('inventory');
   const { status, body } = await postBulkImport(items, '2026-07-05');
-  assert.equal(status, 422, '应返回 422 整批阻断');
-  assert.equal(body.blocked, true);
-  assert.ok(body.failed >= 1, '应报告至少 1 个阻断项');
-  assert.ok(body.blocking.some(x => x.issue_type === 'SKU_MASTER_MISSING' && x.sku_code === 'SKU-UNKNOWN' && x.row === 3),
-    '不匹配 SKU 必须在真实 bulk-import 后端闸门中按 SKU 和 Excel 行号明确阻断');
-  // 关键不变量：即便批次中存在合法行，也不应产生任何写入（整批语义，禁止部分写入）
-  const afterImp = count('inventory_imports');
-  const afterInv = count('inventory');
-  assert.equal(afterImp, beforeImp, 'inventory_imports 不应产生任何写入');
-  assert.equal(afterInv, beforeInv, 'inventory 不应产生任何写入');
+  assert.equal(status, 200, '存在合法行时应允许部分导入');
+  assert.equal(body.created, 1, '只写入合法 SKU-A');
+  assert.equal(body.skipped_count, 1, 'SKU-UNKNOWN 应被跳过');
+  assert.equal(body.skipped_rows.length, 1);
+  assert.equal(body.skipped_rows[0].row, 3);
+  assert.equal(body.skipped_rows[0].sku_code, 'SKU-UNKNOWN');
+  assert.ok(body.blocking.some(x => x.issue_type === 'SKU_MASTER_MISSING' && x.sku_code === 'SKU-UNKNOWN' && x.row === 3));
+  assert.equal(count('inventory_imports'), beforeImp + 1, '仅合法行进入 inventory_imports');
+  assert.equal(query('SELECT sku_code FROM inventory_imports').rows[0].sku_code, 'SKU-A', '阻断 SKU 不得写入');
 });
 
 // ==================== 场景 3c：品牌首尾空格 / 大小写 → 严格比较，禁止 trim ====================
@@ -695,23 +692,23 @@ test('W7) 印度尼西亚 / Old WH（inactive）→ FAIL（inactive 视为不存
 });
 
 // W8（场景 H）：真实 bulk-import —— 1 行合法 + 1 行 Bigseller → 422 整批零写入
-test('W8) 真实路由：1 行合法 + 1 行 Bigseller → 422，inventory_imports / inventory 零写入', async () => {
+test('W8) 真实路由：1 行合法 + 1 行 Bigseller → 只跳过非法仓库行，合法行写入', async () => {
   seedSingleValidSku('Redragon');
   const items = [
-    whRow({ country: '印度尼西亚', warehouse: 'Bekasi Warehouse', _row_num: 2 }),            // 合法行
-    whRow({ country: '印度尼西亚', warehouse: 'Bigseller', _row_num: 3 })                     // 非法行
+    whRow({ country: '印度尼西亚', warehouse: 'Bekasi Warehouse', _row_num: 2 }),
+    whRow({ country: '印度尼西亚', warehouse: 'Bigseller', _row_num: 3 })
   ];
-  const beforeImp = count('inventory_imports'), beforeInv = count('inventory');
+  const beforeImp = count('inventory_imports');
   const { status, body } = await postBulkImport(items, VALID_DATE);
-  assert.equal(status, 422, '任一行仓库非法必须整批 422');
-  assert.equal(body.blocked, true);
+  assert.equal(status, 200, '合法行应正常导入，不应被非法仓库行连带阻断');
+  assert.equal(body.created, 1);
+  assert.equal(body.skipped_count, 1);
   const whIssues = body.blocking.filter(b => b.issue_type === 'WAREHOUSE_MISSING');
   assert.equal(whIssues.length, 1, '仅 Bigseller 行报仓库问题');
   assert.equal(whIssues[0].row, 3);
   assert.deepEqual(whIssues[0].allowed_warehouses, ['Bekasi Warehouse', 'Jakarta Warehouse']);
-  // 关键不变量：合法行也不得部分写入
-  assert.equal(count('inventory_imports'), beforeImp, 'inventory_imports 零写入');
-  assert.equal(count('inventory'), beforeInv, 'inventory 零写入');
+  assert.equal(count('inventory_imports'), beforeImp + 1, '仅合法仓库行写入');
+  assert.equal(query('SELECT warehouse FROM inventory_imports').rows[0].warehouse, 'Bekasi Warehouse');
 });
 
 // W9：真实 precheck 端点 → ok=false，纯只读不写库
@@ -722,6 +719,8 @@ test('W9) 真实 precheck 端点：Bigseller → ok=false，且不产生任何�
   const { status, body } = await postPrecheck(items);
   assert.equal(status, 200, 'precheck 是只读校验，正常返回 200');
   assert.equal(body.ok, false);
+  assert.equal(body.can_import, false);
+  assert.equal(body.importable_count, 0);
   assert.equal(body.blocking[0].issue_type, 'WAREHOUSE_MISSING');
   assert.equal(count('inventory_imports'), beforeImp, 'precheck 不得写 inventory_imports');
   assert.equal(count('inventory'), beforeInv, 'precheck 不得写 inventory');
@@ -736,3 +735,23 @@ test('W10) SKU 为空 + 仓库非法 → 同时报 SKU_EMPTY 与 WAREHOUSE_MISSI
   const types = r.blocking.map(b => b.issue_type).sort();
   assert.deepEqual(types, ['SKU_EMPTY', 'WAREHOUSE_MISSING'], '两类问题都必须报出');
 });
+
+ 
+// W11：BigSeller 本地规则阻断只跳过对应行，其他 SKU 仍可写入
+test('W11) 本地行级校验错误 → 仅跳过该行，其他合法 SKU 正常导入', async () => {
+  seedSingleValidSku('Redragon');
+  run("INSERT INTO skus (sku_code, brand) VALUES ('SKU-B','Redragon')");
+  const items = [
+    whRow({ sku_code: 'SKU-A', _row_num: 2 }),
+    whRow({ sku_code: 'SKU-B', _row_num: 3, _local_errors: ['重复 SKU，需确认合并'] })
+  ];
+  const { status, body } = await postBulkImport(items, VALID_DATE);
+  assert.equal(status, 200);
+  assert.equal(body.created, 1);
+  assert.equal(body.skipped_count, 1);
+  assert.equal(body.skipped_rows[0].row, 3);
+  assert.ok(body.blocking.some(b => b.issue_type === 'LOCAL_VALIDATION' && b.row === 3));
+  assert.deepEqual(query('SELECT sku_code FROM inventory_imports').rows.map(r => r.sku_code), ['SKU-A']);
+});
+
+
