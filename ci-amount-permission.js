@@ -203,10 +203,6 @@
     };
 
     global.exportBatchCIAndPL = async function (batchId) {
-      if (!canViewAmounts()) {
-        global.showToast(tr('ci.amount.no_export_permission', '没有查看金额权限，不能导出CI&PL'), 'danger');
-        return;
-      }
       try {
         var data = await global.api('/api/logistics-batches/' + batchId + '/export-data?scope=ci_pl');
         if (data.export_blocked) {
@@ -223,7 +219,7 @@
 
     var originalToggle = global.toggleBatchExportMenu;
     global.toggleBatchExportMenu = function (batchId) {
-      if (canViewAmounts()) return originalToggle.call(this, batchId);
+      if (typeof originalToggle === 'function') return originalToggle.call(this, batchId);
       var el = document.getElementById('ci-logi-export-' + batchId);
       if (!el) return;
       if (el.style.display !== 'none') {
@@ -232,7 +228,9 @@
         return;
       }
       el.style.display = 'block';
-      el.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="exportBatchPL(\'' + String(batchId).replace(/'/g, '&#39;') + '\')">' + tr('export.pl_only', '导出PL') + '</button>';
+      var safeId = String(batchId).replace(/'/g, '&#39;');
+      el.innerHTML = '<button class="btn btn-secondary btn-sm" onclick="exportBatchPL(\'' + safeId + '\')">' + tr('export.pl_only', '导出PL') + '</button> ' +
+        '<button class="btn btn-secondary btn-sm" onclick="exportBatchCIAndPL(\'' + safeId + '\')">' + tr('export.ci_and_pl', '导出CI&PL') + '</button>';
     };
   }
 
