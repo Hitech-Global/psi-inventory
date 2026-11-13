@@ -20,6 +20,9 @@ assert.ok(featureSrc.includes("'/api/commercial-invoices/' + ciId + '/logistics-
 assert.ok(featureSrc.includes("data-ci-logi-toggle"), 'row toggle missing');
 assert.ok(featureSrc.includes("data-ci-logi-create"), 'inline create action missing');
 assert.ok(featureSrc.includes("data-ci-logi-edit"), 'inline edit action missing');
+assert.ok(featureSrc.includes("data-ci-logi-wac-view"), 'WAC view-reason action must be delegated');
+assert.ok(featureSrc.includes("runWacDetailAction"), 'WAC detail actions must use the loading-state handler');
+assert.ok(featureSrc.includes("data-wac-loading"), 'WAC detail actions must block duplicate clicks');
 assert.ok(featureSrc.includes("wrapSave('saveLogWithPL')"), 'create save refresh wrapper missing');
 assert.ok(featureSrc.includes("wrapSave('saveEditLog')"), 'edit save refresh wrapper missing');
 
