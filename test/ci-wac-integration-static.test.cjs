@@ -39,6 +39,15 @@ assert.ok(integrationSrc.includes('viewLogWacDetail'), 'combined logistics/WAC d
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
 assert.ok(integrationSrc.includes('wacMeta.shared_freight_breakdown'), 'shared freight allocation must be visible in logistics batch detail');
 assert.ok(integrationSrc.includes('合并运费分摊（已计入WAC）'), 'shared freight section must clearly distinguish allocated common bills');
+assert.ok(integrationSrc.includes("\"合并运费分摊（已计入WAC）\":\"Shared Freight Allocation (Included in WAC)\""), 'missing English translation for 合并运费分摊（已计入WAC）');
+assert.ok(integrationSrc.includes("\"上方费用为物流批次自身录入费用；合并账单按原分摊比例折算为目标本币后，在此单独列示。\":\"The costs above are entered directly on this logistics batch. Shared bills are converted to the target local currency using their original allocation ratios and shown separately here.\""), 'missing English translation for 上方费用为物流批次自身录入费用；合并账单按原分摊比例折算为目标本币后，在此单独列示。');
+assert.ok(integrationSrc.includes("\"本批合并运费分摊合计\":\"Total Shared Freight Allocated to This Batch\""), 'missing English translation for 本批合并运费分摊合计');
+assert.ok(integrationSrc.includes("\"最后实际付款日期\":\"Last Actual Payment Date\""), 'missing English translation for 最后实际付款日期');
+assert.ok(integrationSrc.includes("\"CI商品成本汇率\":\"CI Goods Cost FX Rate\""), 'missing English translation for CI商品成本汇率');
+assert.ok(integrationSrc.includes("\"合并账单\":\"Shared Freight Bill\""), 'missing English translation for 合并账单');
+assert.ok(integrationSrc.includes("\"分摊依据\":\"Allocation Basis\""), 'missing English translation for 分摊依据');
+assert.ok(integrationSrc.includes("\"本批分摊金额\":\"Amount Allocated to This Batch\""), 'missing English translation for 本批分摊金额');
+assert.ok(integrationSrc.includes("\"实际付款及汇率快照\":\"Actual Payments and FX Snapshots\""), 'missing English translation for 实际付款及汇率快照');
 assert.ok(integrationSrc.includes('renderLogisticsDetail(log, plData, wacMeta)'), 'WAC preview metadata must be passed into logistics detail');
 assert.ok(integrationSrc.includes('submitCIWacExclude'), 'CI no-calculation submission missing');
 assert.ok(integrationSrc.includes('submitCIWacRestore'), 'CI WAC restore submission missing');
