@@ -363,21 +363,68 @@
   }
 
   var originalSubmitWacConfirm = global.submitWacConfirm;
+  var wacSubmitBusy = false;
   if (typeof originalSubmitWacConfirm === 'function' && !originalSubmitWacConfirm.__ciWacWrapped) {
     var wrappedSubmitWacConfirm = async function (batchId) {
+      if (wacSubmitBusy) return;
+      wacSubmitBusy = true;
+
       var ciId = global.__ciWacActiveCiId || '';
-      var wasOpen = !!(document.getElementById('modal-overlay') &&
-        document.getElementById('modal-overlay').classList.contains('show'));
+      var button = document.getElementById('wac-confirm-btn');
+      var buttonText = button ? button.textContent : '';
+      if (button) {
+        button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
+        button.textContent = tr('wac.submitting', '正在确认…');
+      }
+
+      // The old WAC page is hidden and redirected to the CI list. Avoid refreshing
+      // its three legacy lists after a successful inline CI confirmation.
+      var originalLoadWacPending = global.loadWacPending;
+      var noOpLoadWacPending = function () { return Promise.resolve(); };
+      var suppressLegacyRefresh = !!ciId && typeof originalLoadWacPending === 'function';
+      global.__ciWacConfirmSubmitted = false;
+      if (suppressLegacyRefresh) global.loadWacPending = noOpLoadWacPending;
+
       var result;
       try {
         result = await originalSubmitWacConfirm.apply(this, arguments);
       } finally {
+        if (suppressLegacyRefresh && global.loadWacPending === noOpLoadWacPending) {
+          global.loadWacPending = originalLoadWacPending;
+        }
+
         var isOpen = !!(document.getElementById('modal-overlay') &&
           document.getElementById('modal-overlay').classList.contains('show'));
-        if (ciId && wasOpen && !isOpen && typeof global.refreshCIListLogistics === 'function') {
-          await global.refreshCIListLogistics(ciId);
+        if (button && isOpen && button.isConnected) {
+          button.disabled = false;
+          button.removeAttribute('aria-busy');
+          button.textContent = buttonText;
+        }
+
+        var submitted = global.__ciWacConfirmSubmitted === true;
+        global.__ciWacConfirmSubmitted = false;
+        if (submitted && ciId && typeof global.refreshCIListLogistics === 'function') {
+          global.__ciWacActiveCiId = '';
+          // The WAC transaction is already committed. Refresh the expanded CI row
+          // in the background so a slow list read cannot hold the submit action open.
+          setTimeout(function () {
+            try {
+              Promise.resolve(global.refreshCIListLogistics(ciId)).catch(function (error) {
+                if (typeof global.showToast === 'function') {
+                  global.showToast(tr('wac.refresh_failed', 'WAC已确认，但物流列表刷新失败，请手动刷新页面。'), 'warning');
+                }
+              });
+            } catch (error) {
+              if (typeof global.showToast === 'function') {
+                global.showToast(tr('wac.refresh_failed', 'WAC已确认，但物流列表刷新失败，请手动刷新页面。'), 'warning');
+              }
+            }
+          }, 0);
+        } else if (!isOpen && ciId) {
           global.__ciWacActiveCiId = '';
         }
+        wacSubmitBusy = false;
       }
       return result;
     };
@@ -441,6 +488,12 @@
     var wrappedApi = function (url, method, body, opts) {
       var verb = String(method || 'GET').toUpperCase();
       var path = String(url || '').split('?')[0];
+      if (verb === 'POST' && /^\/api\/wac\/confirm\/[^/]+$/.test(path)) {
+        return Promise.resolve(originalApi.apply(this, arguments)).then(function (result) {
+          global.__ciWacConfirmSubmitted = true;
+          return result;
+        });
+      }
       if (verb !== 'GET') return originalApi.apply(this, arguments);
 
       var timeoutMs = 0;
@@ -457,6 +510,12 @@
       } else if (path === '/api/wac/cc-candidates') {
         timeoutMs = 10000;
         message = tr('wac.cc_timeout', '抄送人员列表加载超时，请稍后重试。');
+      } else if (/^\/api\/commercial-invoices\/[^/]+\/logistics-batches$/.test(path)) {
+        timeoutMs = 15000;
+        message = tr('wac.refresh_timeout', 'WAC已提交，物流批次列表刷新超时；可手动刷新页面查看最新状态。');
+      } else if (/^\/api\/commercial-invoices\/[^/]+\/shared-logistics-fees$/.test(path)) {
+        timeoutMs = 15000;
+        message = tr('wac.shared_freight_refresh_timeout', '合并运费信息刷新超时，请稍后刷新页面。');
       }
       if (!timeoutMs) return originalApi.apply(this, arguments);
       return withWacApiTimeout(originalApi.apply(this, arguments), timeoutMs, message);
