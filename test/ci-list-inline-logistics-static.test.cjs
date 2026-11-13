@@ -25,7 +25,8 @@ assert.ok(featureSrc.includes("wrapSave('saveEditLog')"), 'edit save refresh wra
 
 const appMatch = indexSrc.match(/<script src="app\.js(?:\?[^\"]*)?"><\/script>/);
 const appPos = appMatch ? indexSrc.indexOf(appMatch[0]) : -1;
-const featurePos = indexSrc.indexOf('<script src="ci-list-inline-logistics.js"></script>');
+const featureMatch = indexSrc.match(/<script src="ci-list-inline-logistics\\.js(?:\\?[^"\\]*)?"><\\/script>/);
+const featurePos = featureMatch ? indexSrc.indexOf(featureMatch[0]) : -1;
 assert.ok(appPos >= 0 && featurePos > appPos, 'inline logistics script must load after app.js');
 
 console.log('ci-list-inline-logistics static integration: PASS');
