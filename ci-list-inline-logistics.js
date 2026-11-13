@@ -82,6 +82,7 @@
       restore: { zh: '恢复待确认', en: 'Restore', id: 'Pulihkan' },
       cc: { zh: 'CC', en: 'CC', id: 'CC' },
       view: { zh: '查看原因', en: 'View reason', id: 'Lihat alasan' },
+      loading: { zh: '加载中…', en: 'Loading…', id: 'Memuat…' },
       status: { zh: 'WAC 状态', en: 'WAC Status', id: 'Status WAC' },
       notReadyReason: { zh: '该批次尚未进入 WAC 待确认阶段；请查看物流批次详情及 PL 数量。', en: 'This batch is not yet eligible for WAC confirmation. Check the logistics batch details and PL quantity.', id: 'Batch ini belum siap dikonfirmasi untuk WAC. Periksa detail logistik dan jumlah PL.' }
     };
@@ -306,6 +307,7 @@
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-no-action{color:#a1a1a6;font-size:12px}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-status-cell{min-width:104px}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-action{min-height:25px;padding:3px 8px;border-radius:7px;font-size:10px;white-space:nowrap}',
+      '.content-inner:has(#ci-source-mode) #ci-table .ci-list-wac-action:disabled{opacity:.55;cursor:wait}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-owners{max-width:220px;overflow:hidden;text-overflow:ellipsis}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-table .cell-actions{position:sticky;right:0;background:#fff!important;box-shadow:-6px 0 10px rgba(0,0,0,.04)}',
       '.content-inner:has(#ci-source-mode) #ci-table .ci-list-logi-actions{padding-top:10px}',
@@ -812,8 +814,35 @@
     global.renderOperationalCITable = wrapped;
   }
 
+  function runWacDetailAction(el, batchId, ciId, status, reason) {
+    if (!el || el.disabled || el.getAttribute('data-wac-loading') === '1') return;
+    var originalText = el.textContent;
+    el.disabled = true;
+    el.setAttribute('data-wac-loading', '1');
+    el.setAttribute('aria-busy', 'true');
+    el.textContent = wacUiText('loading');
+
+    var task;
+    try {
+      task = global.viewLogWacDetail(batchId, ciId, status, reason);
+    } catch (error) {
+      task = Promise.reject(error);
+    }
+    Promise.resolve(task).catch(function (error) {
+      if (typeof global.showToast === 'function') {
+        global.showToast(error && error.message || 'WAC详情加载失败', 'danger');
+      }
+    }).finally(function () {
+      if (!el.isConnected) return;
+      el.disabled = false;
+      el.removeAttribute('data-wac-loading');
+      el.removeAttribute('aria-busy');
+      el.textContent = originalText;
+    });
+  }
+
   document.addEventListener('click', function (event) {
-    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl],[data-ci-logi-wac-confirm],[data-ci-logi-wac-exclude],[data-ci-logi-wac-restore],[data-ci-logi-wac-cc]');
+    var el = event.target.closest('[data-ci-logi-toggle],[data-ci-logi-collapse],[data-ci-logi-create],[data-ci-logi-edit],[data-ci-logi-retry],[data-ci-logi-export-pl],[data-ci-logi-export-ci-pl],[data-ci-logi-wac-confirm],[data-ci-logi-wac-view],[data-ci-logi-wac-exclude],[data-ci-logi-wac-restore],[data-ci-logi-wac-cc]');
     if (!el) return;
 
     event.preventDefault();
@@ -824,8 +853,12 @@
     if (el.hasAttribute('data-ci-logi-retry')) return void togglePanel(el.getAttribute('data-ci-logi-retry'), true);
     if (el.hasAttribute('data-ci-logi-create')) return void openCreate(el.getAttribute('data-ci-logi-create'));
     if (el.hasAttribute('data-ci-logi-edit')) return void openEdit(el.getAttribute('data-ci-logi-edit'), el.getAttribute('data-ci-id'));
-    if (el.hasAttribute('data-ci-logi-wac-confirm') && typeof global.viewLogWacDetail === 'function') return void global.viewLogWacDetail(el.getAttribute('data-ci-logi-wac-confirm'), el.getAttribute('data-ci-id'), 'pending');
-    if (el.hasAttribute('data-ci-logi-wac-view') && typeof global.viewLogWacDetail === 'function') return void global.viewLogWacDetail(el.getAttribute('data-ci-logi-wac-view'), el.getAttribute('data-ci-id'), 'not_ready');
+    if (el.hasAttribute('data-ci-logi-wac-confirm') && typeof global.viewLogWacDetail === 'function') {
+      return void runWacDetailAction(el, el.getAttribute('data-ci-logi-wac-confirm'), el.getAttribute('data-ci-id'), 'pending');
+    }
+    if (el.hasAttribute('data-ci-logi-wac-view') && typeof global.viewLogWacDetail === 'function') {
+      return void runWacDetailAction(el, el.getAttribute('data-ci-logi-wac-view'), el.getAttribute('data-ci-id'), 'not_ready');
+    }
     if (el.hasAttribute('data-ci-logi-wac-exclude') && typeof global.openCIWacExclude === 'function') return void global.openCIWacExclude(el.getAttribute('data-ci-logi-wac-exclude'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
     if (el.hasAttribute('data-ci-logi-wac-restore') && typeof global.openCIWacRestore === 'function') return void global.openCIWacRestore(el.getAttribute('data-ci-logi-wac-restore'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
     if (el.hasAttribute('data-ci-logi-wac-cc') && typeof global.openWacCcFromCI === 'function') return void global.openWacCcFromCI(el.getAttribute('data-ci-logi-wac-cc'), el.getAttribute('data-ci-id'), el.getAttribute('data-batch-no'));
