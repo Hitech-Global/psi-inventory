@@ -10822,18 +10822,27 @@ app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistic
     });
   }
   const amountViewAllowed = ciCanViewAmounts(req);
-  const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
-  if (!amountViewAllowed) ciItems.forEach(it => ciStripFields(it, CI_ITEM_AMOUNT_FIELDS));
+  const rawCIItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
+  // Use allowlists for no-amount exports so newly added monetary columns can never leak by accident.
+  const ciItems = amountViewAllowed
+    ? rawCIItems
+    : rawCIItems.map(it => ({ sku_code: it.sku_code, shipped_qty: it.shipped_qty }));
   // Without amount permission, omit price lookup entirely and do not block the export
   // on price ambiguity: the workbook will contain CI + PL quantities only.
-  const priceLookup = amountViewAllowed ? computePriceLookup(ciItems, ci ? ci.currency : null) : {};
+  const priceLookup = amountViewAllowed ? computePriceLookup(rawCIItems, ci ? ci.currency : null) : {};
   const inScopeSkus = new Set();
   pls.forEach(pl => (plItemsByPl[pl.id] || []).forEach(it => inScopeSkus.add(it.sku_code)));
   const blockingIssues = amountViewAllowed ? validateInScopePrices(priceLookup, [...inScopeSkus]) : [];
   const exportBlocked = !ci || pls.length === 0 || (amountViewAllowed && blockingIssues.length > 0);
   const blockingReason = !ci ? 'no_ci' : (pls.length === 0 ? 'no_pl' : (blockingIssues.length > 0 ? 'price_ambiguous_or_missing' : null));
-  const safeBatch = amountViewAllowed ? batch : ciRedactLogistics({ ...batch });
-  const safeCI = amountViewAllowed || !ci ? ci : ciRedactOperational({ ...ci }, false);
+  const safeBatch = amountViewAllowed ? batch : {
+    id: batch.id, batch_no: batch.batch_no,
+    related_ci_id: batch.related_ci_id || '', related_ci_no: batch.related_ci_no || ''
+  };
+  const safeCI = amountViewAllowed || !ci ? ci : {
+    id: ci.id, ci_no: ci.ci_no, supplier_name: ci.supplier_name,
+    currency: ci.currency, amount_view_allowed: false
+  };
   res.json({
     scope: 'ci_pl', batch: safeBatch, ci: safeCI, ci_items: ciItems, pls: plPayload,
     price_lookup: priceLookup, amount_view_allowed: amountViewAllowed,
