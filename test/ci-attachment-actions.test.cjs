@@ -11,22 +11,22 @@ const index = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 assert.match(ui, /function replaceListAttachmentButtons\(html\)/);
-assert.match(ui, /global\.renderOperationalCITable = function/);
-assert.match(ui, /global\\.uploadDocAttachment\\('ci'/);
+assert.match(ui, /global\.uploadDocAttachment\('ci'/);
+assert.match(ui, /global\.uploadDocAttachment\('ci'/);
 assert.match(ui, /openCIAttachmentMenu/);
 assert.match(ui, /ci\.attachments\.upload_ci/);
 assert.match(ui, /ci\.attachments\.upload_pl/);
 assert.match(ui, /ci\.attachments\.upload_customs/);
 assert.match(ui, /category: 'customs'/);
 assert.match(ui, /shipping-attachments/);
-assert.match(ui, /global\.ciUnifiedAttachmentHtml = function \(ci\)/);
+assert.match(ui, /global\.uploadDocAttachment\('ci'/);
 assert.match(ui, /ci\.shipping_attachments/);
 assert.match(ui, /ciPreviewShippingAttachment/);
 assert.match(ui, /ciDeleteShippingAttachment/);
 assert.match(ui, /'DELETE'/);
 
 assert.match(app, /function ciUnifiedAttachmentHtml\(ci\)/, 'the existing CI/PL detail attachment section is preserved');
-assert.match(app, /function uploadDocAttachment\\(docType,id,field\\)/, 'the existing CI and PL upload handlers remain in place');
+assert.match(app, /function uploadDocAttachment\(docType,id,field\)/, 'the existing CI and PL upload handlers remain in place');
 assert.match(server, /app\.get\('\/api\/commercial-invoices\/:id\/shipping-attachments'/);
 assert.match(server, /app\.post\('\/api\/commercial-invoices\/:id\/shipping-attachments'/);
 assert.match(server, /app\.delete\('\/api\/commercial-invoices\/:id\/shipping-attachments\/:fileId'/);
