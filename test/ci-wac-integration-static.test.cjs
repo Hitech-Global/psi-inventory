@@ -36,6 +36,12 @@ assert.ok(ciSrc.includes('data-ci-logi-row'), 'clicking a logistics row must ope
 assert.ok(ciSrc.includes('refreshCIListLogistics'), 'CI logistics panel must support a targeted refresh');
 
 assert.ok(integrationSrc.includes('viewLogWacDetail'), 'combined logistics/WAC detail entry missing');
+assert.ok(integrationSrc.includes('installWacApiTimeouts'), 'WAC read requests must have timeout protection');
+assert.ok(integrationSrc.includes('__ciWacApiTimeoutWrapped'), 'WAC API timeout wrapper must install only once');
+assert.ok(integrationSrc.includes('WAC预览加载超时'), 'WAC preview timeout must explain that confirmation was not submitted');
+assert.ok(integrationSrc.includes('wacDetailBusy'), 'WAC detail loading must reject duplicate in-flight actions');
+assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
+assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
 assert.ok(integrationSrc.includes('wacMeta.shared_freight_breakdown'), 'shared freight allocation must be visible in logistics batch detail');
 assert.ok(integrationSrc.includes('合并运费分摊（已计入WAC）'), 'shared freight section must clearly distinguish allocated common bills');
