@@ -82,7 +82,9 @@ assert.doesNotMatch(wbBlock, /CI单价|unit_price|price_lookup|CI币种/, 'PL-on
 must(inline, /function canViewAmounts\(\)[\s\S]{0,120}ci_amount_view/, 'inline logistics permission check missing');
 must(inline, /var showAmounts = canViewAmounts\(\)/, 'inline logistics amount-column gate missing');
 must(inline, /showAmounts[\s\S]*cargo_value[\s\S]*data-ci-logi-freight/, 'inline logistics cargo/freight columns must be conditional and use shared allocation cells');
-must(inline, /data-ci-logi-freight-ratio="1"[\s\S]*hydrateSharedFreight[\s\S]*batch_totals_rmb/, 'inline logistics freight ratio must use shared allocation summary');
+must(inline, /data-ci-logi-freight-ratio="1"/, 'inline logistics freight ratio cell missing');
+must(inline, /async function hydrateSharedFreight[\s\S]*shared-logistics-fees\?view=ci-summary/, 'inline logistics must hydrate the shared freight summary');
+must(inline, /batch_totals_rmb/, 'inline logistics must use the shared per-batch freight totals');
 must(inline, /showAmounts[\s\S]*logistics\.col\.freight_ratio/, 'inline logistics freight ratio column must be conditional');
 must(inline, /canViewAmounts\(\)[\s\S]*data-ci-logi-export-ci-pl/, 'inline export menu must hide CI&PL without permission');
 
