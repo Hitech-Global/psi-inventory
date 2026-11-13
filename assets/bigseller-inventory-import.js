@@ -469,8 +469,7 @@
       if (typeof win.renderInvPreview === 'function') win.renderInvPreview(win._invImportData);
       if (typeof win.renderInvStatus === 'function') win.renderInvStatus();
       if (typeof win.updateInvImportBtnState === 'function') win.updateInvImportBtnState();
-      var hasLocalError = win._invImportData.some(function (r) { return r._errors && r._errors.length; });
-      if (win._invBigSellerMappingReady && !hasLocalError) win.runInvPrecheck();
+      if (win._invBigSellerMappingReady) win.runInvPrecheck();
     }
 
     win.runInvPrecheck = async function () {
@@ -478,7 +477,6 @@
       if (isBigSeller) setInventoryFileProgress('正在校验 SKU 与品牌主数据…', 82);
       if (win._invImportSourceMode === 'bigseller') {
         if (!win._invBigSellerMappingReady) return;
-        if ((win._invImportData || []).some(function (r) { return r._errors && r._errors.length; })) return;
       }
       var result = await originalRunInvPrecheck.apply(this, arguments);
       if (win._invImportSourceMode === 'bigseller') {
@@ -491,7 +489,8 @@
           var masterBrand = resolved.get(String(record.sku_code || '').trim());
           if (masterBrand && !record.brand) record.brand = masterBrand;
         });
-        if (precheck.ok === true && (!precheck.blocking || precheck.blocking.length === 0) && win.InvImportRules) {
+        var canImport = precheck.can_import === true || Number(precheck.importable_count || 0) > 0 || precheck.ok === true;
+        if (canImport && win.InvImportRules) {
           win._invPassedFingerprint = win.InvImportRules.computeInvImportFingerprint(records, win._invSnapshotDate || '');
         } else {
           win._invPassedFingerprint = null;
@@ -499,8 +498,12 @@
         if (typeof win.renderInvPreview === 'function') win.renderInvPreview(records);
         if (typeof win.renderInvStatus === 'function') win.renderInvStatus();
         if (typeof win.updateInvImportBtnState === 'function') win.updateInvImportBtnState();
-        var passed = precheck.ok === true && (!precheck.blocking || precheck.blocking.length === 0);
-        setInventoryFileProgress(passed ? 'SKU / 品牌校验完成，可以开始导入。' : 'SKU / 品牌校验未通过，请先处理异常。', 100, passed ? 'done' : 'blocked');
+        var passed = canImport;
+        var skipped = Number(precheck.blocked_row_count || 0);
+        var message = passed
+          ? (skipped > 0 ? '预检查完成，跳过 ' + skipped + ' 条异常数据，其余有效 SKU 可以导入。' : 'SKU / 品牌校验完成，可以开始导入。')
+          : '没有可导入的有效 SKU，请查看阻断原因。';
+        setInventoryFileProgress(message, 100, passed ? 'done' : 'blocked');
       }
       return result;
     };

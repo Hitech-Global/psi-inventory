@@ -3693,7 +3693,7 @@ const INV_IMPORT_COLUMNS=[
   {key:'sku_code',label:t("app.583", "SKU\u7f16\u7801"),required:true},
   // INV-IMPORT-PRECHECK-01：brand 为「可选校验字段」——
   //   不作为库存事实字段维护、绝不回写 skus.brand；仅当 Excel 填写了品牌时，
-  //   与 SKU 主数据品牌做一致性校验（不一致则整批阻断）。库存总表品牌权威来源恒为 skus.brand。
+  //   与 SKU 主数据品牌做一致性校验（不一致的行单独阻断并跳过，不影响其他有效行）。库存总表品牌权威来源恒为 skus.brand。
   {key:'brand',label:t("app.112", "\u54c1\u724c"),optionalCheckOnly:true},
   {key:'import_date',label:t("po.009", "\u5bfc\u5165\u65e5\u671f"),required:true},
   {key:'country',label:t("app.113", "\u56fd\u5bb6")},
@@ -3720,7 +3720,7 @@ function openInvBatchImport(){
       // INV-IMPORT-PRECHECK-01：品牌口径说明
       '<div style="margin-bottom:12px;padding:10px 14px;background:#f9f0ff;border:1px solid #d3adf7;border-radius:6px;font-size:12px;color:#333">'+
         '<div style="font-weight:600;margin-bottom:4px">'+t("inv.brand_rule_title", "品牌与 SKU 主数据说明")+'</div>'+
-        '<div style="color:#666">'+t("inv.brand_rule_body", "SKU 主数据是 SKU 与品牌的唯一权威来源，库存导入不负责补 SKU 主数据。Excel 的品牌列为可选校验字段：留空即以 SKU 主数据品牌为准；填写则必须与 SKU 主数据一致，否则整批阻断。")+'</div>'+
+        '<div style="color:#666">'+t("inv.brand_rule_body", "SKU 主数据是 SKU 与品牌的唯一权威来源，库存导入不负责补 SKU 主数据。Excel 的品牌列为可选校验字段：留空即以 SKU 主数据品牌为准；填写则必须与主数据完全一致，不一致的行会跳过，其余有效行仍可导入。")+'</div>'+
       '</div>'+
       '<div id="inv-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:40px 20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s" '+
         'onclick="document.getElementById(\'inv-file-input\').click()" '+
@@ -3846,13 +3846,21 @@ function renderInvStatus(){
   var pc=window._invPrecheck;
   var base='padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px';
   var html;
+  var blockedRows=pc?Number(pc.blocked_row_count||0):0;
+  var importableRows=pc?Number(pc.importable_count!==undefined?pc.importable_count:(pc.ok?N:0)):0;
+  var canImport=!!(pc&&(pc.can_import===true||importableRows>0||pc.ok===true));
   if(window._invPrecheckError){
     html='<div style="'+base+';background:#fff1f0;border:1px solid #ffa39e;color:#a8071a">'+t('inv.status_error','共 {n} 条数据，格式有效 {v} 条，预检查请求失败，请重试',{n:N,v:fmtValid})+'</div>';
   }else if(!pc){
     html='<div style="'+base+';background:#f0f8ff;border:1px solid #d6e4ff;color:#333">'+t('inv.status_pending','共 {n} 条数据，格式有效 {v} 条，正在检查 SKU 主数据……',{n:N,v:fmtValid})+'</div>';
+  }else if(canImport&&blockedRows>0){
+    if(window._invPassedFingerprint===null||window._invPassedFingerprint===undefined){
+      html='<div style="'+base+';background:#fffbe6;border:1px solid #ffe58f;color:#ad6800">'+t('inv.status_changed','共 {n} 条数据，数据或快照截止日期已变更，请重新预检查（格式有效 {v} 条）',{n:N,v:fmtValid})+'</div>';
+    }else{
+      html='<div style="'+base+';background:#fffbe6;border:1px solid #ffe58f;color:#ad6800">'+t('inv.status_partial','共 {n} 条数据，格式有效 {v} 条；跳过异常 {s} 行，剩余 {m} 行可导入',{n:N,v:fmtValid,s:blockedRows,m:importableRows})+'</div>';
+    }
   }else if(pc.ok===true){
     if(window._invPassedFingerprint===null||window._invPassedFingerprint===undefined){
-      // INV-IMPORT-PRECHECK-01：预检查曾通过，但 payload / 快照日期已变更（fingerprint 已失效）→ 显示「需重新预检查」琥珀态，按钮保持禁用
       html='<div style="'+base+';background:#fffbe6;border:1px solid #ffe58f;color:#ad6800">'+t('inv.status_changed','共 {n} 条数据，数据或快照截止日期已变更，请重新预检查（格式有效 {v} 条）',{n:N,v:fmtValid})+'</div>';
     }else{
       html='<div style="'+base+';background:#f6ffed;border:1px solid #b7eb8f;color:#237804">'+t('inv.status_pass','共 {n} 条数据，预检查通过 {v} 条',{n:N,v:fmtValid})+'</div>';
@@ -3865,7 +3873,7 @@ function renderInvStatus(){
 }
 
 // ==================== 库存导入预检查（INV-IMPORT-PRECHECK-01，前端侧） ====================
-// 原则：SKU 主数据是 SKU 与品牌的唯一权威来源；预检查全部通过才允许真正写入库存数据。
+// 原则：SKU 主数据是 SKU 与品牌的唯一权威来源；预检查按行校验，阻断行跳过，合法行可继续写入。
 // 阻断型问题类型与后端 INV_IMPORT_ISSUE_META 一一对应。
 var INV_ISSUE_I18N={
   SKU_EMPTY:{label:['inv.issue.sku_empty','SKU 为空'],sug:['inv.sug.sku_empty','在 Excel 中补全 SKU 编码后重新导入']},
@@ -3874,15 +3882,16 @@ var INV_ISSUE_I18N={
   SKU_BRAND_EMPTY:{label:['inv.issue.brand_empty','SKU 主数据品牌为空'],sug:['inv.sug.brand_empty','前往「SKU 主数据」补全该 SKU 的品牌后再重新导入库存']},
   BRAND_MISMATCH:{label:['inv.issue.brand_mismatch','Excel 品牌与 SKU 主数据品牌不一致'],sug:['inv.sug.brand_mismatch','库存总表品牌以 SKU 主数据为准：修正 Excel 品牌，或前往「SKU 主数据」更正品牌']},
   QTY_INVALID:{label:['inv.issue.qty_invalid','库存数量格式非法'],sug:['inv.sug.qty_invalid','可用数量必须为非负整数（不接受小数、空值、负数）']},
-  WAC_INVALID:{label:['inv.issue.wac_invalid','加权平均成本格式非法'],sug:['inv.sug.wac_invalid','加权平均成本可留空表示不提供；若填写必须为非负数字']}
+  WAC_INVALID:{label:['inv.issue.wac_invalid','加权平均成本格式非法'],sug:['inv.sug.wac_invalid','加权平均成本可留空表示不提供；若填写必须为非负数字']},
+  LOCAL_VALIDATION:{label:['inv.local_validation','本地规则校验未通过'],sug:['inv.sug.local_validation','该行将跳过，不影响其他有效 SKU 导入']}
 };
 function invIssueLabel(type,fallback){var m=INV_ISSUE_I18N[type];return m?t(m.label[0],m.label[1]):(fallback||type||'')}
 function invIssueSuggestion(type,fallback){var m=INV_ISSUE_I18N[type];return m?t(m.sug[0],m.sug[1]):(fallback||'')}
 // 分组主提示：SKU 主数据缺失 / 品牌未完善 / 品牌不一致 使用业务指定话术
 function invIssueHeadline(g){
-  if(g.issue_type==='SKU_MASTER_MISSING')return t('inv.headline.sku_missing','检测到以下 SKU 尚未维护 SKU 主数据，请先前往 SKU 主数据补全后再重新导入库存。');
-  if(g.issue_type==='SKU_BRAND_EMPTY')return t('inv.headline.brand_empty','检测到以下 SKU 的品牌信息未完善。库存总表品牌以 SKU 主数据为准，请先前往 SKU 主数据补全品牌后再重新导入。');
-  if(g.issue_type==='BRAND_MISMATCH')return t('inv.headline.brand_mismatch','检测到 Excel 品牌与 SKU 主数据品牌不一致，请修正后才能重新导入。');
+  if(g.issue_type==='SKU_MASTER_MISSING')return t('inv.headline.sku_missing','以下 SKU 尚未维护 SKU 主数据；对应行将跳过，不影响其他有效 SKU 导入。可稍后补全主数据。');
+  if(g.issue_type==='SKU_BRAND_EMPTY')return t('inv.headline.brand_empty','以下 SKU 的品牌信息未完善；对应行将跳过，不影响其他有效 SKU 导入。可稍后补全主数据品牌。');
+  if(g.issue_type==='BRAND_MISMATCH')return t('inv.headline.brand_mismatch','以下行的 Excel 品牌与 SKU 主数据品牌不一致；对应行将跳过，不影响其他有效 SKU 导入。');
   return invIssueLabel(g.issue_type,g.issue_label)+'（'+(g.count||0)+'）';
 }
 // 提交给后端的单行载荷（预检查与正式导入共用同一构造，保证两次校验对象完全一致）
@@ -3890,9 +3899,10 @@ function buildInvImportItem(r){
   var o={};
   INV_IMPORT_COLUMNS.forEach(function(c){o[c.key]=r[c.key]!==undefined?r[c.key]:''});
   o._row_num=r._rowNum;
+  o._local_errors=Array.isArray(r._errors)?r._errors.slice():[];
   return o;
 }
-// 上传后立即做服务端预检查（只读，不写库）。未通过则禁止提交导入。
+// 上传后立即做服务端预检查（只读，不写库）。存在可导入行即可继续，阻断行将在正式导入时跳过。
 async function runInvPrecheck(){
   var records=window._invImportData||[];
   var box=document.getElementById('inv-precheck');
@@ -3917,9 +3927,9 @@ async function runInvPrecheck(){
     var res=await api('/api/inventory-imports/precheck','POST',{items:records.map(buildInvImportItem)});
     if(seq!==window._invPrecheckSeq)return; // 已有更新的一次预检查，丢弃过期结果
     window._invPrecheck=res;
-    // INV-IMPORT-PRECHECK-01 严格品牌：仅当“完全通过（ok 且零 blocking）”才记录通过指纹；
-    // 否则失效指纹，确保 submit 必须重新预检查当前 payload。
-    if(res.ok===true&&(!res.blocking||res.blocking.length===0)){
+    // 有至少一行可导入时记录通过指纹；阻断行会在正式导入时由后端再次校验并跳过。
+    var canImport=!!(res&&(res.can_import===true||Number(res.importable_count||0)>0||res.ok===true));
+    if(canImport){
       window._invPassedFingerprint=InvImportRules.computeInvImportFingerprint(records, window._invSnapshotDate||'');
     }else{
       window._invPassedFingerprint=null;
@@ -3948,10 +3958,17 @@ function renderInvPrecheck(res){
   var summary=res.summary||[];
   var needSkuMaster=summary.some(function(g){return g.issue_type==='SKU_MASTER_MISSING'||g.issue_type==='SKU_BRAND_EMPTY'||g.issue_type==='BRAND_MISMATCH'});
   var hasMismatch=summary.some(function(g){return g.issue_type==='BRAND_MISMATCH'});
-  var html='<div style="margin-top:12px;padding:12px 14px;background:#fff1f0;border:1px solid #ffa39e;border-radius:8px;font-size:12px;color:#333">'+
-    '<div style="font-weight:700;color:#a8071a;margin-bottom:8px">'+t('inv.blocked_banner','发现 {x} 个阻断问题，本次库存暂不能导入',{x:res.blocking_count||blocking.length})+'</div>'+
-    '<div style="font-weight:600;color:#a8071a;margin-bottom:8px">'+
-      t('inv.precheck_blocked','⛔ 预检查未通过，本次库存导入已整批阻断（数据库零写入），共 {n} 项问题需要处理',{n:res.blocking_count||blocking.length})+'</div>';
+  var blockedRowCount=Number(res.blocked_row_count||0);
+  if(!res.blocked_row_count&&blocking.length){
+    blockedRowCount=Array.from(new Set(blocking.map(function(b){return Number(b.row)||0}).filter(Boolean))).length;
+  }
+  var importableCount=Number(res.importable_count!==undefined?res.importable_count:Math.max(0,(res.total_rows||0)-blockedRowCount));
+  var canImport=res.can_import===true||importableCount>0||res.ok===true;
+  var bannerStyle=canImport?'background:#fffbe6;border:1px solid #ffe58f;color:#ad6800':'background:#fff1f0;border:1px solid #ffa39e;color:#a8071a';
+  var html='<div style="margin-top:12px;padding:12px 14px;'+bannerStyle+';border-radius:8px;font-size:12px;color:#333">'+
+    (canImport
+      ? '<div style="font-weight:700;color:#ad6800;margin-bottom:8px">'+t('inv.precheck_partial','⚠️ 发现 {x} 项阻断问题，将跳过 {s} 行，剩余 {m} 行可以正常导入。',{x:res.blocking_count||blocking.length,s:blockedRowCount,m:importableCount})+'</div>'
+      : '<div style="font-weight:700;color:#a8071a;margin-bottom:8px">'+t('inv.precheck_blocked','⛔ 没有可导入的有效数据，异常行已全部跳过，本次数据库不会写入。共 {n} 项问题需要处理',{n:res.blocking_count||blocking.length})+'</div>');
   summary.forEach(function(g){
     var skus=g.sku_codes||[],rws=g.rows||[];
     html+='<div style="margin-bottom:8px;padding:8px 10px;background:#fff;border-radius:4px;border-left:3px solid #ff4d4f">'+
@@ -3960,7 +3977,6 @@ function renderInvPrecheck(res){
       (rws.length?'<div style="color:#999;margin-top:2px">'+t('inv.precheck_affected_row','Excel 行号：')+esc(rws.slice(0,30).join(', '))+(rws.length>30?' ...':'')+'</div>':'')+
     '</div>';
   });
-  // 品牌不一致：单独给出 SKU / Excel品牌 / SKU主数据品牌 / Excel行号 对照表
   var mismatchRows=blocking.filter(function(b){return b.issue_type==='BRAND_MISMATCH'});
   if(hasMismatch&&mismatchRows.length){
     html+='<div style="margin-top:4px;margin-bottom:8px"><div style="font-weight:600;margin-bottom:4px">'+t('inv.mismatch_table_title','品牌不一致对照')+'</div>'+
@@ -3972,7 +3988,6 @@ function renderInvPrecheck(res){
       });
     html+='</tbody></table></div></div>';
   }
-  // 仓库合法性问题（INV-IMPORT-WAREHOUSE-01）：渲染成「第 N 行：…」句式，清晰告知国家/仓库与允许仓库
   var whTypes=['WAREHOUSE_EMPTY','WAREHOUSE_MISSING','COUNTRY_NO_WAREHOUSE'];
   var whIssues=blocking.filter(function(b){return whTypes.indexOf(b.issue_type)>=0;});
   if(whIssues.length){
@@ -3991,22 +4006,14 @@ function renderInvPrecheck(res){
     });
     html+='</div>';
   }
-  // 全量问题明细
   html+='<div style="font-weight:600;margin-bottom:4px">'+t('inv.blocking_detail_title','问题明细')+'</div>'+
     '<div class="table-container" style="max-height:260px;overflow:auto;box-shadow:none;border:1px solid #ffccc7;background:#fff"><table class="data-table"><thead><tr>'+
       '<th>'+t('col.row_no','行号')+'</th><th>'+t('col.sku_code','SKU编码')+'</th><th>'+t('inv.col_issue','问题类型')+'</th><th>'+t('inv.col_current','当前值')+'</th><th>'+t('inv.col_master_brand','SKU主数据品牌')+'</th><th>'+t('inv.col_suggestion','建议处理方式')+'</th>'+
     '</tr></thead><tbody>';
   blocking.slice(0,200).forEach(function(b){
-    if(whTypes.indexOf(b.issue_type)>=0)return; // 仓库类问题已在上方句式区单独展示，避免重复
+    if(whTypes.indexOf(b.issue_type)>=0)return;
     var cur=(b.current_value===''||b.current_value===undefined||b.current_value===null)?t('inv.value_empty','(空)'):b.current_value;
-    html+='<tr>'+
-      '<td>'+esc(String(b.row||''))+'</td>'+
-      '<td class="cell-id">'+esc(b.sku_code||'-')+'</td>'+
-      '<td style="color:#a8071a">'+esc(invIssueLabel(b.issue_type,b.issue_label))+'</td>'+
-      '<td style="white-space:pre-wrap">'+esc(cur)+'</td>'+
-      '<td style="white-space:pre-wrap">'+esc((b.master_brand===''||b.master_brand===undefined||b.master_brand===null)?'-':b.master_brand)+'</td>'+
-      '<td style="color:#666">'+esc(invIssueSuggestion(b.issue_type,b.suggestion))+'</td>'+
-    '</tr>';
+    html+='<tr><td>'+esc(String(b.row||''))+'</td><td class="cell-id">'+esc(b.sku_code||'-')+'</td><td style="color:#a8071a">'+esc(invIssueLabel(b.issue_type,b.issue_label))+'</td><td style="white-space:pre-wrap">'+esc(cur)+'</td><td style="white-space:pre-wrap">'+esc((b.master_brand===''||b.master_brand===undefined||b.master_brand===null)?'-':b.master_brand)+'</td><td style="color:#666">'+esc(invIssueSuggestion(b.issue_type,b.suggestion))+'</td></tr>';
   });
   if(blocking.length>200)html+='<tr><td colspan="6" style="text-align:center;color:#999;padding:8px">'+t('inv.blocking_more','还有 {n} 项问题未展示',{n:blocking.length-200})+'</td></tr>';
   html+='</tbody></table></div>';
@@ -4043,31 +4050,30 @@ function invImportRulesReady(){
 
 function updateInvImportBtnState(){
   var btn=document.getElementById('inv-import-btn');
-  // INV-IMPORT-PRECHECK-01 fail-closed：规则模块未加载 → 强制禁用 + 明确错误，绝不抛错、绝不绕过 precheck
   if(!invImportRulesReady()){
     if(btn){btn.disabled=true;btn.textContent=t('inv.btn_rules_missing','规则模块加载失败，已禁用导入');}
     var errBox=document.getElementById('inv-status');
-    if(errBox)errBox.innerHTML='<div style="padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px;background:#fff1f0;border:1px solid #ffa39e;color:#a8071a">'+t('inv.rules_missing','库存导入规则模块（inv-import-rules.js）未能加载，为保证数据安全已禁用导入。请刷新页面或检查网络/静态资源。')+'</div>';
+    if(errBox)errBox.innerHTML='<div style="padding:10px 14px;border-radius:6px;margin-bottom:10px;font-size:13px;background:#fff1f0;border:1px solid #ffa39e;color:#a8071a">'+t('inv.rules_missing','库存导入规则模块（inv-import-rules.js）未能加载，为保证数据安全已禁用导入。请刷新页面或检查静态资源。')+'</div>';
     return;
   }
   var records=window._invImportData||[];
   var hasRows=records.length>0;
-  // INV-IMPORT-PRECHECK-01：整批语义 —— 任一行存在阻断型错误即不得导入（不再放行「部分有效行」）
-  var hasLocalError=records.some(function(r){return r._errors&&r._errors.length>0});
   var pc=window._invPrecheck;
-  var precheckPassed=!!(pc&&pc.ok===true&&(!pc.blocking||pc.blocking.length===0));
+  var importableCount=pc?Number(pc.importable_count!==undefined?pc.importable_count:(pc.ok?records.length:0)):0;
+  var canImport=!!(pc&&(pc.can_import===true||importableCount>0||pc.ok===true));
+  var blockedRowCount=pc?Number(pc.blocked_row_count||0):0;
   var hasDate=!!(window._invSnapshotDate||'');
-  // INV-IMPORT-PRECHECK-01 严格品牌：当前 payload 必须通过预检查，且其 fingerprint 与“通过时记录”一致
   var fp=InvImportRules.computeInvImportFingerprint(records, window._invSnapshotDate||'');
   var fpMatch=(window._invPassedFingerprint!==undefined&&window._invPassedFingerprint!==null)&&fp===window._invPassedFingerprint;
   if(!btn)return;
-  btn.disabled=!(hasRows&&!hasLocalError&&precheckPassed&&fpMatch&&hasDate);
+  btn.disabled=!(hasRows&&canImport&&fpMatch&&hasDate);
   if(!hasRows){btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");}
   else if(window._invPrecheckError){btn.textContent=t('inv.btn_precheck_failed','预检查失败，请重试');}
-  else if(hasLocalError||(pc&&pc.ok!==true)){btn.textContent=t('inv.btn_fix_first','请先修复阻断问题');}
   else if(!pc){btn.textContent=t('inv.btn_prechecking','预检查中...');}
+  else if(!canImport){btn.textContent=t('inv.btn_fix_first','没有可导入数据');}
   else if(!fpMatch){btn.textContent=t('inv.btn_payload_changed','数据已变更，请重新预检查');}
   else if(!hasDate){btn.textContent=t("app.620", "\u8bf7\u5148\u586b\u5199\u5feb\u7167\u622a\u6b62\u65e5\u671f");}
+  else if(blockedRowCount>0){btn.textContent=t('inv.btn_import_partial','开始导入（跳过 {n} 条异常）',{n:blockedRowCount});}
   else{btn.textContent=t("app.067", "\u5f00\u59cb\u5bfc\u5165");}
   renderInvStatus();
 }
@@ -4118,11 +4124,10 @@ function startInvImportPolling(importId){stopInvImportPolling();invImportPollTim
 async function submitInvBatchImport(){
   var records=window._invImportData||[];
   if(records.length===0){showToast(t("toast.no_valid_data", "没有可导入的有效数据"),'danger');return}
-  var hasLocalError=records.some(function(r){return r._errors&&r._errors.length>0});if(hasLocalError){showToast(t('inv.toast_blocked','存在阻断型错误，本次库存导入已整批拒绝'),'danger');return}
   var snapshotDate=window._invSnapshotDate||'';if(!snapshotDate){showToast(t("toast.fill_snapshot_date", "请填写库存快照截止日期"),'danger');return}
   if(!invImportRulesReady()){showToast(t('inv.rules_missing_toast','库存导入规则模块未能加载，已取消本次导入。请刷新页面后重试。'),'danger');return;}
-  var fp=InvImportRules.computeInvImportFingerprint(records,snapshotDate);var pc=window._invPrecheck;var pcOk=!!(pc&&pc.ok===true&&pc.blocking&&pc.blocking.length===0);
-  if(!pcOk||fp!==window._invPassedFingerprint){if(pc&&!pcOk){renderInvPrecheck(pc);}else{runInvPrecheck();}showToast(t('inv.toast_recheck_before_submit','当前数据尚未通过预检查，正在重新校验……'),'warning');return;}
+  var fp=InvImportRules.computeInvImportFingerprint(records,snapshotDate);var pc=window._invPrecheck;var pcCanImport=!!(pc&&(pc.can_import===true||Number(pc.importable_count||0)>0||pc.ok===true));
+  if(!pcCanImport||fp!==window._invPassedFingerprint){if(pc&&!pcCanImport){renderInvPrecheck(pc);}else{runInvPrecheck();}showToast(t('inv.toast_recheck_before_submit','当前数据尚未通过预检查，正在重新校验……'),'warning');return;}
   var btn=document.getElementById('inv-import-btn');btn.disabled=true;btn.textContent='正在导入 0%';
   var importId='';try{importId=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():'inv-import-'+Date.now()+'-'+Math.random().toString(36).slice(2)}catch(_){importId='inv-import-'+Date.now()}
   renderInvImportProgress({status:'running',phase:'validating',percent:0,processed_count:0,total_count:records.length,message:'正在启动库存导入'});startInvImportPolling(importId);
@@ -4131,14 +4136,16 @@ async function submitInvBatchImport(){
     var res=await api('/api/inventory-imports/bulk-import','POST',{items:items,snapshot_cutoff_date:snapshotDate,import_id:importId});
     stopInvImportPolling();renderInvImportProgress({status:'completed',phase:'completed',percent:100,processed_count:records.length,total_count:records.length,message:'导入完成'});
     window._lastInvImportErrors=res.errors||[];
-    var html='<div style="background:'+(res.failed>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0?'#ffe58f':'#b7eb8f')+';border-radius:12px;padding:14px 16px;font-size:13px;margin-top:12px"><div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">'+t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+'<span style="color:#1890ff">快照截止日期：'+esc(res.snapshot_cutoff_date||snapshotDate)+'</span></div>';
+    window._lastInvImportSkippedRows=res.skipped_rows||[];
+    var html='<div style="background:'+(res.failed>0||res.skipped_count>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0||res.skipped_count>0?'#ffe58f':'#b7eb8f')+';border-radius:12px;padding:14px 16px;font-size:13px;margin-top:12px"><div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">'+t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+'<span>'+t('inv.result_skipped','已跳过：')+(res.skipped_count||0)+t("html.unit.tiao_close", " 条</span>")+t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+'<span style="color:#1890ff">'+t('inv.result_snapshot','快照截止日期：')+esc(res.snapshot_cutoff_date||snapshotDate)+'</span></div>';
     if(res.wac_warnings&&res.wac_warnings.length>0){var highWarnings=res.wac_warnings.filter(function(w){return w.priority==='high'}),normalWarnings=res.wac_warnings.filter(function(w){return w.priority!=='high'});html+='<div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:'+(highWarnings.length>0?'#fff1f0':'#fffbe6')+';border:1px solid '+(highWarnings.length>0?'#ffa39e':'#ffe58f')+'"><div style="font-weight:600;color:'+(highWarnings.length>0?'#ff3b30':'#faad14')+';margin-bottom:6px">加权平均成本匹配结果</div>';if(highWarnings.length>0){html+='<div style="color:#ff3b30;margin-bottom:4px;font-weight:600">⚠️ 高优先级（成本为 0，请尽快完成成本确认）</div>';highWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}if(normalWarnings.length>0){html+='<div style="color:#faad14;margin-bottom:4px;margin-top:'+(highWarnings.length>0?'6px':'0')+'">ℹ️ 已保留原成本（请完成成本确认以更新）</div>';normalWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}html+='</div>';}
+    if(window._lastInvImportSkippedRows.length>0){html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ad6800;margin-bottom:6px">'+t('inv.skipped_detail','已跳过的异常行')+'</div>'+window._lastInvImportSkippedRows.slice(0,30).map(function(r){return '<div style="color:#666">第 '+esc(String(r.row||''))+' 行 / '+esc(r.sku_code||'-')+'：'+esc(r.reason||'预检查未通过')+'</div>'}).join('')+(window._lastInvImportSkippedRows.length>30?'<div style="color:#999">还有 '+(window._lastInvImportSkippedRows.length-30)+' 条跳过记录...</div>':'')+'</div>';}
     if(window._lastInvImportErrors.length>0){html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';html+=window._lastInvImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');if(window._lastInvImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastInvImportErrors.length-20)+' 条失败...</div>';html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadInvImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';}
     html+='</div>';var resultBox=document.getElementById('inv-result');if(resultBox)resultBox.insertAdjacentHTML('beforeend',html);
-    var createdN=res.created||0,failedN=res.failed||0,toastMsg,toastType;if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}showToast(toastMsg,toastType);await refreshInvFilterOptions();loadInv();
+    var createdN=res.created||0,failedN=res.failed||0,skippedN=res.skipped_count||0,toastMsg,toastType;if(createdN>0&&failedN===0&&skippedN>0){toastMsg=t('inv.toast_partial','导入完成：新增 {c} 条，跳过异常 {s} 条',{c:createdN,s:skippedN});toastType='warning';}else if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}showToast(toastMsg,toastType);await refreshInvFilterOptions();loadInv();
   }catch(e){
     stopInvImportPolling();var pl=e&&e.payload;
-    if(pl&&pl.blocked===true){window._invPrecheck=pl.precheck||{ok:false,blocking:pl.blocking||[],summary:pl.summary||[],blocking_count:(pl.blocking||[]).length,total_rows:records.length};window._invPassedFingerprint=null;renderInvPrecheck(window._invPrecheck);renderInvStatus();var rbox=document.getElementById('inv-result');if(rbox)rbox.innerHTML='<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:12px;padding:12px 14px;font-size:13px;color:#a8071a">'+esc(t('inv.blocked_zero_write','本次库存导入已整批阻断，数据库未发生任何写入。请按下方问题明细修复后重新导入。'))+'</div>';var pbox=document.getElementById('inv-precheck');if(pbox&&pbox.scrollIntoView)pbox.scrollIntoView({behavior:'auto',block:'center'});showToast(t('inv.toast_blocked','存在阻断型错误，本次库存导入已整批拒绝'),'danger');}
+    if(pl&&pl.blocked===true){window._invPrecheck=pl.precheck||{ok:false,can_import:false,importable_count:0,blocked_row_count:records.length,blocking:pl.blocking||[],summary:pl.summary||[],blocking_count:(pl.blocking||[]).length,total_rows:records.length};window._invPassedFingerprint=null;renderInvPrecheck(window._invPrecheck);renderInvStatus();var rbox=document.getElementById('inv-result');if(rbox)rbox.innerHTML='<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:12px;padding:12px 14px;font-size:13px;color:#a8071a">'+esc(t('inv.blocked_zero_write','没有可导入的有效 SKU，异常行已全部跳过，数据库未发生任何写入。请查看下方问题明细。'))+'</div>';var pbox=document.getElementById('inv-precheck');if(pbox&&pbox.scrollIntoView)pbox.scrollIntoView({behavior:'auto',block:'center'});showToast(t('inv.toast_blocked','没有可导入的有效数据，本次未写入'),'danger');}
     else{renderInvImportProgress({status:'failed',phase:'failed',percent:(pl&&pl.percent)||0,processed_count:0,total_count:records.length,message:(e&&e.message)||'导入失败'});showToast(e.message||t("toast.import_failed", "导入失败"),'danger');}
   }finally{stopInvImportPolling();btn.disabled=false;btn.textContent=t("app.067", "开始导入");updateInvImportBtnState();}
 }
