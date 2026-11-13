@@ -2639,7 +2639,7 @@ function initDatabase() {
     const viewerPerms = JSON.stringify([
       'dashboard_view', 'sku_view', 'inventory_view',
       'outbound_view', 'replenishment_view',
-      'po_view', 'pi_view', 'ci_view', 'ci_amount_view', 'logistics_view', 'inbound_view',
+      'po_view', 'pi_view', 'ci_view', 'logistics_view', 'inbound_view',
       'cost_view', 'payment_view', 'check_view',
       'stagnant_view', 'forwarder_view'
     ]);

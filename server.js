@@ -1359,8 +1359,10 @@ if (require.main === module) {
         let perms;
         try { perms = JSON.parse(role.permissions || '[]'); } catch (_) { return; }
         if (!Array.isArray(perms)) return;
-        const alreadyCanViewCI = perms.includes('ci_view') || perms.includes('*');
-        if (alreadyCanViewCI && !perms.includes('ci_amount_view')) {
+        // Only the built-in admin/operator roles retain amount access by default.
+        // CI visibility alone must never silently grant financial visibility to ordinary/custom roles.
+        const privilegedDefaultRole = role.id === 'role_admin' || role.id === 'role_operator';
+        if (privilegedDefaultRole && !perms.includes('ci_amount_view')) {
           perms.push('ci_amount_view');
           run('UPDATE roles SET permissions = ? WHERE id = ?', [JSON.stringify(perms), role.id]);
           migrated++;
@@ -1374,6 +1376,31 @@ if (require.main === module) {
     }
   })();
 }
+// CI-AMOUNT-VIEW-DEFAULT-V2：普通用户（role_viewer）不允许查看金额；导出CI&PL由后端脱敏支持。
+if (require.main === module) {
+  (function ensureDefaultViewerCannotViewCIAmounts() {
+    const migrationKey = 'migration_ci_amount_view_default_v2';
+    try {
+      const done = queryOne('SELECT value FROM system_config WHERE key = ?', [migrationKey]);
+      if (done) return;
+      const viewer = queryOne("SELECT permissions FROM roles WHERE id = 'role_viewer'");
+      if (viewer && viewer.permissions) {
+        let perms;
+        try { perms = JSON.parse(viewer.permissions || '[]'); } catch (_) { perms = null; }
+        if (Array.isArray(perms) && perms.includes('ci_amount_view')) {
+          const next = perms.filter(p => p !== 'ci_amount_view');
+          run("UPDATE roles SET permissions = ? WHERE id = 'role_viewer'", [JSON.stringify(next)]);
+          console.log('[Migration] role_viewer 已移除 ci_amount_view');
+        }
+      }
+      run("INSERT INTO system_config (key, value, description, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, description=excluded.description, updated_at=excluded.updated_at",
+        [migrationKey, '1', '普通用户默认不可查看CI金额']);
+    } catch (e) {
+      console.warn('[Migration] role_viewer CI金额权限迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
 // QUOTATION-VIEW-PERMISSION-V1：仅给内置超级管理员兼容补齐；普通角色保持未勾选，必须显式授权。
 if (require.main === module) {
   (function ensureRoleAdminQuotationView() {
@@ -10771,9 +10798,6 @@ app.get('/api/commercial-invoices/:id/logistics-batches', requireApiPermission('
 app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistics_view', 'ci_view'), asyncHandler((req, res) => {
   const batchId = req.params.id;
   const scope = req.query.scope === 'ci_pl' ? 'ci_pl' : 'pl';
-  if (scope === 'ci_pl' && !ciCanViewAmounts(req)) {
-    return res.status(403).json({ error: '没有查看CI金额的权限，不能导出CI&PL' });
-  }
   const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [batchId]);
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
   const ci = batch.related_ci_id ? queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [batch.related_ci_id]) : null;
@@ -10793,19 +10817,35 @@ app.get('/api/logistics-batches/:id/export-data', requireApiPermission('logistic
       scope: 'pl',
       batch: { id: batch.id, batch_no: batch.batch_no, related_ci_id: batch.related_ci_id || '', related_ci_no: batch.related_ci_no || '' },
       ci: ci ? { id: ci.id, ci_no: ci.ci_no, currency: ci.currency } : null,
-      ci_items: [], pls: plPayload, price_lookup: {},
+      ci_items: [], pls: plPayload, price_lookup: {}, amount_view_allowed: false,
       export_blocked: exportBlocked, blocking_reason: blockingReason, blocking_issues: []
     });
   }
-  const ciItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
-  const priceLookup = computePriceLookup(ciItems, ci ? ci.currency : null);
+  const amountViewAllowed = ciCanViewAmounts(req);
+  const rawCIItems = ci ? query('SELECT * FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at', [ci.id]).rows : [];
+  // Use allowlists for no-amount exports so newly added monetary columns can never leak by accident.
+  const ciItems = amountViewAllowed
+    ? rawCIItems
+    : rawCIItems.map(it => ({ sku_code: it.sku_code, shipped_qty: it.shipped_qty }));
+  // Without amount permission, omit price lookup entirely and do not block the export
+  // on price ambiguity: the workbook will contain CI + PL quantities only.
+  const priceLookup = amountViewAllowed ? computePriceLookup(rawCIItems, ci ? ci.currency : null) : {};
   const inScopeSkus = new Set();
   pls.forEach(pl => (plItemsByPl[pl.id] || []).forEach(it => inScopeSkus.add(it.sku_code)));
-  const blockingIssues = validateInScopePrices(priceLookup, [...inScopeSkus]);
-  const exportBlocked = blockingIssues.length > 0 || !ci || pls.length === 0;
+  const blockingIssues = amountViewAllowed ? validateInScopePrices(priceLookup, [...inScopeSkus]) : [];
+  const exportBlocked = !ci || pls.length === 0 || (amountViewAllowed && blockingIssues.length > 0);
   const blockingReason = !ci ? 'no_ci' : (pls.length === 0 ? 'no_pl' : (blockingIssues.length > 0 ? 'price_ambiguous_or_missing' : null));
+  const safeBatch = amountViewAllowed ? batch : {
+    id: batch.id, batch_no: batch.batch_no,
+    related_ci_id: batch.related_ci_id || '', related_ci_no: batch.related_ci_no || ''
+  };
+  const safeCI = amountViewAllowed || !ci ? ci : {
+    id: ci.id, ci_no: ci.ci_no, supplier_name: ci.supplier_name,
+    currency: ci.currency, amount_view_allowed: false
+  };
   res.json({
-    scope: 'ci_pl', batch, ci, ci_items: ciItems, pls: plPayload, price_lookup: priceLookup,
+    scope: 'ci_pl', batch: safeBatch, ci: safeCI, ci_items: ciItems, pls: plPayload,
+    price_lookup: priceLookup, amount_view_allowed: amountViewAllowed,
     export_blocked: exportBlocked, blocking_reason: blockingReason, blocking_issues: blockingIssues
   });
 }));

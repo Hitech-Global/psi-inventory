@@ -38,14 +38,15 @@ must(
   /if \(!ciCanViewAmounts\(req\)\) rows\.forEach\(ciRedactLogistics\)/,
   'logistics amount fields must still redact without ci_amount_view'
 );
-must(
-  server,
-  /scope === 'ci_pl' && !ciCanViewAmounts\(req\)[\s\S]{0,180}status\(403\)/,
-  'CI&PL export must stay amount-gated'
-);
+const exportStart = server.indexOf("app.get('/api/logistics-batches/:id/export-data'");
+const exportEnd = server.indexOf('// 多 PI 改造', exportStart);
+assert.ok(exportStart >= 0 && exportEnd > exportStart, 'batch export endpoint block missing');
+const exportBlock = server.slice(exportStart, exportEnd);
+assert.doesNotMatch(exportBlock, /scope === 'ci_pl' && !ciCanViewAmounts\(req\)/, 'CI&PL export must not require amount permission');
+must(exportBlock, /rawCIItems\.map\(it => \(\{ sku_code: it\.sku_code, shipped_qty: it\.shipped_qty \}\)\)/, 'CI&PL export must return only non-monetary CI item fields without amount permission');
 
 must(inline, /var showAmounts = canViewAmounts\(\)/, 'inline logistics amount columns must be permission-aware');
-must(inline, /canViewAmounts\(\)[\s\S]*data-ci-logi-export-ci-pl/, 'inline CI&PL export option must be amount-gated');
+must(inline, /data-ci-logi-export-ci-pl/, 'inline CI&PL export option must be available to CI viewers');
 must(inline, /hasPermission\('logistics_edit'\) \? '<button class="action-btn" data-ci-logi-edit=/, 'inline edit must require logistics_edit');
 
 must(

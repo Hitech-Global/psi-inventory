@@ -27,7 +27,10 @@ assert.match(inline, /logisticsStatusLabel\(b\.logistics_display_status \|\| b\.
 assert.match(inline, /tr\('logistics\.mode\.'/, 'inline transport must use display mapping');
 assert.match(inline, /tr\('logistics\.listing_status\.'/, 'inline listing status must use display mapping');
 assert.match(inline, /data-ci-logi-export-pl="' \+ esc\(b\.id\)/, 'PL export must bind each batch id');
-assert.match(inline, /canViewAmounts\(\) \? '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl=/, 'CI&PL export must retain its amount permission gate');
+assert.match(inline, /'<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl=/, 'CI&PL export must be available to CI viewers regardless of amount permission');
+assert.doesNotMatch(inline, /canViewAmounts\(\) \? '<button[^']*data-ci-logi-export-ci-pl=/, 'CI&PL export button must not be amount-gated');
+assert.match(app, /amountViewAllowed = !!\(data && data\.amount_view_allowed === true\)/, 'CI&PL workbook must honor backend amount visibility');
+assert.match(app, /if \(amountViewAllowed\) \{[\s\S]*export\.ci\.original_unit_price/, 'CI workbook monetary columns must be hidden without amount permission');
 assert.doesNotMatch(inline, /data-ci-logi-export="/, 'legacy export-menu trigger must be removed');
 
 assert.match(amount, /tr\('export\.pl\.qty_per_carton'/, 'PL-only workbook headers must be localized');
