@@ -61,7 +61,7 @@
       : (value || '—');
   }
 
-  function renderLogisticsDetail(log, plData) {
+  function renderLogisticsDetail(log, plData, wacMeta) {
     var mode = tr('logistics.mode.' + (log.transport_mode || ''), log.transport_mode || '—');
     var clearance = log.clearance_type === 'formal'
       ? tr('ci.clearance.formal', '正清')
@@ -113,6 +113,63 @@
       field(tr('logistics.detail.other_fees', '其他费用'), money(log.other_fees, log.freight_currency))
     ].join('');
 
+    var sharedFees = wacMeta && Array.isArray(wacMeta.shared_freight_breakdown)
+      ? wacMeta.shared_freight_breakdown : [];
+    var sharedFreightSection = '';
+    if (sharedFees.length) {
+      var localCurrency = wacMeta.local_currency || '';
+      var sharedTotal = sharedFees.reduce(function (sum, fee) {
+        return sum + (Number(fee.freight_cost_local) || 0);
+      }, 0);
+      var fxRate = Number(wacMeta.product_fx_rate) || 0;
+      var fxLabel = fxRate > 0
+        ? '1 ' + (wacMeta.ci_currency || '') + ' = ' + fxRate.toFixed(4) + ' ' + localCurrency
+        : '—';
+      var sharedRows = sharedFees.map(function (fee) {
+        var basis = String(fee.basis || '').toUpperCase() + ' ' +
+          (Number(fee.basis_value) || 0).toFixed(3);
+        var events = Array.isArray(fee.payment_events) ? fee.payment_events : [];
+        var paymentHtml = events.length
+          ? events.map(function (event) {
+              var originalAmount = Number(event.amount || 0).toLocaleString(undefined, {
+                minimumFractionDigits: 2, maximumFractionDigits: 2
+              });
+              var localAmount = Number(event.local_amount || 0).toLocaleString(undefined, {
+                minimumFractionDigits: 2, maximumFractionDigits: 2
+              });
+              var rate = Number(event.local_rate) || 0;
+              var rateText = rate > 0
+                ? '1 ' + esc(event.original_currency || '') + ' = ' + rate.toFixed(4) + ' ' + esc(event.local_currency || '')
+                : '—';
+              return '<div style="margin:2px 0">' + esc(date(event.paid_date)) + ' · ' +
+                esc(originalAmount) + ' ' + esc(event.original_currency || '') + ' → ' +
+                esc(localAmount) + ' ' + esc(event.local_currency || '') +
+                ' <span style="color:var(--text-secondary)">(' + rateText + ')</span></div>';
+            }).join('')
+          : '—';
+        return '<tr><td>' + esc(fee.bill_no || '—') + '</td>' +
+          '<td>' + esc(basis) + '</td>' +
+          '<td style="text-align:right">' + esc(money(fee.freight_cost_local, localCurrency)) + '</td>' +
+          '<td>' + paymentHtml + '</td></tr>';
+      }).join('');
+      sharedFreightSection =
+        '<div class="detail-section ci-wac-logistics-section">' +
+          '<h3>合并运费分摊（已计入WAC）</h3>' +
+          '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:10px">' +
+            '上方费用为物流批次自身录入费用；合并账单按原分摊比例折算为目标本币后，在此单独列示。' +
+          '</div>' +
+          '<div class="detail-grid">' +
+            field('本批合并运费分摊合计', money(sharedTotal, localCurrency)) +
+            field('最后实际付款日期', date(wacMeta.freight_last_paid_date)) +
+            field('CI商品成本汇率', fxLabel) +
+          '</div>' +
+          '<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto;margin-top:8px">' +
+            '<table class="data-table" style="font-size:12px;min-width:760px"><thead><tr>' +
+              '<th>合并账单</th><th>分摊依据</th><th style="text-align:right">本批分摊金额</th><th>实际付款及汇率快照</th>' +
+            '</tr></thead><tbody>' + sharedRows + '</tbody></table></div>' +
+        '</div>';
+    }
+
     return '<div class="detail-section ci-wac-logistics-section">' +
       '<h3>物流批次详情</h3><div class="detail-grid">' + fields + '</div></div>' +
       '<div class="detail-section ci-wac-logistics-section"><h3>PL装箱明细</h3>' +
@@ -121,7 +178,7 @@
       '<th>SKU</th><th>CTN数量</th><th>总数量</th><th>总毛重(KG)</th><th>总净重(KG)</th><th>总体积(CBM)</th>' +
       '</tr></thead><tbody>' + plRows + '</tbody></table></div></div>' +
       '<div class="detail-section ci-wac-logistics-section"><h3>物流费用概览</h3>' +
-      '<div class="detail-grid">' + feeFields + '</div></div>';
+      '<div class="detail-grid">' + feeFields + '</div></div>' + sharedFreightSection;
   }
 
   function openExcludedDetail(log, plData, reason) {
@@ -179,7 +236,11 @@
       var card = body && body.querySelector('.form-card');
       if (modal && modal.classList.contains('modal-wac') && card) {
         if (!card.querySelector('.ci-wac-logistics-section')) {
-          card.insertAdjacentHTML('afterbegin', renderLogisticsDetail(log, plData));
+          var preview = global._wacPreview;
+          var wacMeta = preview && preview.meta &&
+            String(preview.meta.batch_no || '') === String(log.batch_no || '')
+            ? preview.meta : null;
+          card.insertAdjacentHTML('afterbegin', renderLogisticsDetail(log, plData, wacMeta));
         }
         var title = modal.querySelector('.modal-title');
         if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + (log.batch_no || id);
