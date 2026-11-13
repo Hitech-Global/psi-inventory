@@ -12,7 +12,7 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 
 assert.match(ui, /function replaceListAttachmentButtons\(html\)/);
 assert.match(ui, /global\.renderOperationalCITable = function/);
-assert.match(ui, /uploadDocAttachment\\\(['"]ci['"]/);
+assert.match(ui, /global\\.uploadDocAttachment\\('ci'/);
 assert.match(ui, /openCIAttachmentMenu/);
 assert.match(ui, /ci\.attachments\.upload_ci/);
 assert.match(ui, /ci\.attachments\.upload_pl/);
@@ -26,7 +26,7 @@ assert.match(ui, /ciDeleteShippingAttachment/);
 assert.match(ui, /'DELETE'/);
 
 assert.match(app, /function ciUnifiedAttachmentHtml\(ci\)/, 'the existing CI/PL detail attachment section is preserved');
-assert.match(app, /uploadDocAttachment\('ci'/, 'the existing CI and PL upload actions remain the underlying upload handlers');
+assert.match(app, /function uploadDocAttachment\\(docType,id,field\\)/, 'the existing CI and PL upload handlers remain in place');
 assert.match(server, /app\.get\('\/api\/commercial-invoices\/:id\/shipping-attachments'/);
 assert.match(server, /app\.post\('\/api\/commercial-invoices\/:id\/shipping-attachments'/);
 assert.match(server, /app\.delete\('\/api\/commercial-invoices\/:id\/shipping-attachments\/:fileId'/);
