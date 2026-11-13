@@ -439,7 +439,7 @@
             (hasPermission('logistics_edit') ? '<button class="action-btn" data-ci-logi-edit="' + esc(b.id) + '" data-ci-id="' + esc(ciId) + '" title="' + esc(tr('common.edit', '编辑')) + '">✏️</button> ' : '') +
             wacActionsHtml(b, ciId) +
             '<button class="btn btn-secondary btn-sm" data-ci-logi-export-pl="' + esc(b.id) + '">' + esc(tr('export.pl_only', '导出PL')) + '</button>' +
-            (canViewAmounts() ? '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(b.id) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>' : '') +
+            '<button class="btn btn-secondary btn-sm" data-ci-logi-export-ci-pl="' + esc(b.id) + '">' + esc(tr('export.ci_and_pl', '导出CI&PL')) + '</button>' +
           '</div></td>' +
         '</tr>';
       }).join('');
