@@ -43,7 +43,7 @@ const exportEnd = server.indexOf('// 多 PI 改造', exportStart);
 assert.ok(exportStart >= 0 && exportEnd > exportStart, 'batch export endpoint block missing');
 const exportBlock = server.slice(exportStart, exportEnd);
 assert.doesNotMatch(exportBlock, /scope === 'ci_pl' && !ciCanViewAmounts\(req\)/, 'CI&PL export must not require amount permission');
-must(exportBlock, /if \(!amountViewAllowed\) ciItems\.forEach\(it => ciStripFields\(it, CI_ITEM_AMOUNT_FIELDS\)\)/, 'CI&PL export must redact prices without amount permission');
+must(exportBlock, /rawCIItems\.map\(it => \(\{ sku_code: it\.sku_code, shipped_qty: it\.shipped_qty \}\)\)/, 'CI&PL export must return only non-monetary CI item fields without amount permission');
 
 must(inline, /var showAmounts = canViewAmounts\(\)/, 'inline logistics amount columns must be permission-aware');
 must(inline, /data-ci-logi-export-ci-pl/, 'inline CI&PL export option must be available to CI viewers');
