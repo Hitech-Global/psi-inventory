@@ -13612,12 +13612,12 @@ function sanitizeSheetName(name, used){
   used[out]=true;
   return out;
 }
-function buildPLSheetRows(pl, ci, priceLookup){
+function buildPLSheetRows(pl, ci, priceLookup, amountViewAllowed){
   const cur=(ci&&ci.currency)||'';
   const ciNo=(ci&&ci.ci_no)||'';
   return (pl.items||[]).map(function(it){
     const lu=(priceLookup&&priceLookup[it.sku_code])||null;
-    return {
+    const row = {
       'SKU': it.sku_code,
       [t('export.pl.qty_per_carton','每箱数量')]: it.qty_per_carton||0,
       [t('export.pl.cartons','箱数')]: it.cartons||0,
@@ -13626,18 +13626,22 @@ function buildPLSheetRows(pl, ci, priceLookup){
       [t('export.pl.net_weight','总净重')]: it.net_weight||0,
       [t('export.pl.cbm','总体积')]: it.cbm||0,
       [t('export.pl.remark','备注')]: it.remark||'',
-      [t('export.pl.ci_unit_price','CI单价')]: lu?lu.unit_price:null,
-      [t('export.pl.ci_currency','CI币种')]: cur,
       [t('export.pl.ci_no','CI No.')]: ciNo,
       [t('export.pl.pl_no','PL No.')]: pl.pl_no
     };
+    if (amountViewAllowed) {
+      row[t('export.pl.ci_unit_price','CI单价')] = lu ? lu.unit_price : null;
+      row[t('export.pl.ci_currency','CI币种')] = cur;
+    }
+    return row;
   });
 }
 function buildPLWorkbook(data, withCI){
   const wb=XLSX.utils.book_new();
   const used={};
+  const amountViewAllowed = !!(data && data.amount_view_allowed === true);
   (data.pls||[]).forEach(function(pl){
-    const rows=buildPLSheetRows(pl, data.ci, data.price_lookup);
+    const rows=buildPLSheetRows(pl, data.ci, data.price_lookup, amountViewAllowed);
     const ws=XLSX.utils.json_to_sheet(rows);
     const name=sanitizeSheetName(t('export.sheet.pl','PL')+'_'+(pl.pl_no||pl.id), used);
     XLSX.utils.book_append_sheet(wb, ws, name);
@@ -13646,7 +13650,16 @@ function buildPLWorkbook(data, withCI){
     const field=t('export.ci.field','字段'), value=t('export.ci.value','内容');
     const ciRows=[{[field]:t('export.ci.ci_no','CI号'),[value]:data.ci.ci_no},{[field]:t('export.ci.supplier','供应商'),[value]:data.ci.supplier_name||''},{[field]:t('export.ci.currency','币种'),[value]:data.ci.currency||''}];
     const ciWs=XLSX.utils.json_to_sheet(ciRows);
-    const itemRows=(data.ci_items||[]).map(function(it){return {SKU:it.sku_code,[t('export.ci.qty','数量')]:it.shipped_qty,[t('export.ci.original_unit_price','原单价')]:it.unit_price,[t('export.ci.discount','折扣')]:it.discount||0,[t('export.ci.net_unit_price','折后单价')]:it.net_unit_price!=null?it.net_unit_price:it.unit_price,[t('export.ci.amount','金额')]:it.ci_amount};});
+    const itemRows=(data.ci_items||[]).map(function(it){
+      const row = {SKU:it.sku_code,[t('export.ci.qty','数量')]:it.shipped_qty};
+      if (amountViewAllowed) {
+        row[t('export.ci.original_unit_price','原单价')] = it.unit_price;
+        row[t('export.ci.discount','折扣')] = it.discount || 0;
+        row[t('export.ci.net_unit_price','折后单价')] = it.net_unit_price != null ? it.net_unit_price : it.unit_price;
+        row[t('export.ci.amount','金额')] = it.ci_amount;
+      }
+      return row;
+    });
     XLSX.utils.sheet_add_json(ciWs, itemRows, {origin:-1});
     const name=sanitizeSheetName(t('export.sheet.ci','CI'), used);
     XLSX.utils.book_append_sheet(wb, ciWs, name);
