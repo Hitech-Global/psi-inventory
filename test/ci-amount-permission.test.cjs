@@ -70,7 +70,9 @@ assert.ok(exportStart >= 0 && exportEnd > exportStart, 'batch export endpoint bl
 const exportBlock = server.slice(exportStart, exportEnd);
 assert.doesNotMatch(exportBlock, /scope === 'ci_pl' && !ciCanViewAmounts\(req\)[\s\S]{0,180}status\(403\)/, 'CI&PL export must not be blocked for no-amount users');
 must(exportBlock, /const amountViewAllowed = ciCanViewAmounts\(req\)/, 'export must derive amount visibility from permission');
-must(exportBlock, /if \(!amountViewAllowed\) ciItems\.forEach\(it => ciStripFields\(it, CI_ITEM_AMOUNT_FIELDS\)\)/, 'CI item amounts must be redacted in export payload');
+must(exportBlock, /const ciItems = amountViewAllowed[\s\S]*rawCIItems\.map\(it => \(\{ sku_code: it\.sku_code, shipped_qty: it\.shipped_qty \}\)\)/, 'amount-free export must return only SKU and quantity for CI items');
+must(exportBlock, /const safeBatch = amountViewAllowed \? batch : \{[\s\S]*batch_no: batch\.batch_no/, 'amount-free export batch must use a safe field allowlist');
+must(exportBlock, /const safeCI = amountViewAllowed \|\| !ci \? ci : \{[\s\S]*supplier_name: ci\.supplier_name/, 'amount-free export CI header must use a safe field allowlist');
 must(exportBlock, /const priceLookup = amountViewAllowed \? computePriceLookup[\s\S]*: \{\}/, 'price lookup must be omitted without amount permission');
 must(exportBlock, /amount_view_allowed:\s*amountViewAllowed/, 'export must expose the safe workbook visibility flag');
 must(exportBlock, /const blockingIssues = amountViewAllowed \? validateInScopePrices[\s\S]*: \[\]/, 'price ambiguity must not block amount-free export');
