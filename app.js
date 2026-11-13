@@ -13189,10 +13189,19 @@ function renderCIItemsShell(ci){
 function renderCIItemsRows(ci){
   const items=(ci&&ci.items)||[];
   if(!items.length) return '<div class="empty-state" style="padding:12px">'+t('ci.items.empty','暂无CI明细')+'</div>';
+  // 金额展示使用当前 CI 单据自身币种，不根据国家推断，也不改变底层金额。
+  const currency=String((ci&&ci.currency)||'').trim().toUpperCase();
+  const currencySymbols={USD:'$',RMB:'¥',CNY:'¥',IDR:'Rp',MYR:'RM',THB:'฿',SGD:'S$',EUR:'€',JPY:'¥',PHP:'₱',VND:'₫',HKD:'HK$'};
+  const currencyPrefix=currencySymbols[currency]||currency;
+  const fmtCIAmount=function(value){
+    const amount=fmtMoney(value,'');
+    if(!currencyPrefix) return amount;
+    return (currencyPrefix==='Rp'||currencyPrefix==='RM'?currencyPrefix+' ':currencyPrefix)+amount;
+  };
   return '<div class="table-container"><table class="data-table"><thead><tr>'
     +'<th>SKU</th><th>'+t('ci.item.qty','数量')+'</th><th>'+t('field.original_unit_price','原单价')+'</th><th>'+t('field.discount','折扣')+'</th><th>'+t('field.net_unit_price','折后单价')+'</th><th>'+t('ci.col.amount','金额')+'</th><th>'+t('ci.item.actual_customs_rate','实际关税税率(%)')+'</th><th>'+t('ci.item.inbound_qty','已入库')+'</th><th>'+t('ci.item.uninbound_qty','未入库')+'</th></tr></thead><tbody>'
     + items.map(function(i){ var dsc=i.discount||0; var nup=i.net_unit_price||(i.unit_price*(1-dsc));
-        return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtMoney(nup)+'</td><td class="text-right">'+fmtMoney(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';
+        return '<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.shipped_qty+'</td><td class="text-right">'+fmtCIAmount(i.unit_price)+'</td><td class="text-right">'+(dsc>0?(dsc*100).toFixed(1)+'%':'—')+'</td><td class="text-right">'+fmtCIAmount(nup)+'</td><td class="text-right">'+fmtCIAmount(i.ci_amount)+'</td><td class="text-right">'+(i.actual_customs_rate===null||i.actual_customs_rate===''?'—':esc(i.actual_customs_rate))+'</td><td class="text-right">'+(i.inbound_qty||0)+'</td><td class="text-right">'+(i.uninbound_qty||0)+'</td></tr>';
       }).join('')
     + '</tbody></table></div>';
 }
