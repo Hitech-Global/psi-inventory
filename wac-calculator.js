@@ -519,10 +519,15 @@ function computeWacCostFacts(logisticsBatchId) {
         Number(event.local_rate) > 0 && Number(event.rmb_rate) > 0 &&
         Number(event.local_amount) > 0 && Number(event.rmb_amount) > 0
       );
-      const localTotal = rmbSnapshots.reduce((sum, event) => sum + Number(event.local_amount), 0);
-      const rmbTotal = rmbSnapshots.reduce((sum, event) => sum + Number(event.rmb_amount), 0);
-      if (localTotal > 0 && rmbTotal > 0) {
-        paymentSettlementRate = localTotal / rmbTotal;
+      // Use the immutable locked rate snapshots, not rounded settlement amounts.
+      // Weight by each event's RMB-equivalent principal so the result matches the
+      // established WAC cross-rate calculation (local_rate / rmb_rate).
+      const localEquivalentTotal = rmbSnapshots.reduce((sum, event) =>
+        sum + Number(event.amount) * Number(event.local_rate), 0);
+      const rmbEquivalentTotal = rmbSnapshots.reduce((sum, event) =>
+        sum + Number(event.amount) * Number(event.rmb_rate), 0);
+      if (localEquivalentTotal > 0 && rmbEquivalentTotal > 0) {
+        paymentSettlementRate = localEquivalentTotal / rmbEquivalentTotal;
         rmbToLocalEffectiveRate = paymentSettlementRate;
         rmbToLocalRateDate = productFxDate;
       }
