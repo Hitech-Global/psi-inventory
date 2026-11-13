@@ -14198,18 +14198,58 @@ async function saveWarehousePay(ciId){
   try{await api('/api/payment-requests/warehouse-arrival','POST',d);showToast(t('toast.warehousePayCreated','到仓费用付款申请已创建'),'success');closeModal()}catch(e){showToast(e.message,'danger')}
 }
 async function createCustomsDutyPay(ciId){
-  openModal(t("app.1021", "\u521b\u5efa\u5173\u7a0e\u4ed8\u6b3e"),
-    t('modal.body.createCustomsDutyPay', '<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
-    '<div class="form-group"><label>付款对象</label><input type="text" id="dut-payee" value="海关"></div>'+
-    '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="dut-amt"></div>'+
-    '<div class="form-group"><label>币种</label><select id="dut-cur"><option>USD</option><option>RMB</option></select></div>'+
-    '<div class="form-group"><label>备注</label><input type="text" id="dut-rem"></div>'+
-    '<div class="form-group"><label>是否抵扣</label><select id="dut-ded" onchange="document.getElementById(\'dut-ded-amt\').disabled=this.value===\'0\'"><option value="0">否</option><option value="1">是</option></select></div>'+
-    '<div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="dut-ded-amt" value="0" disabled></div>'+
-    '<div class="form-group"><label>抵扣来源类型</label><select id="dut-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="other">其他</option></select></div>'+
-    '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="dut-ded-desc"></div>'+
-    '</div></div>'),
-    t('modal.footer.createCustomsDutyPay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCustomsDutyPay('{v1}')">创建</button>`, {v1: ciId}));
+  try{
+    const [ci,countries,currencies]=await Promise.all([
+      api('/api/commercial-invoices/'+encodeURIComponent(ciId)),
+      api('/api/countries').catch(()=>[]),
+      api('/api/currencies').catch(()=>[])
+    ]);
+    if(!ci)throw new Error('CI不存在');
+    const rawCountry=String(ci.country||'').trim();
+    const countryAliases={
+      '印度尼西亚':'印尼','印度尼西亚共和国':'印尼',
+      '马来西亚':'马来','马来西亚联邦':'马来','泰王国':'泰国',
+      'Indonesia':'印尼','Republic of Indonesia':'印尼',
+      'Malaysia':'马来','Thailand':'泰国','Singapore':'新加坡','China':'中国'
+    };
+    const normalizedCountry=countryAliases[rawCountry]||rawCountry;
+    const countryRows=Array.isArray(countries)?countries:[];
+    const country=countryRows.find(function(row){
+      const name=String(row&&row.name||'').trim();
+      const code=String(row&&row.code||'').trim();
+      return name===rawCountry||name===normalizedCountry||
+        (name&&name.toLowerCase()===rawCountry.toLowerCase())||
+        (code&&code.toUpperCase()===rawCountry.toUpperCase());
+    });
+    const activeCurrencies=(Array.isArray(currencies)?currencies:[]).filter(function(row){
+      return row&&String(row.code||'').trim()&&row.status==='active';
+    });
+    const defaultCurrency=String(country&&country.default_currency||ci.currency||'USD').trim().toUpperCase();
+    const currencyRows=activeCurrencies.slice();
+    if(defaultCurrency&&!currencyRows.some(function(row){
+      return String(row.code||'').trim().toUpperCase()===defaultCurrency;
+    }))currencyRows.unshift({code:defaultCurrency});
+    const currencyOptions=currencyRows.map(function(row){
+      const code=String(row.code||'').trim().toUpperCase();
+      return '<option value="'+esc(code)+'"'+(code===defaultCurrency?' selected':'')+'>'+esc(code)+'</option>';
+    }).join('');
+    const fallbackBody='<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid">'+
+      '<div class="form-group"><label>付款对象</label><input type="text" id="dut-payee" value="海关"></div>'+
+      '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="dut-amt"></div>'+
+      '<div class="form-group"><label>币种</label><select id="dut-cur"></select></div>'+
+      '<div class="form-group"><label>备注</label><input type="text" id="dut-rem"></div>'+
+      '<div class="form-group"><label>是否抵扣</label><select id="dut-ded" onchange="document.getElementById(\\'dut-ded-amt\\').disabled=this.value===\\'0\\'"><option value="0">否</option><option value="1">是</option></select></div>'+
+      '<div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="dut-ded-amt" value="0" disabled></div>'+
+      '<div class="form-group"><label>抵扣来源类型</label><select id="dut-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="other">其他</option></select></div>'+
+      '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="dut-ded-desc"></div>'+
+      '</div></div>';
+    let body=t('modal.body.createCustomsDutyPay',fallbackBody);
+    body=body.replace(/(<select\b[^>]*\bid=["']dut-cur["'][^>]*>)[\s\S]*?(<\/select>)/i,function(_,openTag,closeTag){
+      return openTag+currencyOptions+closeTag;
+    });
+    openModal(t("app.1021", "创建关税付款"),body,
+      t('modal.footer.createCustomsDutyPay', '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCustomsDutyPay(\\'{v1}\\')">创建</button>', {v1: ciId}));
+  }catch(e){showToast(e.message,'danger')}
 }
 async function saveCustomsDutyPay(ciId){
   const d={ci_id:ciId,payee_name:document.getElementById('dut-payee').value,payable_amount:parseFloat(document.getElementById('dut-amt').value)||0,currency:document.getElementById('dut-cur').value,remark:document.getElementById('dut-rem').value,has_deduction:parseInt(document.getElementById('dut-ded').value),deduction_amount:parseFloat(document.getElementById('dut-ded-amt').value)||0,deduction_source_type:document.getElementById('dut-ded-type').value,deduction_source_desc:document.getElementById('dut-ded-desc').value};

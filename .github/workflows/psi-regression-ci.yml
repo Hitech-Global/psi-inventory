@@ -63,6 +63,7 @@ on:
       - 'assets/finance-payment-calendar.js'
       - 'test/finance-payment-calendar.test.cjs'
       - 'test/manual-payable-item.test.cjs'
+      - 'test/customs-duty-local-currency.test.cjs'
       - 'test/finance-payment-overview-integration.test.cjs'
       - 'po-plan-server.js'
       - 'po-plan-ui.js'
@@ -183,6 +184,7 @@ jobs:
           node --check assets/finance-payment-calendar.js
           node --check test/finance-payment-calendar.test.cjs
           node --check test/manual-payable-item.test.cjs
+          node --check test/customs-duty-local-currency.test.cjs
           node --check po-plan-server.js
           node --check po-plan-ui.js
           node --check scripts/po-plan-bootstrap.cjs
@@ -260,8 +262,8 @@ jobs:
         run: node --test test/app-perf-diagnostics.test.cjs
       - name: Test brand and inventory filter cache invalidation
         run: node --test test/app-perf-brand-invalidation.test.cjs
-      - name: Test finance payment calendar and manual payable creation
-        run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
+      - name: Test finance payment calendar, manual payable creation and customs duty currency defaults
+        run: node --test test/finance-payment-calendar.test.cjs test/manual-payable-item.test.cjs test/customs-duty-local-currency.test.cjs test/finance-payment-overview-integration.test.cjs test/finance-payment-overview.test.cjs test/finance-payment-overview-sort.test.cjs
       - name: Test PI deposit payable date follows PI date
         run: node --test test/pi-deposit-payable-date.test.cjs
       - name: Test PO number date and country format
