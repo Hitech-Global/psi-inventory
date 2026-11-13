@@ -37,6 +37,9 @@ assert.ok(ciSrc.includes('refreshCIListLogistics'), 'CI logistics panel must sup
 
 assert.ok(integrationSrc.includes('viewLogWacDetail'), 'combined logistics/WAC detail entry missing');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
+assert.ok(integrationSrc.includes('wacMeta.shared_freight_breakdown'), 'shared freight allocation must be visible in logistics batch detail');
+assert.ok(integrationSrc.includes('合并运费分摊（已计入WAC）'), 'shared freight section must clearly distinguish allocated common bills');
+assert.ok(integrationSrc.includes('renderLogisticsDetail(log, plData, wacMeta)'), 'WAC preview metadata must be passed into logistics detail');
 assert.ok(integrationSrc.includes('submitCIWacExclude'), 'CI no-calculation submission missing');
 assert.ok(integrationSrc.includes('submitCIWacRestore'), 'CI WAC restore submission missing');
 assert.ok(integrationSrc.includes('openWacCcFromCI'), 'confirmed-batch CC entry missing');
