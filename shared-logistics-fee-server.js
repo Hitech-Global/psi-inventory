@@ -41,7 +41,7 @@ function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,r
     return {error:'付款申请未审批通过、已撤销或已冲销，禁止确认成本'};
   if(payment.payment_status!=='paid')
     return {error:'付款申请尚未全部付款，禁止确认成本'};
-  const rows=query("SELECT amount,original_currency,local_amount,local_currency,local_rate,local_rate_date,paid_date,rmb_rate,rmb_rate_date,rmb_rate_direction,rmb_amount FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' AND COALESCE(reversed_at,'')='' ORDER BY paid_date,id",[requestId]).rows;
+  const rows=query("SELECT amount,original_currency,local_amount,local_currency,local_rate,local_rate_date,local_rate_type,local_rate_direction,paid_date,rmb_rate,rmb_rate_date,rmb_rate_type,rmb_rate_direction,rmb_amount FROM payment_settlement_logs WHERE payment_request_id=? AND event_type='payment' AND status='applied' AND COALESCE(reversed_at,'')='' ORDER BY paid_date,id",[requestId]).rows;
   if(!rows.length)return {error:'跨币种费用尚未实际结算'};
   if(Math.abs(rows.reduce((a,r)=>a+minor(r.amount||0),0)-amountMinor)>1)return {error:'实付金额尚未结清或存在超付'};
   let total=0,fx=[];
@@ -79,7 +79,26 @@ function settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,r
   return {amount_minor:Math.round(total*100),
     source:targetCurrency==='RMB'&&!referenceOnly?'locked_payment_rmb_snapshot':
       referenceOnly?'reference_only':'applied_settlements',
-    reference_only:referenceOnly,fx};
+    reference_only:referenceOnly,fx,
+    // Preserve immutable applied settlement snapshots for WAC's CI product-FX
+    // anchor. Shared freight bills are not ci_cost_items, so their payment
+    // events must travel with the batch allocation facts.
+    payment_events:rows.map(log=>({
+      amount:Number(log.amount)||0,
+      original_currency:normalize(log.original_currency),
+      local_amount:Number(log.local_amount)||0,
+      local_currency:normalize(log.local_currency),
+      local_rate:Number(log.local_rate)||0,
+      local_rate_date:String(log.local_rate_date||'').slice(0,10),
+      local_rate_type:String(log.local_rate_type||''),
+      local_rate_direction:String(log.local_rate_direction||''),
+      paid_date:String(log.paid_date||'').slice(0,10),
+      rmb_rate:Number(log.rmb_rate)||0,
+      rmb_rate_date:String(log.rmb_rate_date||'').slice(0,10),
+      rmb_rate_type:String(log.rmb_rate_type||''),
+      rmb_rate_direction:String(log.rmb_rate_direction||''),
+      rmb_amount:Number(log.rmb_amount)||0
+    }))};
 }
 function referenceConversion(requestId,amountMinor,sourceCurrency,targetCurrency){
   return settledConversion(requestId,amountMinor,sourceCurrency,targetCurrency,true,true);
@@ -288,8 +307,8 @@ function sharedWacParts(batchId,targetCurrency){
     const batches=splitConvertedMinor(Number(conversion.amount_minor),allocations);
     const part=batches.find(p=>String(p.batch_id)===String(batchId));
     if(!part){errors.push({code:'SHARED_FREIGHT_BATCH_LINK_MISSING',message:'合并账单 '+fee.bill_no+' 缺少关联批次'});return;}
-    const lastPaidDate=(conversion.fx||[]).reduce((m,r)=>r.rate_date>m?r.rate_date:m,'');
-    out.push({fee_id:fee.id,bill_no:fee.bill_no,amount_minor:part.amount_minor,basis:part.basis,basis_value:part.basis_value,last_paid_date:lastPaidDate});
+    const lastPaidDate=(conversion.payment_events||[]).reduce((m,event)=>String(event.paid_date||'')>m?String(event.paid_date||''):m,'');
+    out.push({fee_id:fee.id,bill_no:fee.bill_no,amount_minor:part.amount_minor,basis:part.basis,basis_value:part.basis_value,last_paid_date:lastPaidDate,payment_events:conversion.payment_events||[]});
   });
   return {parts:out,errors};
 }

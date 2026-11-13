@@ -79,6 +79,8 @@ on:
       - 'assets/wac-bigseller-old-inventory.js'
       - 'test/wac-bigseller-old-inventory.test.cjs'
       - 'wac-calculator.test.cjs'
+      - 'assets/wac-blocked-import-controls.js'
+      - 'test/wac-blocked-import-controls.test.cjs'
       - 'wac-notification.js'
       - 'wac-notification-ui.js'
       - 'test/wac-cost-change-notification.test.cjs'
@@ -198,6 +200,8 @@ jobs:
           node --check test/po-plan-quotation-pricing.test.cjs
           node --check po-number.js
           node --check wac-calculator.js
+          node --check assets/wac-blocked-import-controls.js
+          node --check test/wac-blocked-import-controls.test.cjs
           node --check assets/wac-bigseller-old-inventory.js
           node --check test/wac-bigseller-old-inventory.test.cjs
           node --check wac-notification.js
@@ -302,6 +306,8 @@ jobs:
         run: node --test test/inventory-onhand-local-currency-kpi.test.cjs
       - name: Test WAC calculation and transport-basis rules
         run: node --test wac-calculator.test.cjs
+      - name: Test WAC blocked-state old inventory import controls
+        run: node --test test/wac-blocked-import-controls.test.cjs
       - name: Test BigSeller original inventory matching for WAC
         run: node --test test/wac-bigseller-old-inventory.test.cjs
       - name: Test WAC cost-change Feishu notification reports
