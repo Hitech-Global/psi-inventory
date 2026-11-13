@@ -11,13 +11,22 @@ function boot(preview) {
   const button = { disabled: false, textContent: '' };
   const sectionChildren = [];
   const blocker = {
+    textContent: 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING WAC_INVENTORY_CONTEXT_MISMATCH',
     insertAdjacentElement(position, element) {
       assert.equal(position, 'afterend');
       sectionChildren.push(element);
     }
   };
   const formCard = {
-    children: [{ className: 'batch-info' }, blocker],
+    // Combined logistics/WAC view prepends logistics and PL detail before WAC's
+    // batch info and red blocker panel; import controls must still follow blockers.
+    children: [
+      { className: 'logistics-detail', textContent: 'Logistics detail' },
+      { className: 'pl-detail', textContent: 'PL detail' },
+      { className: 'batch-info', textContent: 'Batch info' },
+      blocker
+    ],
+    lastElementChild: blocker,
     querySelector(selector) {
       if (selector !== '.wac-blocked-import-section') return null;
       return sectionChildren.find(item => item.className === 'wac-blocked-import-section') || null;
@@ -55,6 +64,8 @@ const blocked = boot({
 });
 const section = blocked.formCard.querySelector('.wac-blocked-import-section');
 assert.ok(section, 'blocked WAC modal should still show the old-stock import section');
+assert.equal(blocked.sectionChildren[0], section,
+  'old-stock import controls must be inserted after the blocker panel even when logistics details are prepended');
 assert.match(section.innerHTML, /onclick="importWacOldInventory\(\)"/);
 assert.match(section.innerHTML, /onclick="exportWacOldInventoryTemplate\(\)"/);
 assert.match(section.innerHTML, /id="wac-old-0"/);

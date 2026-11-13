@@ -106,9 +106,16 @@
           '<th>' + (english ? 'Original stock qty' : indonesian ? 'Stok awal' : '原库存数量') + '</th>' +
           '<th hidden>WAC</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
 
-    // In a blocked WAC modal the first child is batch info and the second is the
-    // red blocker panel. Keep the import controls directly after the warnings.
-    const anchor = formCard.children[1] || formCard.firstElementChild;
+    // The combined CI/WAC modal may prepend logistics and PL detail sections.
+    // Locate the blocker panel by its stable blocker codes, not by child index.
+    const blockerCodes = (preview.blockers || []).map(function (item) {
+      return String(item && item.code || '');
+    }).filter(Boolean);
+    const blockerPanel = Array.from(formCard.children || []).find(function (child) {
+      const content = String(child && child.textContent || '');
+      return blockerCodes.some(function (code) { return content.indexOf(code) >= 0; });
+    });
+    const anchor = blockerPanel || formCard.lastElementChild || formCard.firstElementChild;
     if (anchor && typeof anchor.insertAdjacentElement === 'function') {
       anchor.insertAdjacentElement('afterend', section);
     } else {
