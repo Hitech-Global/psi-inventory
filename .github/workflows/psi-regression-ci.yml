@@ -52,7 +52,10 @@ on:
       - 'scripts/ci-unified-data-binding-hotfix.cjs'
       - 'test/ci-unified-data-binding-hotfix.test.cjs'
       - 'assets/bigseller-inventory-import.js'
+      - 'assets/inv-import-rules.js'
       - 'test/bigseller-inventory-import.test.cjs'
+      - 'test/inv-import-ui-rules.test.cjs'
+      - 'test/inventory-import-cache-version.test.cjs'
       - 'assets/bigseller-sales-import.js'
       - 'test/bigseller-sales-import.test.cjs'
       - 'assets/zhisu-sales-import.js'
@@ -287,7 +290,7 @@ jobs:
       - name: Test PO latest FOB quotation and FX pricing
         run: node --test test/po-plan-quotation-pricing.test.cjs
       - name: Test BigSeller inventory import adapter and SKU master-data blocking
-        run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs
+        run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs test/inv-import-ui-rules.test.cjs test/inventory-import-cache-version.test.cjs
       - name: Test BigSeller sales import marker / status rules
         run: node --test test/bigseller-sales-import.test.cjs
       - name: Test Zhisu sales import payment / status / country / warehouse rules
