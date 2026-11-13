@@ -323,11 +323,11 @@ function computeWacCostFacts(logisticsBatchId) {
 
         // Query ALL raw applied payment logs — no grouping, no deduplication
         const freightLogs = _q(
-          `SELECT payment_request_id, amount, local_amount, local_rate, local_rate_date, local_currency, local_rate_type, local_rate_direction, paid_date,
+          `SELECT payment_request_id, amount, original_currency, local_amount, local_rate, local_rate_date, local_currency, local_rate_type, local_rate_direction, paid_date,
                   rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount
            FROM payment_settlement_logs
            WHERE payment_request_id IN (${ph})
-             AND event_type = 'payment' AND status = 'applied'
+             AND event_type = 'payment' AND status = 'applied' AND COALESCE(reversed_at,'')=''
            ORDER BY payment_request_id, paid_date`,
           freightPrIds
         ).rows;
@@ -374,6 +374,7 @@ function computeWacCostFacts(logisticsBatchId) {
               freightPaymentBreakdown = freightLogs.map(log => ({
                 payment_request_id: log.payment_request_id,
                 amount: Number(log.amount) || 0,
+                original_currency: String(log.original_currency || '').trim().toUpperCase(),
                 local_amount: Number(log.local_amount) || 0,
                 local_rate: Number(log.local_rate) || 0,
                 local_rate_date: log.local_rate_date || '',
@@ -415,47 +416,6 @@ function computeWacCostFacts(logisticsBatchId) {
         }
       }
     }
-  }
-
-  // CI goods FX follows the actual freight payment settlement date/rate.
-  // When freight is paid in the same currency as the CI, the effective rate is
-  // the amount-weighted applied settlement rate (Σ local_amount / Σ paid_amount).
-  if (ciCurrency === localCurrency) {
-    productFxDate = freightLastPaidDate || '';
-    productFxRate = { rate: 1, rate_date: productFxDate, rate_type: 'identity', direction: 'identity' };
-  } else if (freightBusinessAmount > 0 && freightLocalAmount > 0 && freightLastPaidDate) {
-    productFxDate = freightLastPaidDate;
-    if (freightCurrency === ciCurrency && freightEffectiveRate > 0) {
-      // Same source currency: use the amount-weighted applied rate from freight payment logs.
-      productFxRate = {
-        rate: freightEffectiveRate,
-        rate_date: productFxDate,
-        rate_type: 'payment_settlement',
-        direction: 'payment_settlement'
-      };
-    } else {
-      // Different source currencies: keep the same final freight-paid date as the FX anchor,
-      // but resolve the CI currency's own cost-settlement rate for that exact date.
-      productFxRate = resolveExactFxRate(ciCurrency, localCurrency, productFxDate, fxCache);
-      if (!productFxRate) {
-        blockers.push({
-          code: 'PRODUCT_FX_RATE_MISSING',
-          message: `缺少运费最后付款日 ${productFxDate} ${ciCurrency}→${localCurrency} 的 cost_settlement 汇率`,
-          detail: { source_currency: ciCurrency, freight_currency: freightCurrency, target_currency: localCurrency, rate_date: productFxDate, rate_type: WAC_FX_RATE_TYPE }
-        });
-      }
-    }
-  } else if (ciCurrency !== localCurrency) {
-    blockers.push({
-      code: 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING',
-      message: '缺少已完成的运费付款及其本币结算汇率，无法确定 CI 商品成本汇率',
-      detail: {
-        source_currency: ciCurrency,
-        freight_currency: freightCurrency,
-        target_currency: localCurrency,
-        rate_date: freightLastPaidDate || null
-      }
-    });
   }
 
   // ── 9. Freight allocation by logistics batch transport mode ──
@@ -508,7 +468,9 @@ function computeWacCostFacts(logisticsBatchId) {
   const sharedFreight = require('./shared-logistics-fee-server').sharedWacParts(batch.id, localCurrency);
   sharedFreight.errors.forEach(e => blockers.push(e));
   const sharedFreightBreakdown=[];
+  const sharedFreightPaymentEvents=[];
   for(const part of sharedFreight.parts){
+    sharedFreightPaymentEvents.push(...(part.payment_events||[]));
     const basisField=part.basis==='cbm'?'cbm':part.basis==='kg'?'gross_weight':null;
     if(!basisField){blockers.push({code:'SHARED_FREIGHT_BASIS_INVALID',message:part.bill_no+' 运输依据无效'});continue;}
     const expectedSharedBasis=batch.transport_mode==='sea'?'cbm':batch.transport_mode==='air'?'gross_weight':null;
@@ -528,6 +490,94 @@ function computeWacCostFacts(logisticsBatchId) {
     if(part.last_paid_date>freightLastPaidDate)freightLastPaidDate=part.last_paid_date;
     sharedFreightBreakdown.push({fee_id:part.fee_id,bill_no:part.bill_no,
       freight_cost_local:part.amount_minor/100,basis:part.basis});
+  }
+
+  // CI goods FX is anchored to the latest actual freight-payment completion date.
+  // Include both batch-scoped freight payments and separately-paid shared delivery
+  // bills; the latter are stored in shared_logistics_fees, not ci_cost_items.
+  const freightSettlementEvents = [
+    ...freightPaymentBreakdown,
+    ...sharedFreightPaymentEvents
+  ];
+  productFxDate = String(freightLastPaidDate || '').slice(0, 10);
+  if (ciCurrency === localCurrency) {
+    productFxRate = { rate: 1, rate_date: productFxDate, rate_type: 'identity', direction: 'identity' };
+  } else if (freightLocalAmount > 0 && productFxDate) {
+    const latestEvents = freightSettlementEvents.filter(event =>
+      String(event.paid_date || '').slice(0, 10) === productFxDate
+    );
+    let paymentSettlementRate = null;
+
+    // RMB is the common reference currency in payment snapshots. For RMB-denominated
+    // CI goods, derive RMB→warehouse currency from the immutable same-day settlement
+    // amounts, even when the final freight payment itself was made in local currency.
+    if (ciCurrency === 'RMB') {
+      const rmbSnapshots = latestEvents.filter(event =>
+        String(event.local_currency || '').trim().toUpperCase() === localCurrency &&
+        String(event.local_rate_date || '').slice(0, 10) === productFxDate &&
+        String(event.rmb_rate_date || '').slice(0, 10) === productFxDate &&
+        Number(event.local_rate) > 0 && Number(event.rmb_rate) > 0 &&
+        Number(event.local_amount) > 0 && Number(event.rmb_amount) > 0
+      );
+      const localTotal = rmbSnapshots.reduce((sum, event) => sum + Number(event.local_amount), 0);
+      const rmbTotal = rmbSnapshots.reduce((sum, event) => sum + Number(event.rmb_amount), 0);
+      if (localTotal > 0 && rmbTotal > 0) {
+        paymentSettlementRate = localTotal / rmbTotal;
+        rmbToLocalEffectiveRate = paymentSettlementRate;
+        rmbToLocalRateDate = productFxDate;
+      }
+    }
+
+    // If the latest paid event was made in the CI currency, use its locked
+    // local settlement amount/rate rather than looking up a mutable market quote.
+    if (!(paymentSettlementRate > 0)) {
+      const sameCurrencySnapshots = latestEvents.filter(event =>
+        String(event.original_currency || '').trim().toUpperCase() === ciCurrency &&
+        String(event.local_currency || '').trim().toUpperCase() === localCurrency &&
+        String(event.local_rate_date || '').slice(0, 10) === productFxDate &&
+        Number(event.amount) > 0 && Number(event.local_rate) > 0 && Number(event.local_amount) > 0
+      );
+      const paidTotal = sameCurrencySnapshots.reduce((sum, event) => sum + Number(event.amount), 0);
+      const localTotal = sameCurrencySnapshots.reduce((sum, event) => sum + Number(event.local_amount), 0);
+      if (paidTotal > 0 && localTotal > 0) paymentSettlementRate = localTotal / paidTotal;
+    }
+
+    // Legacy direct freight logs may predate the original_currency snapshot. Keep
+    // their existing amount-weighted behavior as a compatibility fallback.
+    if (!(paymentSettlementRate > 0) && freightCurrency === ciCurrency && freightEffectiveRate > 0) {
+      paymentSettlementRate = freightEffectiveRate;
+    }
+
+    if (paymentSettlementRate > 0) {
+      productFxRate = {
+        rate: paymentSettlementRate,
+        rate_date: productFxDate,
+        rate_type: 'payment_settlement',
+        direction: 'payment_settlement'
+      };
+    } else {
+      // When no same-day settlement snapshot can express CI→local directly,
+      // require an exact cost-settlement rate for the actual payment date.
+      productFxRate = resolveExactFxRate(ciCurrency, localCurrency, productFxDate, fxCache);
+      if (!productFxRate) {
+        blockers.push({
+          code: 'PRODUCT_FX_RATE_MISSING',
+          message: `缺少运费最后付款日 ${productFxDate} ${ciCurrency}→${localCurrency} 的 cost_settlement 汇率`,
+          detail: { source_currency: ciCurrency, freight_currency: freightCurrency, target_currency: localCurrency, rate_date: productFxDate, rate_type: WAC_FX_RATE_TYPE }
+        });
+      }
+    }
+  } else if (ciCurrency !== localCurrency) {
+    blockers.push({
+      code: 'PRODUCT_FX_FREIGHT_PAYMENT_MISSING',
+      message: '缺少已完成的运费付款及其本币结算汇率，无法确定 CI 商品成本汇率',
+      detail: {
+        source_currency: ciCurrency,
+        freight_currency: freightCurrency,
+        target_currency: localCurrency,
+        rate_date: productFxDate || null
+      }
+    });
   }
 
   // ── 10. Duty ──
@@ -762,7 +812,8 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 13. Build per-SKU result items ──
-  const skuCodes = [...new Set([...ciSkuMap.keys(), ...batchSkuMap.keys()])];
+  // Inventory/WAC validation is batch-scoped. Other CI SKUs may belong to a different PL/batch.
+  const skuCodes = [...batchSkuMap.keys()];
   const country2 = targetCountry;
   const warehouse = warehouseName;
 
