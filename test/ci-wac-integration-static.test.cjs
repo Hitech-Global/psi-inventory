@@ -40,6 +40,17 @@ assert.ok(integrationSrc.includes('installWacApiTimeouts'), 'WAC read requests m
 assert.ok(integrationSrc.includes('__ciWacApiTimeoutWrapped'), 'WAC API timeout wrapper must install only once');
 assert.ok(integrationSrc.includes('WAC预览加载超时'), 'WAC preview timeout must explain that confirmation was not submitted');
 assert.ok(integrationSrc.includes('wacDetailBusy'), 'WAC detail loading must reject duplicate in-flight actions');
+const submitWrapperStart = integrationSrc.indexOf('var originalSubmitWacConfirm = global.submitWacConfirm;');
+const submitWrapperEnd = integrationSrc.indexOf('function hideLegacyWacPage()', submitWrapperStart);
+const submitWrapperSrc = integrationSrc.slice(submitWrapperStart, submitWrapperEnd);
+assert.ok(submitWrapperSrc.includes('wacSubmitBusy'), 'WAC confirmation must block duplicate submissions');
+assert.ok(submitWrapperSrc.includes('wac.submitting'), 'WAC confirmation must show a submitting state');
+assert.ok(submitWrapperSrc.includes('global.__ciWacConfirmSubmitted'), 'CI refresh must only run after a successful WAC commit');
+assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confirmation must skip the hidden legacy WAC-list refresh');
+assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
+assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
+assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261113-4'), 'WAC submit integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
