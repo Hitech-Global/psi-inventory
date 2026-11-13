@@ -50,6 +50,7 @@ test('missing FX evidence is shown as pending instead of being displayed as zero
 
 test('expanded logistics rows hydrate shared allocations by batch ID on every open and refresh', () => {
   const source = fs.readFileSync(path.join(__dirname, '..', 'ci-list-inline-logistics.js'), 'utf8');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert.match(source, /data-ci-logi-freight="1"/);
   assert.match(source, /data-ci-logi-freight-ratio="1"/);
   assert.match(source, /\/shared-logistics-fees\?view=ci-summary/);
@@ -58,4 +59,5 @@ test('expanded logistics rows hydrate shared allocations by batch ID on every op
   assert.match(source, /hydrateSharedFreight\(ciId, data \|\| \[\], token\)/);
   assert.match(source, /hydrateSharedFreight\(ciId, rows \|\| \[\], state\.reqSeq\)/);
   assert.match(source, /Number\(item\.total_minor\) \/ 100/);
+  assert.match(html, /ci-list-inline-logistics\.js\?v=20261113-2/);
 });
