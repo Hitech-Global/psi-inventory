@@ -1,6 +1,37 @@
 (function (global) {
   'use strict';
 
+  function sharedFreightDisplayForBatch(batch, summary) {
+    var id = String(batch && batch.id || '');
+    var totals = summary && summary.batch_totals_rmb && typeof summary.batch_totals_rmb === 'object'
+      ? summary.batch_totals_rmb : {};
+    var item = totals[id];
+    if (!item) {
+      return { status: 'missing', amount: null, currency: 'RMB', ratio: null, error: 'No allocated freight result for this batch' };
+    }
+    if (item.total_minor == null || !Number.isFinite(Number(item.total_minor))) {
+      return {
+        status: 'pending_fx', amount: null, currency: 'RMB', ratio: null,
+        error: Array.isArray(item.errors) ? item.errors.join('\\n') : ''
+      };
+    }
+    var amount = Number(item.total_minor) / 100;
+    var ciCurrency = String(summary && summary.ci_currency || batch && batch.ci_currency || '').trim().toUpperCase();
+    if (ciCurrency === 'CNY') ciCurrency = 'RMB';
+    var goodsValue = Number(batch && batch.cargo_value) || 0;
+    return {
+      status: 'ok',
+      amount: amount,
+      currency: 'RMB',
+      ratio: ciCurrency === 'RMB' && goodsValue > 0 ? amount / goodsValue * 100 : null,
+      error: ''
+    };
+  }
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { sharedFreightDisplayForBatch: sharedFreightDisplayForBatch };
+  }
+
   if (!global || typeof document === 'undefined') return;
   if (global.__ciListInlineLogisticsInstalled) return;
   global.__ciListInlineLogisticsInstalled = true;
@@ -385,7 +416,6 @@
       rowsHtml = list.map(function (b) {
         var cbmFromPl = (b.pls || []).reduce(function (s, p) { return s + (Number(p.total_cbm) || 0); }, 0);
         var cbm = cbmFromPl > 0 ? cbmFromPl : (Number(b.total_cbm) || 0);
-        var ratio = b.freight_value_ratio == null ? '—' : (Number(b.freight_value_ratio).toFixed(2) + '%');
         var cargoCur = b.ci_currency || b.freight_currency || '';
         return '<tr class="ci-list-logi-clickable-row" data-ci-logi-row="' + esc(b.id || '') + '" data-ci-id="' + esc(ciId) + '" data-batch-no="' + esc(b.batch_no || '') + '" data-wac-status="' + esc(b.wac_status || 'not_ready') + '" data-wac-exclusion-reason="' + esc(b.wac_exclusion_reason || '') + '" title="' + esc(tr('common.view', '查看详情')) + '">' +
           '<td class="cell-id">' + esc(b.batch_no || '') + '</td>' +
@@ -398,8 +428,8 @@
           '<td>' + cbm.toFixed(2) + '</td>' +
           (showAmounts
             ? '<td>' + esc(fmtMoney(b.cargo_value || 0, cargoCur)) + '</td>' +
-              '<td>' + esc(fmtMoney(b.total_freight || 0, b.freight_currency)) + '</td>' +
-              '<td>' + esc(ratio) + '</td>'
+              '<td data-ci-logi-freight="1">…</td>' +
+              '<td data-ci-logi-freight-ratio="1">…</td>'
             : '') +
           statusCellHtml(b, 'logistics_status', ciId) +
           statusCellHtml(b, 'listing_status', ciId) +
@@ -448,6 +478,74 @@
     return tableHtml + createBtn;
   }
 
+  function freightUiText(key) {
+    var lang = typeof global.getLang === 'function'
+      ? String(global.getLang() || 'zh').toLowerCase().slice(0, 2) : 'zh';
+    var labels = {
+      pending: { zh: '待折算', en: 'Pending FX', id: 'Menunggu kurs' },
+      unavailable: { zh: '—', en: '—', id: '—' },
+      loadFailed: { zh: '综合运费加载失败，请刷新重试', en: 'Failed to load allocated freight. Refresh and retry.', id: 'Gagal memuat alokasi ongkos. Muat ulang dan coba lagi.' },
+      ratioCurrency: { zh: 'CI货值不是人民币，暂不计算运费占比', en: 'CI goods value is not denominated in RMB; freight ratio is unavailable.', id: 'Nilai barang CI bukan RMB; rasio ongkos tidak tersedia.' },
+      allocated: { zh: '按合并费用分摊结果计算', en: 'Calculated from shared freight allocations', id: 'Dihitung dari alokasi biaya gabungan' }
+    };
+    return (labels[key] && labels[key][lang]) || (labels[key] && labels[key].zh) || '';
+  }
+
+  async function hydrateSharedFreight(ciId, batches, token) {
+    if (!canViewAmounts() || typeof global.api !== 'function' || !ciId) return;
+    var body = document.getElementById('ci-list-logi-body-' + ciId);
+    if (!body) return;
+    try {
+      var summary = await global.api('/api/commercial-invoices/' + encodeURIComponent(ciId) + '/shared-logistics-fees?view=ci-summary');
+      if (state.openId !== ciId || (token != null && token !== state.reqSeq)) return;
+      var byId = {};
+      (Array.isArray(batches) ? batches : []).forEach(function (batch) {
+        if (batch && batch.id) byId[String(batch.id)] = batch;
+      });
+      Array.prototype.forEach.call(body.querySelectorAll('tr[data-ci-logi-row]'), function (row) {
+        var batchId = String(row.getAttribute('data-ci-logi-row') || '');
+        var batch = byId[batchId];
+        var totalCell = row.querySelector('[data-ci-logi-freight]');
+        var ratioCell = row.querySelector('[data-ci-logi-freight-ratio]');
+        if (!batch || !totalCell || !ratioCell) return;
+        var display = sharedFreightDisplayForBatch(batch, summary || {});
+        totalCell.removeAttribute('title');
+        ratioCell.removeAttribute('title');
+        if (display.status === 'missing') {
+          totalCell.textContent = freightUiText('unavailable');
+          ratioCell.textContent = '—';
+          totalCell.title = display.error || freightUiText('loadFailed');
+          ratioCell.title = totalCell.title;
+          return;
+        }
+        if (display.status !== 'ok') {
+          totalCell.textContent = freightUiText('pending');
+          ratioCell.textContent = '—';
+          totalCell.title = display.error || freightUiText('pending');
+          ratioCell.title = totalCell.title;
+          return;
+        }
+        totalCell.textContent = fmtMoney(display.amount, 'RMB');
+        totalCell.title = freightUiText('allocated');
+        if (display.ratio == null) {
+          ratioCell.textContent = '—';
+          ratioCell.title = freightUiText('ratioCurrency');
+        } else {
+          ratioCell.textContent = Number(display.ratio).toFixed(2) + '%';
+        }
+      });
+    } catch (error) {
+      if (state.openId !== ciId || (token != null && token !== state.reqSeq)) return;
+      Array.prototype.forEach.call(body.querySelectorAll('[data-ci-logi-freight],[data-ci-logi-freight-ratio]'), function (cell) {
+        cell.textContent = '—';
+        cell.title = freightUiText('loadFailed');
+      });
+      if (global.console && typeof global.console.warn === 'function') {
+        global.console.warn('[CI list shared freight] failed to hydrate batch allocations', error);
+      }
+    }
+  }
+
   function patchCachedBatchFields(ciId, batchId, fields) {
     var cached = cacheEntry(ciId);
     if (!cached || !Array.isArray(cached.data)) return null;
@@ -475,14 +573,20 @@
       setCache(ciId, rows);
       if (state.openId === ciId) {
         var body = document.getElementById('ci-list-logi-body-' + ciId);
-        if (body) body.innerHTML = renderPanel(rows || [], ciId);
+        if (body) {
+          body.innerHTML = renderPanel(rows || [], ciId);
+          hydrateSharedFreight(ciId, rows || [], state.reqSeq);
+        }
       }
     } catch (e) {
       if (Array.isArray(fallbackRows)) {
         setCache(ciId, fallbackRows);
         if (state.openId === ciId) {
           var fallbackBody = document.getElementById('ci-list-logi-body-' + ciId);
-          if (fallbackBody) fallbackBody.innerHTML = renderPanel(fallbackRows, ciId);
+          if (fallbackBody) {
+            fallbackBody.innerHTML = renderPanel(fallbackRows, ciId);
+            hydrateSharedFreight(ciId, fallbackRows, state.reqSeq);
+          }
         }
       }
     }
@@ -601,13 +705,14 @@
     var body = document.getElementById('ci-list-logi-body-' + ciId);
     if (!body) return;
 
+    var token = ++state.reqSeq;
     var cached = cacheEntry(ciId);
     if (cached) {
       body.innerHTML = renderPanel(cached.data || [], ciId);
+      hydrateSharedFreight(ciId, cached.data || [], token);
       return;
     }
 
-    var token = ++state.reqSeq;
     body.innerHTML = loadingHtml();
 
     try {
@@ -615,7 +720,10 @@
       setCache(ciId, data);
       if (token !== state.reqSeq || state.openId !== ciId) return;
       var liveBody = document.getElementById('ci-list-logi-body-' + ciId);
-      if (liveBody) liveBody.innerHTML = renderPanel(data || [], ciId);
+      if (liveBody) {
+        liveBody.innerHTML = renderPanel(data || [], ciId);
+        hydrateSharedFreight(ciId, data || [], token);
+      }
     } catch (e) {
       if (token !== state.reqSeq || state.openId !== ciId) return;
       var errBody = document.getElementById('ci-list-logi-body-' + ciId);
