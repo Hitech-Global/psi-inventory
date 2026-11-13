@@ -1277,6 +1277,17 @@ describe('computeWacCostFacts - shared freight payment FX and batch-scoped inven
     assert.ok(Math.abs(result.meta.product_fx_rate - (900000 / 331.2)) < 0.000001,
       'RMB→IDR must come from the final applied payment settlement snapshot');
     assert.ok(Math.abs(result.meta.rmb_to_local_rate - (900000 / 331.2)) < 0.000001);
+    assert.equal(result.meta.shared_freight_breakdown.length, 2);
+    const sharedRmb = result.meta.shared_freight_breakdown.find(row => row.bill_no === 'SHF-RMB');
+    const sharedIdr = result.meta.shared_freight_breakdown.find(row => row.bill_no === 'SHF-IDR');
+    assert.ok(sharedRmb && sharedIdr, 'shared freight bills must be exposed to the detail UI');
+    assert.equal(sharedRmb.basis, 'cbm');
+    assert.equal(sharedRmb.basis_value, 4.061);
+    assert.equal(sharedRmb.payment_events[0].paid_date, '2026-11-12');
+    assert.equal(sharedRmb.payment_events[0].original_currency, 'RMB');
+    assert.equal(sharedIdr.payment_events[0].paid_date, '2026-11-13');
+    assert.equal(sharedIdr.payment_events[0].original_currency, 'IDR');
+    assert.ok(sharedRmb.freight_cost_local > 0 && sharedIdr.freight_cost_local > 0);
     const item = result.items.find(row => row.sku_code === 'SKU-SHARED');
     assert.ok(item);
     assert.ok(Math.abs(item.product_cost_local - 1000 * (900000 / 331.2)) < 0.01);
