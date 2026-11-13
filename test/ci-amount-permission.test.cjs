@@ -88,7 +88,7 @@ must(inline, /canViewAmounts\(\)[\s\S]*data-ci-logi-export-ci-pl/, 'inline expor
 
 // Role UI label and script ordering.
 must(i18n, /permission\.label\.ci_amount_view/, 'permission i18n label missing');
-const inlineMatch = index.match(/<script src="ci-list-inline-logistics\\.js(?:\\?[^\"]*)?"><\\/script>/);
+const inlineMatch = index.match(/<script src="ci-list-inline-logistics\.js(?:\?[^"]*)?"><\/script>/);
 const inlinePos = inlineMatch ? index.indexOf(inlineMatch[0]) : -1;
 const amountPos = index.indexOf('<script src="ci-amount-permission.js"></script>');
 assert.ok(inlinePos >= 0 && amountPos > inlinePos, 'amount guard must load after CI inline logistics enhancement');
