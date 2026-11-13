@@ -1207,6 +1207,120 @@ describe('computeWacCostFacts - WAC context gates', () => {
   });
 });
 
+describe('computeWacCostFacts - shared freight payment FX and batch-scoped inventory', () => {
+  beforeEach(() => {
+    createTestSchema();
+    const db = require('./db').getDB();
+    [
+      'shared_logistics_fee_batches','shared_logistics_fees','wac_history',
+      'payment_settlement_logs','ci_cost_items','payment_requests',
+      'logistics_batches','packing_list_items','packing_lists',
+      'commercial_invoice_items','commercial_invoices','exchange_rates',
+      'inventory','skus','warehouses','countries'
+    ].forEach(table => db.exec('DELETE FROM '+table));
+  });
+
+  test('uses the latest applied shared freight payment snapshot for RMB CI goods FX', () => {
+    seedCountry('Indonesia', 'ID', 'IDR');
+    seedWarehouse('wh_shared', 'WH-JKT', 'ctry_Indonesia', 'Indonesia');
+    seedSku('SKU-SHARED', 'Shared Freight Product', 'SHARED-1', 'BrandX');
+    seedCI('ci_shared_fx', 'CI-SHARED-FX', 'RMB', 1000, 'cbm', { ciDate: '2026-10-13' });
+    seedCIItem('cii_shared_fx', 'ci_shared_fx', 'SKU-SHARED', 100, 10, 10, 0.05);
+    seedBatch('lb_shared_fx', 'BATCH-SHARED-FX', 'ci_shared_fx', {
+      arrivalDate: '2026-11-13', country: 'Indonesia', warehouse: 'WH-JKT',
+      totalFreight: 0, freightCurrency: 'RMB', transportMode: 'sea'
+    });
+    seedPL('pl_shared_fx', 'PL-SHARED-FX', 'ci_shared_fx', 'lb_shared_fx', { totalQty: 100 });
+    seedPLItem('pli_shared_fx', 'pl_shared_fx', 'SKU-SHARED', 100, 4.061, 709.19);
+    seedInventory('SKU-SHARED', 'Indonesia', 'WH-JKT', 20, 100);
+
+    seedPaymentRequest('pr_shared_rmb', 'PR-SHARED-RMB', 'RMB', 11307.10, 'ci_shared_fx', 'warehouse_arrival', 'delivery');
+    seedPaymentRequest('pr_shared_idr', 'PR-SHARED-IDR', 'IDR', 900000, 'ci_shared_fx', 'warehouse_arrival', 'delivery');
+
+    run(`INSERT INTO payment_settlement_logs
+      (id,payment_request_id,event_type,amount,status,paid_date,original_currency,
+       local_currency,local_rate,local_rate_date,local_rate_type,local_rate_direction,local_amount,
+       rmb_rate,rmb_rate_date,rmb_rate_type,rmb_rate_direction,rmb_amount,is_legacy,reversed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'')`,
+      ['psl_shared_rmb','pr_shared_rmb','payment',11307.10,'applied','2026-11-12','RMB',
+       'IDR',2717.24407501,'2026-11-12','realtime','direct',30724150.48,
+       1,'2026-11-12','identity','identity',11307.10]);
+    run(`INSERT INTO payment_settlement_logs
+      (id,payment_request_id,event_type,amount,status,paid_date,original_currency,
+       local_currency,local_rate,local_rate_date,local_rate_type,local_rate_direction,local_amount,
+       rmb_rate,rmb_rate_date,rmb_rate_type,rmb_rate_direction,rmb_amount,is_legacy,reversed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'')`,
+      ['psl_shared_idr','pr_shared_idr','payment',900000,'applied','2026-11-13','IDR',
+       'IDR',1,'2026-11-13','identity','identity',900000,
+       0.000368,'2026-11-13','realtime','direct',331.2]);
+
+    run(`INSERT INTO shared_logistics_fees
+      (id,ci_id,ci_no,bill_no,payee_name,currency,amount_minor,payment_request_id,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`,
+      ['shfee_rmb','ci_shared_fx','CI-SHARED-FX','SHF-RMB','Forwarder','RMB',1130710,'pr_shared_rmb','2026-11-12']);
+    run(`INSERT INTO shared_logistics_fees
+      (id,ci_id,ci_no,bill_no,payee_name,currency,amount_minor,payment_request_id,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`,
+      ['shfee_idr','ci_shared_fx','CI-SHARED-FX','SHF-IDR','Forwarder','IDR',90000000,'pr_shared_idr','2026-11-13']);
+    run(`INSERT INTO shared_logistics_fee_batches (fee_id,batch_id,mode,basis,basis_value,amount_minor)
+      VALUES (?,?,?,?,?,?)`, ['shfee_rmb','lb_shared_fx','sea','cbm',4.061,1130710]);
+    run(`INSERT INTO shared_logistics_fee_batches (fee_id,batch_id,mode,basis,basis_value,amount_minor)
+      VALUES (?,?,?,?,?,?)`, ['shfee_idr','lb_shared_fx','sea','cbm',4.061,90000000]);
+
+    const result = computeWacCostFacts('lb_shared_fx');
+    const codes = result.blockers.map(b => b.code);
+    assert.ok(!codes.includes('PRODUCT_FX_FREIGHT_PAYMENT_MISSING'), JSON.stringify(result.blockers));
+    assert.ok(!codes.includes('PRODUCT_FX_RATE_MISSING'), JSON.stringify(result.blockers));
+    assert.equal(result.meta.freight_last_paid_date, '2026-11-13');
+    assert.equal(result.meta.product_fx_rate_date, '2026-11-13');
+    assert.equal(result.meta.product_fx_rate_type, 'payment_settlement');
+    assert.ok(Math.abs(result.meta.product_fx_rate - (900000 / 331.2)) < 0.000001,
+      'RMB→IDR must come from the final applied payment settlement snapshot');
+    assert.ok(Math.abs(result.meta.rmb_to_local_rate - (900000 / 331.2)) < 0.000001);
+    const item = result.items.find(row => row.sku_code === 'SKU-SHARED');
+    assert.ok(item);
+    assert.ok(Math.abs(item.product_cost_local - 1000 * (900000 / 331.2)) < 0.01);
+  });
+
+  test('only checks inventory context for SKUs in the current logistics batch', () => {
+    seedCountry('Indonesia', 'ID', 'IDR');
+    seedCountry('Malaysia', 'MY', 'MYR');
+    seedWarehouse('wh_id', 'WH-JKT', 'ctry_Indonesia', 'Indonesia');
+    seedWarehouse('wh_my', 'WH-KUL', 'ctry_Malaysia', 'Malaysia');
+    seedSku('SKU-CURRENT-BATCH', 'Current Batch Product', 'CURRENT', 'BrandX');
+    seedSku('SKU-OTHER-BATCH', 'Other Batch Product', 'OTHER', 'BrandX');
+
+    seedCI('ci_multi_batch', 'CI-MULTI-BATCH', 'IDR', 2000, 'cbm');
+    seedCIItem('cii_current_batch', 'ci_multi_batch', 'SKU-CURRENT-BATCH', 100, 10, 10, 0.05);
+    seedCIItem('cii_other_batch', 'ci_multi_batch', 'SKU-OTHER-BATCH', 100, 10, 10, 0.05);
+
+    seedBatch('lb_current_batch', 'BATCH-CURRENT', 'ci_multi_batch', {
+      arrivalDate: '2026-11-13', country: 'Indonesia', warehouse: 'WH-JKT', totalFreight: 0, transportMode: 'sea'
+    });
+    seedPL('pl_current_batch', 'PL-CURRENT', 'ci_multi_batch', 'lb_current_batch', { totalQty: 100 });
+    seedPLItem('pli_current_batch', 'pl_current_batch', 'SKU-CURRENT-BATCH', 100, 1, 10);
+
+    seedBatch('lb_other_batch', 'BATCH-OTHER', 'ci_multi_batch', {
+      arrivalDate: '2026-11-13', country: 'Indonesia', warehouse: 'WH-JKT', totalFreight: 0, transportMode: 'sea'
+    });
+    seedPL('pl_other_batch', 'PL-OTHER', 'ci_multi_batch', 'lb_other_batch', { totalQty: 100 });
+    seedPLItem('pli_other_batch', 'pl_other_batch', 'SKU-OTHER-BATCH', 100, 1, 10);
+
+    seedInventory('SKU-CURRENT-BATCH', 'Indonesia', 'WH-JKT', 20, 100);
+    seedInventory('SKU-OTHER-BATCH', 'Malaysia', 'WH-KUL', 30, 200);
+
+    const current = computeWacCostFacts('lb_current_batch');
+    const currentCodes = current.blockers.map(b => b.code);
+    assert.ok(!currentCodes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), JSON.stringify(current.blockers));
+    assert.deepEqual(current.items.map(row => row.sku_code), ['SKU-CURRENT-BATCH']);
+
+    const other = computeWacCostFacts('lb_other_batch');
+    const otherCodes = other.blockers.map(b => b.code);
+    assert.ok(otherCodes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'),
+      'the wrong-context inventory must still block the batch that actually contains that SKU');
+  });
+});
+
 describe('Confirm endpoint - old_qty validation', () => {
   test('OLD_QTY_MISSING when old_qty is null/blank', () => {
     const raw = null;
