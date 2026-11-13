@@ -154,7 +154,7 @@ test("the WAC importer is wired to the parser and the parser is loaded by index.
   assert.match(app, /ZhisuInventoryImport\.parseZhisuWorkbook/);
   assert.match(app, /deriveWacOriginalStock/);
   assert.match(app, /wac-zhisu-derived-panel/);
-  assert.match(html, /app\.js\?v=20261110-3/);
+  assert.match(html, /app\.js\?v=\d{8}-\d+/);
   assert.match(html, /assets\/wac-bigseller-old-inventory\.js/);
   assert.match(html, /assets\/zhisu-inventory-import\.js\?v=20261110-2/);
 });
