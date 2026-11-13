@@ -206,9 +206,17 @@
       'modal-wac');
   }
 
+  var wacDetailBusy = false;
   async function viewLogWacDetail(batchId, ciId, wacStatus, exclusionReason) {
     var id = String(batchId || '');
     if (!id) return;
+    if (wacDetailBusy) {
+      if (typeof global.showToast === 'function') {
+        global.showToast(tr('wac.detail_loading', 'WAC详情正在加载，请稍候。'), 'info');
+      }
+      return;
+    }
+    wacDetailBusy = true;
     var seq = (global.__ciWacDetailSeq || 0) + 1;
     global.__ciWacDetailSeq = seq;
     try {
@@ -256,6 +264,8 @@
       if (seq === global.__ciWacDetailSeq && typeof global.showToast === 'function') {
         global.showToast(error && error.message || '物流批次详情加载失败', 'danger');
       }
+    } finally {
+      wacDetailBusy = false;
     }
   }
 
@@ -412,6 +422,51 @@
     document.head.appendChild(style);
   }
   hideLegacyWacPage();
+
+  function withWacApiTimeout(promise, timeoutMs, message) {
+    var timer = null;
+    var timeout = new Promise(function (_, reject) {
+      timer = setTimeout(function () { reject(new Error(message)); }, timeoutMs);
+    });
+    return Promise.race([Promise.resolve(promise), timeout]).finally(function () {
+      if (timer) clearTimeout(timer);
+    });
+  }
+
+  // WAC detail is read-only until the user submits the separate confirmation form.
+  // Bound these GET requests so a stalled network request cannot leave the action pending forever.
+  function installWacApiTimeouts() {
+    var originalApi = global.api;
+    if (typeof originalApi !== 'function' || originalApi.__ciWacApiTimeoutWrapped) return;
+    var wrappedApi = function (url, method, body, opts) {
+      var verb = String(method || 'GET').toUpperCase();
+      var path = String(url || '').split('?')[0];
+      if (verb !== 'GET') return originalApi.apply(this, arguments);
+
+      var timeoutMs = 0;
+      var message = '';
+      if (/^\/api\/logistics-batches\/[^/]+$/.test(path)) {
+        timeoutMs = 15000;
+        message = tr('wac.logistics_timeout', '物流批次详情加载超时，请检查网络后重试。');
+      } else if (/^\/api\/packing-lists\/[^/]+$/.test(path)) {
+        timeoutMs = 15000;
+        message = tr('wac.pl_timeout', 'PL明细加载超时，请检查网络后重试。');
+      } else if (/^\/api\/wac\/preview\/[^/]+$/.test(path)) {
+        timeoutMs = 20000;
+        message = tr('wac.preview_timeout', 'WAC预览加载超时；尚未提交确认，请稍后重试。');
+      } else if (path === '/api/wac/cc-candidates') {
+        timeoutMs = 10000;
+        message = tr('wac.cc_timeout', '抄送人员列表加载超时，请稍后重试。');
+      }
+      if (!timeoutMs) return originalApi.apply(this, arguments);
+      return withWacApiTimeout(originalApi.apply(this, arguments), timeoutMs, message);
+    };
+    wrappedApi.__ciWacApiTimeoutWrapped = true;
+    wrappedApi.__original = originalApi;
+    global.api = wrappedApi;
+  }
+
+  installWacApiTimeouts();
 
   global.viewLogWacDetail = viewLogWacDetail;
   global.openCIWacExclude = openCIWacExclude;
