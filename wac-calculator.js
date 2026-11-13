@@ -489,7 +489,8 @@ function computeWacCostFacts(logisticsBatchId) {
     freightLocalAmount+=part.amount_minor/100;
     if(part.last_paid_date>freightLastPaidDate)freightLastPaidDate=part.last_paid_date;
     sharedFreightBreakdown.push({fee_id:part.fee_id,bill_no:part.bill_no,
-      freight_cost_local:part.amount_minor/100,basis:part.basis});
+      freight_cost_local:part.amount_minor/100,basis:part.basis,basis_value:part.basis_value,
+      payment_events:part.payment_events||[]});
   }
 
   // CI goods FX is anchored to the latest actual freight-payment completion date.
