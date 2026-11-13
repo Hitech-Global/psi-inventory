@@ -14238,7 +14238,7 @@ async function createCustomsDutyPay(ciId){
       '<div class="form-group"><label>应付金额</label><input type="number" step="0.01" id="dut-amt"></div>'+
       '<div class="form-group"><label>币种</label><select id="dut-cur"></select></div>'+
       '<div class="form-group"><label>备注</label><input type="text" id="dut-rem"></div>'+
-      '<div class="form-group"><label>是否抵扣</label><select id="dut-ded" onchange="document.getElementById(\\'dut-ded-amt\\').disabled=this.value===\\'0\\'"><option value="0">否</option><option value="1">是</option></select></div>'+
+      '<div class="form-group"><label>是否抵扣</label><select id="dut-ded" onchange="document.getElementById(\'dut-ded-amt\').disabled=this.value===\'0\'"><option value="0">否</option><option value="1">是</option></select></div>'+
       '<div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="dut-ded-amt" value="0" disabled></div>'+
       '<div class="form-group"><label>抵扣来源类型</label><select id="dut-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="other">其他</option></select></div>'+
       '<div class="form-group form-group-full"><label>抵扣说明</label><input type="text" id="dut-ded-desc"></div>'+
@@ -14248,7 +14248,7 @@ async function createCustomsDutyPay(ciId){
       return openTag+currencyOptions+closeTag;
     });
     openModal(t("app.1021", "创建关税付款"),body,
-      t('modal.footer.createCustomsDutyPay', '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCustomsDutyPay(\\'{v1}\\')">创建</button>', {v1: ciId}));
+      t('modal.footer.createCustomsDutyPay', '<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveCustomsDutyPay(\'{v1}\')">创建</button>', {v1: ciId}));
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveCustomsDutyPay(ciId){
