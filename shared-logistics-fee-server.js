@@ -307,7 +307,7 @@ function sharedWacParts(batchId,targetCurrency){
     const batches=splitConvertedMinor(Number(conversion.amount_minor),allocations);
     const part=batches.find(p=>String(p.batch_id)===String(batchId));
     if(!part){errors.push({code:'SHARED_FREIGHT_BATCH_LINK_MISSING',message:'合并账单 '+fee.bill_no+' 缺少关联批次'});return;}
-    const lastPaidDate=(conversion.fx||[]).reduce((m,r)=>r.rate_date>m?r.rate_date:m,'');
+    const lastPaidDate=(conversion.payment_events||[]).reduce((m,event)=>String(event.paid_date||'')>m?String(event.paid_date||''):m,'');
     out.push({fee_id:fee.id,bill_no:fee.bill_no,amount_minor:part.amount_minor,basis:part.basis,basis_value:part.basis_value,last_paid_date:lastPaidDate,payment_events:conversion.payment_events||[]});
   });
   return {parts:out,errors};
