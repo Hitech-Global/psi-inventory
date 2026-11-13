@@ -51,6 +51,7 @@ const integrationPos = indexSrc.indexOf('assets/ci-wac-integration.js');
 assert.ok(notificationPos >= 0 && integrationPos > notificationPos,
   'CI WAC integration must load after WAC notification UI');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js'), 'CI logistics list module must remain loaded');
+assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261113-2'), 'blocked WAC import controls must use the latest cache-busted asset');
 
 assert.ok(serverSrc.includes('CI-WAC-STATUS-IN-CI-LOGISTICS-20261110'), 'CI logistics endpoint WAC status projection missing');
 assert.ok(serverSrc.includes('CI-WAC-SUMMARY-PROJECTION-20261110'), 'CI WAC summary helper missing');
