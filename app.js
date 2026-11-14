@@ -15468,7 +15468,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     const rate = Number(r.rmb_to_local_rate);
     const rateDate = String(r.fx_rate_date || '').slice(0,10);
     if (Number.isFinite(rate) && rate > 0 && currency) {
-      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
+      return '1 RMB = ' + Number(rate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ' + currency;
     }
     return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
   };
@@ -15642,7 +15642,7 @@ async function loadWacHistoryMatrix(refresh) {
       const rate = Number(r.rmb_to_local_rate);
       const rateDate = String(r.fx_rate_date || '').slice(0,10);
       if (Number.isFinite(rate) && rate > 0 && currency) {
-        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{maximumFractionDigits:8}) + ' ' + currency;
+        return '1 RMB = ' + Number(rate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ' + currency;
       }
       return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
     };
