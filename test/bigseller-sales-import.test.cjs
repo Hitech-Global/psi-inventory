@@ -574,3 +574,50 @@ test('platform aliases are detected and missing or unknown platform blocks blank
   assert.equal(blocked.records.length, 0, 'missing platform must not be silently classified as online');
   assert.equal(blocked.stats.excludedMarkerRows, 1);
 });
+
+
+test('BigSeller no-amount duplicate rows are excluded before package conflict grouping', () => {
+  const moneyHeaders = headers.concat(['商品成本', '单价', '产品总价']);
+  const paidRow = [
+    '2026-11-16 10:00', 'ORDER-MONEY-DUP', '', '已完成', 'Redragon Warehouse',
+    'M724', '1', 'BSTE64296778', 'Shopee', 'Redragon Indonesia OS',
+    '103171.45', '202300', '202300'
+  ];
+  const noAmountRow = [
+    '2026-11-16 10:00', 'ORDER-MONEY-DUP', '', '已完成', 'Redragon Warehouse',
+    'M724', '1', 'BSTE64295089', 'Shopee', 'Redragon Indonesia OS',
+    '--', '--', '--'
+  ];
+  const source = {
+    SheetNames: ['orders'],
+    Sheets: { orders: { __rows: [moneyHeaders, paidRow, noAmountRow] } }
+  };
+  const parsed = BigSeller.parseBigSellerWorkbook(source, 'orders.xlsx', fakeXlsx());
+
+  assert.ok(parsed);
+  assert.equal(parsed.stats.sourceRows, 2);
+  assert.equal(parsed.stats.excludedNoAmountRows, 1);
+  assert.equal(parsed.stats.includedRows, 1);
+  assert.equal(parsed.stats.conflictGroups, 0);
+  assert.equal(parsed.stats.excludedConflictRows, 0);
+  assert.equal(parsed.records.length, 1);
+  assert.match(parsed.records[0].remark, /BSTE64296778/);
+});
+
+test('BigSeller rows with at least one monetary value are retained', () => {
+  const moneyHeaders = headers.concat(['商品成本', '单价', '产品总价']);
+  const row = [
+    '2026-11-16 10:00', 'ORDER-HAS-AMOUNT', '', '已完成', 'Redragon Warehouse',
+    'M724', '1', 'PKG-AMOUNT', 'Shopee', 'Redragon Indonesia OS',
+    '--', '202300', '--'
+  ];
+  const source = {
+    SheetNames: ['orders'],
+    Sheets: { orders: { __rows: [moneyHeaders, row] } }
+  };
+  const parsed = BigSeller.parseBigSellerWorkbook(source, 'orders.xlsx', fakeXlsx());
+
+  assert.equal(parsed.stats.excludedNoAmountRows, 0);
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.stats.includedRows, 1);
+});
