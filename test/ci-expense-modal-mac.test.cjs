@@ -22,6 +22,20 @@ assert.match(asset, /ci\.cost\.currency_note/);
 assert.match(asset, /hasPermission\('ci_edit'\)/);
 assert.match(asset, /hasPermission\('payment_create'\)/);
 assert.match(asset, /saveCiCostInputs/);
+const rateInputsStart = asset.indexOf('var skuRows');
+const rateInputsEnd = asset.indexOf('ci.cost.summary', rateInputsStart);
+assert.ok(rateInputsStart >= 0 && rateInputsEnd > rateInputsStart, 'duty-rate input section must exist');
+assert.doesNotMatch(asset.slice(rateInputsStart, rateInputsEnd), /saveCiCostInputs/,
+  'save action should not be hidden after the long SKU table');
+const footerStart = asset.indexOf('var footer =');
+const footerEnd = asset.indexOf('ensureStyles();', footerStart);
+assert.ok(footerStart >= 0 && footerEnd > footerStart, 'CI cost modal footer must exist');
+const modalFooter = asset.slice(footerStart, footerEnd);
+assert.match(modalFooter, /canEdit && !summary\.cost_confirmed/,
+  'save action must respect CI edit permission and cost-confirmed lock');
+assert.ok(modalFooter.indexOf('saveCiCostInputs') >= 0 &&
+  modalFooter.indexOf('saveCiCostInputs') < modalFooter.indexOf('closeModal'),
+  'save action must be visible in the fixed modal footer before Close');
 assert.match(asset, /confirmCiCosts/);
 assert.match(asset, /allocateCosts/);
 assert.match(asset, /createCustomsDutyPay/);
