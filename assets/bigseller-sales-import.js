@@ -555,7 +555,7 @@
       var isBigSeller = win._salesImportSourceMode === 'bigseller' && !!win._salesImportSkippedStats;
       if (isBigSeller) {
         win._salesImportPreviewError = '';
-        setImportProgress(win, '正在校验 SKU 与品牌主数据…', 78);
+        setImportProgress(win, '正在校验 SKU / 品牌并匹配历史销售记录…', 78);
       }
       try {
         var result = await originalRequestSalesPreview.apply(this, arguments);
@@ -570,9 +570,9 @@
           renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
 
           if (previewError) {
-            setImportProgress(win, '后台校验失败：' + previewError, 100, 'error');
+            setImportProgress(win, '后台数据匹配/校验失败：' + previewError, 85, 'error');
           } else if (ready) {
-            setImportProgress(win, 'SKU / 品牌校验完成，可以开始导入。', 100, 'done');
+            setImportProgress(win, 'SKU / 品牌校验及历史销售匹配完成，可以开始导入。', 100, 'done');
           } else if (blocked) {
             setImportProgress(win, 'SKU / 品牌预检查失败：' + win._salesImportBlocking.length + ' 行异常，暂不能导入。', 100, 'blocked');
           } else if (invalidRows > 0) {
@@ -589,7 +589,7 @@
       } catch (error) {
         if (isBigSeller) {
           var message = String(error && error.message || '未知错误');
-          setImportProgress(win, '后台校验失败：' + message, 100, 'error');
+          setImportProgress(win, '后台数据匹配/校验失败：' + message, 85, 'error');
         }
         throw error;
       }

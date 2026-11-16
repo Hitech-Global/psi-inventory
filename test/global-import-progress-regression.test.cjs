@@ -15,7 +15,7 @@ test('BigSeller sales import exposes real file-read and parse-stage progress', (
   assert.match(bigSellerSales, /reader\.onprogress = function \(event\)/);
   assert.match(bigSellerSales, /正在读取 BigSeller 销售文件/);
   assert.match(bigSellerSales, /正在解析 Excel 与识别订单/);
-  assert.match(bigSellerSales, /正在校验 SKU 与品牌主数据/);
+  assert.match(bigSellerSales, /正在校验 SKU \/ 品牌并匹配历史销售记录/);
   assert.match(bigSellerSales, /role="progressbar"/);
 });
 
