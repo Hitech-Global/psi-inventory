@@ -61,8 +61,10 @@ function resolveCiCustomsDutyCost({ ciCurrency, dutyCurrency, dutyAmount, paymen
   if (!payments.length) fail('关税付款缺少有效的实际付款记录');
 
   const paidOriginalTotal = money(payments.reduce((sum, log) => sum + Number(log.amount || 0), 0));
-  if (Math.abs(paidOriginalTotal - sourceAmount) > 0.01 ||
-      Math.abs(money(facts.effectivePaid) - sourceAmount) > 0.01) {
+  const effectivePaid = money(facts.effectivePaid);
+  if (!Number.isFinite(paidOriginalTotal) || !Number.isFinite(effectivePaid) ||
+      Math.abs(paidOriginalTotal - sourceAmount) > 0.01 ||
+      Math.abs(effectivePaid - sourceAmount) > 0.01) {
     fail('关税实际付款金额与CI关税金额不一致，不能确认WAC成本');
   }
 
