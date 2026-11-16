@@ -257,6 +257,14 @@ function createTestSchema() {
       CHECK (is_legacy IN (0,1))
     );
 
+    CREATE TABLE IF NOT EXISTS payment_transactions (
+      id TEXT PRIMARY KEY,
+      payment_request_id TEXT NOT NULL,
+      paid_amount_minor INTEGER NOT NULL DEFAULT 0,
+      trans_status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS wac_history (
       id TEXT PRIMARY KEY,
       version_no INTEGER NOT NULL,
@@ -429,6 +437,30 @@ function seedPaymentLog(id, prId, amount, localAmount, localRate, paidDate, loca
     VALUES (?, ?, 'payment', ?, ?, ?, ?, ?, ?, ?, '', 0)`,
     [id, prId, amount, 'applied', paidDate || '2026-02-15', localCurrency || 'IDR', localRate || 15000,
      paidDate || '2026-02-15', localAmount]);
+}
+
+function seedCustomsDutyPayment(id, requestNo, ciId, amount, currency, opts = {}) {
+  const paidDate = opts.paidDate || '2026-11-14';
+  const localCurrency = opts.localCurrency || currency;
+  const localRate = opts.localRate !== undefined ? opts.localRate : 1;
+  const localAmount = opts.localAmount !== undefined ? opts.localAmount : amount * localRate;
+  seedPaymentRequest(id, requestNo, currency, amount, ciId, 'customs_duty', 'duty');
+  seedCiCostItem('cci_' + id, ciId, id, 'customs_duty', 'duty', amount, currency, '');
+  run('UPDATE commercial_invoices SET import_duty_total = ?, has_customs_duty = 1 WHERE id = ?', [amount, ciId]);
+  run(`INSERT INTO payment_settlement_logs (
+      id, payment_request_id, event_type, amount, status, paid_date, original_currency,
+      local_currency, local_rate, local_rate_date, local_rate_type, local_rate_direction, local_amount,
+      rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount, is_legacy
+    ) VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+    [
+      'settle_' + id, id, amount, paidDate, currency,
+      localCurrency, localRate, paidDate, opts.localRateType || (currency === localCurrency ? 'identity' : 'realtime'),
+      opts.localRateDirection || (currency === localCurrency ? 'identity' : 'direct'), localAmount,
+      opts.rmbRate || 0, opts.rmbRateDate || '', opts.rmbRateType || '', opts.rmbRateDirection || '',
+      opts.rmbAmount || 0
+    ]);
+  run('INSERT INTO payment_transactions (id, payment_request_id, paid_amount_minor, trans_status) VALUES (?, ?, ?, ?)',
+    ['txn_' + id, id, Math.round(amount * 100), 'reconciled']);
 }
 
 // Raw payment log seeder — allows null/zero/empty for FX fields (for FREIGHT_FX_RATE_MISSING tests)
@@ -1125,6 +1157,109 @@ describe('computeWacCostFacts - duty', () => {
     const result = computeWacCostFacts('lb_duty');
     const codes = result.blockers.map(b => b.code);
     assert.ok(codes.includes('CUSTOMS_RATE_MISSING'), `Expected CUSTOMS_RATE_MISSING, got: ${codes}`);
+  });
+});
+
+describe('computeWacCostFacts - CI-level duty source', () => {
+  function resetDutyFixture() {
+    const db = require('./db').getDB();
+    for (const table of [
+      'logistics_batches', 'packing_lists', 'packing_list_items',
+      'commercial_invoices', 'commercial_invoice_items', 'ci_cost_items',
+      'payment_requests', 'payment_settlement_logs', 'payment_transactions',
+      'shared_logistics_fees', 'shared_logistics_fee_batches',
+      'exchange_rates', 'inventory', 'wac_history'
+    ]) db.exec('DELETE FROM ' + table);
+    run('INSERT OR REPLACE INTO countries (id, name, code, default_currency, sort_order) VALUES (?, ?, ?, ?, ?)',
+      ['ctry_Indonesia', 'Indonesia', 'ID', 'IDR', 0]);
+    run('INSERT OR REPLACE INTO warehouses (id, name, country_id, country_name) VALUES (?, ?, ?, ?)',
+      ['wh_id_jkt', 'WH-JKT', 'ctry_Indonesia', 'Indonesia']);
+  }
+
+  test('single-batch CI Import Duty is read from the paid CI cost item and included in WAC', () => {
+    resetDutyFixture();
+    seedCI('ci_ci_duty', 'CI-CI-DUTY', 'IDR', 10000, null, { hasCustomsDuty: true });
+    seedCIItem('cii_ci_duty_1', 'ci_ci_duty', 'SKU-CID1', 60, 100, 0, 0.135);
+    seedCIItem('cii_ci_duty_2', 'ci_ci_duty', 'SKU-CID2', 40, 100, 0, 0.135);
+    seedBatch('lb_ci_duty', 'BATCH-CI-DUTY', 'ci_ci_duty', {
+      arrivalDate: '2026-11-16', totalFreight: 0, customsDuty: 0, freightCurrency: 'IDR'
+    });
+    seedPL('pl_ci_duty', 'PL-CI-DUTY', 'ci_ci_duty', 'lb_ci_duty', { status: 'confirmed' });
+    seedPLItem('pli_ci_duty_1', 'pl_ci_duty', 'SKU-CID1', 60, 0.6, 60);
+    seedPLItem('pli_ci_duty_2', 'pl_ci_duty', 'SKU-CID2', 40, 0.4, 40);
+    seedCustomsDutyPayment('pr_ci_duty', 'PR-CI-DUTY', 'ci_ci_duty', 39758219, 'IDR', {
+      paidDate: '2026-11-14', localCurrency: 'IDR', localRate: 1,
+      localRateType: 'identity', localRateDirection: 'identity', localAmount: 39758219
+    });
+    seedInventory('SKU-CID1', 'Indonesia', 'WH-JKT', 0, 0);
+    seedInventory('SKU-CID2', 'Indonesia', 'WH-JKT', 0, 0);
+
+    const result = computeWacCostFacts('lb_ci_duty');
+    assert.deepEqual(result.blockers, []);
+    assert.equal(result.meta.duty_business_amount, 39758219);
+    assert.equal(result.meta.duty_currency, 'IDR');
+    assert.equal(result.meta.duty_local_amount, 39758219);
+    assert.equal(result.meta.duty_payment_date, '2026-11-14');
+    assert.equal(result.meta.duty_conversion_source, 'same_currency');
+    assert.equal(result.meta.duty_allocation_basis, 'ci_goods_value');
+    assert.equal(result.meta.duty_batch_goods_ratio, 1);
+    const allocated = result.items.reduce((sum, item) => sum + item.customs_cost_local, 0);
+    assert.ok(Math.abs(allocated - 39758219) < 0.01, 'all CI duty must be conserved across this single batch');
+  });
+
+  test('multi-batch CI Import Duty is allocated by each batch CI goods value, not duplicated', () => {
+    resetDutyFixture();
+    seedCI('ci_ci_duty_split', 'CI-CI-DUTY-SPLIT', 'IDR', 10000, null, { hasCustomsDuty: true });
+    seedCIItem('cii_ci_duty_split', 'ci_ci_duty_split', 'SKU-CIDS', 100, 100, 0, 0.10);
+    seedBatch('lb_ci_duty_a', 'BATCH-CI-DUTY-A', 'ci_ci_duty_split', {
+      arrivalDate: '2026-11-16', totalFreight: 0, customsDuty: 0, freightCurrency: 'IDR'
+    });
+    seedBatch('lb_ci_duty_b', 'BATCH-CI-DUTY-B', 'ci_ci_duty_split', {
+      arrivalDate: '2026-11-17', totalFreight: 0, customsDuty: 0, freightCurrency: 'IDR'
+    });
+    seedPL('pl_ci_duty_a', 'PL-CI-DUTY-A', 'ci_ci_duty_split', 'lb_ci_duty_a', { status: 'confirmed' });
+    seedPLItem('pli_ci_duty_a', 'pl_ci_duty_a', 'SKU-CIDS', 60, 0.6, 60);
+    seedPL('pl_ci_duty_b', 'PL-CI-DUTY-B', 'ci_ci_duty_split', 'lb_ci_duty_b', { status: 'confirmed' });
+    seedPLItem('pli_ci_duty_b', 'pl_ci_duty_b', 'SKU-CIDS', 40, 0.4, 40);
+    seedCustomsDutyPayment('pr_ci_duty_split', 'PR-CI-DUTY-SPLIT', 'ci_ci_duty_split', 10000, 'IDR', {
+      paidDate: '2026-11-14', localCurrency: 'IDR', localRate: 1,
+      localRateType: 'identity', localRateDirection: 'identity', localAmount: 10000
+    });
+    seedInventory('SKU-CIDS', 'Indonesia', 'WH-JKT', 0, 0);
+
+    const batchA = computeWacCostFacts('lb_ci_duty_a');
+    const batchB = computeWacCostFacts('lb_ci_duty_b');
+    assert.deepEqual(batchA.blockers, []);
+    assert.deepEqual(batchB.blockers, []);
+    assert.equal(batchA.meta.duty_business_amount, 6000);
+    assert.equal(batchB.meta.duty_business_amount, 4000);
+    assert.equal(batchA.meta.duty_batch_goods_ratio, 0.6);
+    assert.equal(batchB.meta.duty_batch_goods_ratio, 0.4);
+    assert.equal(batchA.items[0].customs_cost_local, 6000);
+    assert.equal(batchB.items[0].customs_cost_local, 4000);
+    assert.equal(
+      batchA.items[0].customs_cost_local + batchB.items[0].customs_cost_local,
+      10000,
+      'sum of all batch allocations must equal the CI Import Duty total'
+    );
+  });
+
+  test('CI duty without a settled payment fact blocks WAC instead of using a live rate', () => {
+    resetDutyFixture();
+    seedCI('ci_ci_duty_unpaid', 'CI-CI-DUTY-UNPAID', 'IDR', 10000, null, { hasCustomsDuty: true });
+    seedCIItem('cii_ci_duty_unpaid', 'ci_ci_duty_unpaid', 'SKU-CIDU', 100, 100, 0, 0.10);
+    seedBatch('lb_ci_duty_unpaid', 'BATCH-CI-DUTY-UNPAID', 'ci_ci_duty_unpaid', {
+      arrivalDate: '2026-11-16', totalFreight: 0, customsDuty: 0, freightCurrency: 'IDR'
+    });
+    seedPL('pl_ci_duty_unpaid', 'PL-CI-DUTY-UNPAID', 'ci_ci_duty_unpaid', 'lb_ci_duty_unpaid', { status: 'confirmed' });
+    seedPLItem('pli_ci_duty_unpaid', 'pl_ci_duty_unpaid', 'SKU-CIDU', 100, 1, 100);
+    seedPaymentRequest('pr_ci_duty_unpaid', 'PR-CI-DUTY-UNPAID', 'IDR', 10000, 'ci_ci_duty_unpaid', 'customs_duty', 'duty');
+    seedCiCostItem('cci_ci_duty_unpaid', 'ci_ci_duty_unpaid', 'pr_ci_duty_unpaid', 'customs_duty', 'duty', 10000, 'IDR', '');
+    run('UPDATE commercial_invoices SET import_duty_total = ?, has_customs_duty = 1 WHERE id = ?', [10000, 'ci_ci_duty_unpaid']);
+    seedInventory('SKU-CIDU', 'Indonesia', 'WH-JKT', 0, 0);
+
+    const result = computeWacCostFacts('lb_ci_duty_unpaid');
+    assert.ok(result.blockers.some(blocker => blocker.code === 'DUTY_PAYMENT_FACT_INVALID'));
   });
 });
 

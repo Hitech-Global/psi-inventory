@@ -16311,7 +16311,7 @@ async function wacConfirm(batchId){
       costFactsHtml+='<div style="background:#f6ffed;border:1px solid #d9f7be;border-radius:6px;padding:10px 14px;margin-bottom:8px">'+
         '<div style="font-weight:bold;font-size:13px;margin-bottom:6px">📋 '+t('wac.duty_section','关税')+'</div>'+
         '<div style="display:flex;gap:20px;font-size:12px;flex-wrap:wrap">'+
-          '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.duty_business_amount,m.freight_currency)+'</b></span>'+
+          '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.duty_business_amount,m.duty_currency||m.freight_currency)+'</b></span>'+
           '<span>'+t('wac.vat_excluded','增值税已排除')+': ✅</span>'+
           '<span>'+t('wac.local_amount','本币金额')+': <b>'+fmtMoney(m.duty_local_amount,m.local_currency)+'</b></span>'+
         '</div></div>';

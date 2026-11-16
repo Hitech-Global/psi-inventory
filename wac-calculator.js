@@ -16,6 +16,69 @@ let _wacQueryCount = 0;
 function _q(sql, params) { _wacQueryCount++; return query(sql, params); }
 function _q1(sql, params) { _wacQueryCount++; return queryOne(sql, params); }
 
+const { resolveCiCustomsDutyCost, normalizeCurrency } = require('./ci-customs-duty-fx');
+
+function dutyMoney(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return NaN;
+  return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
+// Mirror the payment ledger's SSOT: reconciled transactions + legacy applied
+// payment logs. Raw payment logs remain the FX evidence passed to the resolver.
+function loadWacDutyPaymentFacts(payment) {
+  const logs = _q(
+    'SELECT * FROM payment_settlement_logs WHERE payment_request_id = ? ORDER BY created_at, id',
+    [payment.id]
+  ).rows;
+  const paymentLogs = logs.filter(log => log.event_type === 'payment');
+  const activePayments = paymentLogs.filter(log =>
+    log.status === 'applied' && !String(log.reversed_at || '').trim()
+  );
+  const deductionLogs = logs.filter(log => log.event_type === 'deduction');
+  const activeDeductions = deductionLogs.filter(log =>
+    log.status === 'applied' && !String(log.reversed_at || '').trim()
+  );
+  const roundingLogs = logs.filter(log => log.event_type === 'rounding');
+  const activeRoundings = roundingLogs.filter(log =>
+    log.status === 'applied' && !String(log.reversed_at || '').trim()
+  );
+  const transactions = _q(
+    "SELECT paid_amount_minor FROM payment_transactions WHERE payment_request_id = ? AND trans_status = 'reconciled'",
+    [payment.id]
+  ).rows;
+  const transactionPaid = transactions.reduce((sum, row) =>
+    sum + (Number(row.paid_amount_minor) || 0), 0) / 100;
+  const legacyPaid = activePayments.filter(log => Number(log.is_legacy) === 1)
+    .reduce((sum, log) => sum + (Number(log.amount) || 0), 0);
+  const effectivePaid = dutyMoney(transactionPaid + legacyPaid);
+  const effectiveDeduction = dutyMoney(deductionLogs.length
+    ? activeDeductions.reduce((sum, log) => sum + (Number(log.amount) || 0), 0)
+    : Number(payment.deduction_amount || 0));
+  const effectiveRounding = dutyMoney(roundingLogs.length
+    ? activeRoundings.reduce((sum, log) => sum + (Number(log.amount) || 0), 0)
+    : Number(payment.rounding_amount || 0));
+  const outstanding = dutyMoney(
+    Number(payment.payable_amount || 0) - effectivePaid - effectiveDeduction - effectiveRounding
+  );
+  const latestPaymentDate = activePayments.reduce((latest, log) => {
+    const paidDate = String(log.paid_date || '').slice(0, 10);
+    return paidDate > latest ? paidDate : latest;
+  }, '');
+  return {
+    logs,
+    activePayments,
+    effectivePaid,
+    effectiveDeduction,
+    effectiveRounding,
+    outstanding,
+    latestPaymentDate,
+    hasReversal: logs.some(log =>
+      log.status === 'reversed' || log.event_type === 'rounding_reversal'
+    )
+  };
+}
+
 const WAC_FX_POLICIES = {
   'inspection_fee/inspection': 'PAYMENT_DATE_FX',
 };
@@ -587,23 +650,185 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 10. Duty ──
-  const dutyBusinessAmount = Number(batch.customs_duty) || 0;
-  const dutyCurrency = freightCurrency;
+  let dutyAllocations = null;
+  // New source of truth: CI Import Duty + its paid cost item/payment FX snapshot.
+  // Legacy batch.customs_duty remains supported only when no CI-level duty exists.
+  const legacyDutyBusinessAmount = Number(batch.customs_duty) || 0;
+  const ciDutyBusinessTotal = Number(ci.import_duty_total) || 0;
+  let dutyBusinessAmount = legacyDutyBusinessAmount;
+  let dutyCurrency = freightCurrency;
   let dutyLocalAmount = 0;
+  let dutyPaymentDate = '';
+  let dutyFxBreakdown = [];
+  let dutyConversionSource = legacyDutyBusinessAmount > 0 ? 'legacy_batch' : 'none';
+  let dutyAllocationBasis = legacyDutyBusinessAmount > 0 ? 'batch_customs_duty' : 'none';
+  let dutyBatchGoodsValue = 0;
+  let dutyBatchGoodsRatio = 0;
 
-  if (dutyBusinessAmount > 0) {
-    if (dutyCurrency !== localCurrency) {
-      // Batch-level customs duty is a separate cost component; never reuse the CI goods FX.
-      const dutyFxRate = resolveExactFxRate(dutyCurrency, localCurrency, arrivalDate, fxCache);
-      if (dutyFxRate) {
-        dutyLocalAmount = dutyBusinessAmount * dutyFxRate.rate;
+  if (ciDutyBusinessTotal > 0) {
+    if (legacyDutyBusinessAmount > 0) {
+      blockers.push({
+        code: 'DUTY_SOURCE_CONFLICT',
+        message: 'CI关税与物流批次关税同时存在，可能重复计入；请先核对并保留一个关税来源',
+        detail: { ci_duty: ciDutyBusinessTotal, batch_duty: legacyDutyBusinessAmount }
+      });
+    }
+
+    const dutyItems = _q(
+      `SELECT id, payment_request_id, cost_category, cost_subcategory, payable_amount, currency
+       FROM ci_cost_items
+       WHERE ci_id = ? AND include_in_landing_cost = 1
+         AND cost_category = 'customs_duty' AND cost_subcategory = 'duty'
+         AND COALESCE(payable_amount, 0) > 0
+       ORDER BY created_at, id`,
+      [ci.id]
+    ).rows;
+
+    let dutyConversion = null;
+    if (dutyItems.length !== 1) {
+      blockers.push({
+        code: 'DUTY_COST_ITEM_MISSING_OR_AMBIGUOUS',
+        message: 'CI有关税金额，但计入落地成本的 Import Duty 费用明细必须且只能有一笔',
+        detail: { ci_duty: ciDutyBusinessTotal, matching_cost_items: dutyItems.length }
+      });
+    } else {
+      const dutyItem = dutyItems[0];
+      dutyCurrency = normalizeCurrency(dutyItem.currency || '');
+      if (Math.abs(dutyMoney(dutyItem.payable_amount) - dutyMoney(ciDutyBusinessTotal)) > WAC_MONETARY_TOLERANCE) {
+        blockers.push({
+          code: 'DUTY_COST_AMOUNT_MISMATCH',
+          message: 'CI关税汇总金额与关税成本明细金额不一致',
+          detail: { ci_duty: ciDutyBusinessTotal, cost_item_amount: Number(dutyItem.payable_amount) || 0 }
+        });
+      } else if (!dutyItem.payment_request_id) {
+        blockers.push({
+          code: 'DUTY_PAYMENT_LINK_MISSING',
+          message: 'CI关税成本明细缺少付款申请关联，不能用当前汇率代替实际付款汇率'
+        });
       } else {
-        if (!blockers.some(b => b.code === 'DUTY_FX_MISSING')) {
-          blockers.push({ code: 'DUTY_FX_MISSING', message: `关税${dutyBusinessAmount}缺少 ${arrivalDate} ${dutyCurrency}→${localCurrency} 的汇率` });
+        const dutyPayment = _q1('SELECT * FROM payment_requests WHERE id = ?', [dutyItem.payment_request_id]);
+        if (!dutyPayment) {
+          blockers.push({ code: 'DUTY_PAYMENT_NOT_FOUND', message: '找不到CI关税关联的付款申请' });
+        } else {
+          const paymentCiId = String(dutyPayment.related_ci_id ||
+            (dutyPayment.source_type === 'ci' ? dutyPayment.source_id : '') || '').trim();
+          if (paymentCiId !== String(ci.id)) {
+            blockers.push({
+              code: 'DUTY_PAYMENT_CI_MISMATCH',
+              message: '关税付款申请关联的CI与当前物流批次CI不一致'
+            });
+          } else if (normalizeCurrency(dutyItem.currency || dutyPayment.currency) !== normalizeCurrency(dutyPayment.currency)) {
+            blockers.push({
+              code: 'DUTY_PAYMENT_CURRENCY_MISMATCH',
+              message: 'CI关税成本明细币种与付款申请币种不一致'
+            });
+          } else {
+            const dutyPaymentFacts = loadWacDutyPaymentFacts(dutyPayment);
+            dutyPaymentDate = dutyPaymentFacts.latestPaymentDate;
+            try {
+              dutyConversion = resolveCiCustomsDutyCost({
+                ciCurrency,
+                targetCurrency: localCurrency,
+                dutyCurrency: dutyItem.currency || dutyPayment.currency,
+                dutyAmount: ciDutyBusinessTotal,
+                payment: dutyPayment,
+                paymentFacts: dutyPaymentFacts
+              });
+              dutyCurrency = dutyConversion.original_currency;
+              dutyFxBreakdown = dutyConversion.fx || [];
+              dutyConversionSource = dutyConversion.conversion_source;
+            } catch (error) {
+              blockers.push({
+                code: 'DUTY_PAYMENT_FACT_INVALID',
+                message: error.message || '关税付款及汇率证据无效，无法计入WAC',
+                detail: { payment_request_id: dutyPayment.id, paid_date: dutyPaymentFacts.latestPaymentDate || null }
+              });
+            }
+          }
         }
       }
+    }
+
+    // CI-level duty is split across partial/multiple logistics batches by the
+    // current batch's CI goods value. Unshipped CI value stays for later batches.
+    const currentBatchSkuCodes = [...batchSkuMap.keys()];
+    const batchCustomsWeightMap = new Map();
+    const missingCustomsRates = [];
+    for (const sku of currentBatchSkuCodes) {
+      const ciEntry = ciSkuMap.get(sku);
+      const batchEntry = batchSkuMap.get(sku);
+      if (!ciEntry) {
+        blockers.push({
+          code: 'DUTY_BATCH_SKU_NOT_IN_CI',
+          message: `物流批次SKU ${sku} 不存在于关联CI明细，无法分摊关税`,
+          detail: { sku_code: sku }
+        });
+        continue;
+      }
+      const batchGoodsAmount = (Number(batchEntry.batch_qty) || 0) * (Number(ciEntry.weighted_purchase_unit_price) || 0);
+      dutyBatchGoodsValue += batchGoodsAmount;
+      if (ciEntry.customs_rate === null || ciEntry.customs_rate === undefined ||
+          !Number.isFinite(Number(ciEntry.customs_rate)) || Number(ciEntry.customs_rate) < 0) {
+        missingCustomsRates.push(sku);
+      }
+      batchCustomsWeightMap.set(
+        sku,
+        ciEntry.customs_rate !== null && ciEntry.customs_rate !== undefined && Number(ciEntry.customs_rate) > 0
+          ? batchGoodsAmount * Number(ciEntry.customs_rate)
+          : 0
+      );
+    }
+
+    if (missingCustomsRates.length > 0) {
+      blockers.push({
+        code: 'CUSTOMS_RATE_MISSING',
+        message: `以下SKU缺少本票实际关税税率: ${missingCustomsRates.join(', ')}`,
+        detail: { sku_codes: missingCustomsRates }
+      });
+    }
+    if (!(ci_goods_amount_total > 0)) {
+      blockers.push({ code: 'DUTY_CI_GOODS_VALUE_ZERO', message: 'CI商品货值合计为0，无法按货值分摊关税' });
+    } else if (!(dutyBatchGoodsValue > 0)) {
+      blockers.push({ code: 'DUTY_BATCH_GOODS_VALUE_ZERO', message: '当前物流批次商品货值为0，无法分摊CI关税' });
+    } else if (dutyBatchGoodsValue - ci_goods_amount_total > WAC_MONETARY_TOLERANCE) {
+      blockers.push({
+        code: 'DUTY_BATCH_GOODS_VALUE_EXCEEDS_CI',
+        message: '当前物流批次商品货值超过CI总货值，请检查PL数量是否重复',
+        detail: { batch_goods_value: dutyBatchGoodsValue, ci_goods_value: ci_goods_amount_total }
+      });
     } else {
-      dutyLocalAmount = dutyBusinessAmount;
+      dutyBatchGoodsRatio = Math.min(1, dutyBatchGoodsValue / ci_goods_amount_total);
+      dutyBusinessAmount = dutyMoney(ciDutyBusinessTotal * dutyBatchGoodsRatio);
+      dutyLocalAmount = dutyConversion
+        ? dutyMoney(Number(dutyConversion.amount || 0) * dutyBatchGoodsRatio)
+        : 0;
+      dutyAllocationBasis = 'ci_goods_value';
+      if (dutyConversion && dutyLocalAmount > 0 && missingCustomsRates.length === 0) {
+        dutyAllocations = allocateByWeight(currentBatchSkuCodes, batchCustomsWeightMap, dutyLocalAmount);
+        if (!dutyAllocations) {
+          blockers.push({
+            code: 'CUSTOMS_WEIGHT_ZERO',
+            message: '当前物流批次SKU的实际关税税率权重合计为0，无法分摊关税'
+          });
+        }
+      }
+    }
+  } else if (legacyDutyBusinessAmount > 0) {
+    // Backward compatibility for old batches whose duty is recorded directly
+    // on logistics_batches instead of CI cost items.
+    dutyCurrency = freightCurrency;
+    if (dutyCurrency !== localCurrency) {
+      const dutyFxRate = resolveExactFxRate(dutyCurrency, localCurrency, arrivalDate, fxCache);
+      if (dutyFxRate) {
+        dutyLocalAmount = legacyDutyBusinessAmount * dutyFxRate.rate;
+      } else {
+        blockers.push({
+          code: 'DUTY_FX_MISSING',
+          message: `关税${legacyDutyBusinessAmount}缺少 ${arrivalDate} ${dutyCurrency}→${localCurrency} 的汇率`
+        });
+      }
+    } else {
+      dutyLocalAmount = legacyDutyBusinessAmount;
     }
 
     const skuCodes = [...ciSkuMap.keys()];
@@ -612,24 +837,29 @@ function computeWacCostFacts(logisticsBatchId) {
       return ciEntry.customs_rate === null || ciEntry.customs_rate === undefined;
     });
     if (missingCustomsRates.length > 0) {
-      blockers.push({ code: 'CUSTOMS_RATE_MISSING', message: `以下SKU缺少实际关税税率: ${missingCustomsRates.join(', ')}` });
+      blockers.push({
+        code: 'CUSTOMS_RATE_MISSING',
+        message: `以下SKU缺少实际关税税率: ${missingCustomsRates.join(', ')}`
+      });
     }
-  }
-
-  let dutyAllocations = null;
-  if (dutyLocalAmount > 0) {
-    const skuCodes = [...ciSkuMap.keys()];
-    const customsWeightMap = new Map();
-    for (const sku of skuCodes) {
-      const ciEntry = ciSkuMap.get(sku);
-      const weight = (ciEntry.customs_rate !== null && ciEntry.customs_rate > 0)
-        ? ciEntry.goods_amount * ciEntry.customs_rate : 0;
-      customsWeightMap.set(sku, weight);
+    if (dutyLocalAmount > 0 && missingCustomsRates.length === 0) {
+      const customsWeightMap = new Map();
+      for (const sku of skuCodes) {
+        const ciEntry = ciSkuMap.get(sku);
+        const weight = (ciEntry.customs_rate !== null && ciEntry.customs_rate > 0)
+          ? ciEntry.goods_amount * ciEntry.customs_rate : 0;
+        customsWeightMap.set(sku, weight);
+      }
+      dutyAllocations = allocateByWeight(skuCodes, customsWeightMap, dutyLocalAmount);
+      if (!dutyAllocations) {
+        blockers.push({ code: 'CUSTOMS_WEIGHT_ZERO', message: '全部SKU的关税权重合计为0，无法分摊关税' });
+      }
     }
-    dutyAllocations = allocateByWeight(skuCodes, customsWeightMap, dutyLocalAmount);
-    if (!dutyAllocations) {
-      blockers.push({ code: 'CUSTOMS_WEIGHT_ZERO', message: '全部SKU的关税权重合计为0，无法分摊关税' });
-    }
+  } else if (Number(ci.has_customs_duty) === 1) {
+    blockers.push({
+      code: 'DUTY_COST_MISSING',
+      message: 'CI已标记有关税，但尚未录入有效的Import Duty金额，不能确认WAC'
+    });
   }
 
   // ── 11. Inspection + Other costs (from ci_cost_items) ──
@@ -992,7 +1222,14 @@ function computeWacCostFacts(logisticsBatchId) {
     freight_payment_breakdown: freightPaymentBreakdown,
     shared_freight_breakdown: sharedFreightBreakdown,
     duty_business_amount: dutyBusinessAmount,
+    duty_currency: dutyCurrency,
     duty_local_amount: Math.round(dutyLocalAmount * 10000) / 10000,
+    duty_payment_date: dutyPaymentDate,
+    duty_fx_breakdown: dutyFxBreakdown,
+    duty_conversion_source: dutyConversionSource,
+    duty_allocation_basis: dutyAllocationBasis,
+    duty_batch_goods_value: Math.round(dutyBatchGoodsValue * 10000) / 10000,
+    duty_batch_goods_ratio: Math.round(dutyBatchGoodsRatio * 1000000) / 1000000,
     inspection_local_total: Math.round(inspectionLocalTotal * 10000) / 10000,
     other_local_total: Math.round(otherLocalTotal * 10000) / 10000,
     ci_shipped_qty_total: ci_shipped_qty_total,

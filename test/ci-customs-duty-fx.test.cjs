@@ -143,6 +143,45 @@ test('uses the locked local-currency snapshot when CI goods currency matches the
   assert.equal(result.fx[0].to_currency, 'IDR');
 });
 
+test('WAC can request the destination warehouse currency instead of the CI goods currency', () => {
+  const input = makeInput({
+    ciCurrency: 'RMB',
+    targetCurrency: 'IDR',
+    dutyCurrency: 'USD',
+    dutyAmount: 100
+  });
+  input.payment = {
+    ...input.payment,
+    currency: 'USD',
+    payable_amount: 100
+  };
+  input.paymentFacts = {
+    outstanding: 0,
+    effectivePaid: 100,
+    effectiveDeduction: 0,
+    effectiveRounding: 0,
+    hasReversal: false,
+    activePayments: [{
+      amount: 100,
+      original_currency: 'USD',
+      paid_date: '2026-11-14',
+      local_currency: 'IDR',
+      local_rate: 16000,
+      local_rate_date: '2026-11-14',
+      local_rate_type: 'realtime',
+      local_rate_direction: 'direct',
+      local_amount: 1600000
+    }]
+  };
+
+  const result = resolveCiCustomsDutyCost(input);
+  assert.equal(result.amount, 1600000);
+  assert.equal(result.currency, 'IDR');
+  assert.equal(result.conversion_source, 'locked_payment_settlement_snapshot');
+  assert.equal(result.fx[0].to_currency, 'IDR');
+  assert.equal(result.fx[0].rate_date, '2026-11-14');
+});
+
 test('does not fall back to a live rate when the CI currency has no locked snapshot', () => {
   const input = makeInput({ ciCurrency: 'USD' });
   assert.throws(() => resolveCiCustomsDutyCost(input), /没有锁定 USD 汇率快照/);
