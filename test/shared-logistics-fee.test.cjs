@@ -76,7 +76,8 @@ test('CI freight UI: amount permission and historical CI presentation remain pro
  a(app.includes('host.innerHTML=renderCISharedFeeAction(ciId,me.permissions)'),'re-check active session permissions without bypass');
  a(app.includes("fmtMoney(x.convertedMinor/100,'RMB')"),'converted batch amount always RMB');
  a(app.includes("fmtMoney(Number(conv.amount_minor)/100,'RMB')"),'converted detail amount always RMB');
- a(list.includes('if(!row||!row.has_shared)return;'),'legacy CIs retain original freight display');
+ a(list.includes('if(!row||!row.has_batch)return;'),'all CI batches render freight with original-currency fallback');
+ a(list.includes('row.display_totals||{}'),'CI list reads settled RMB and unpaid original-currency totals');
  a(list.includes("String(url || '').indexOf('/shared-logistics-fees') !== -1"),'shared POST invalidates CI freight cache');
  a(api.includes("requireApiPermission('payment_create'),requireCIAmountView"),'POST must enforce amount permission server-side');
 });
