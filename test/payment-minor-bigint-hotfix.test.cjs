@@ -24,5 +24,6 @@ assert.ok(patched.includes('TYPE BIGINT'));
 assert.equal(patchDbSource(patched), patched, 'patch must be idempotent');
 assert.throws(() => patchDbSource('const migrations = [];'), /marker missing/);
 assert.throws(() => patchDbSource(fixture + '\n' + fixture), /marker duplicated/);
+new Function(patched); // the injected migration must leave db.js syntactically valid
 
 console.log('PAY-MINOR-BIGINT-HOTFIX tests passed');
