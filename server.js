@@ -19114,6 +19114,8 @@ app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payme
 
 // ==================== CI 费用归集 ====================
 
+const { resolveCiCustomsDutyCost, normalizeCurrency: normalizeCiCostCurrency } = require('./ci-customs-duty-fx');
+
 const TRANSPORT_COST_SUBCATEGORIES = new Set([
   'freight', 'port', 'port_charges', 'customs_agent', 'customs_clearance',
   'delivery', 'warehouse', 'other_local'
@@ -19243,18 +19245,69 @@ async function validateCiCostInputs(ci) {
   }
   sharedFees.forEach(f=>f.allocations.forEach(a=>batchSkuTransportBasis(ci.id,a.batch_id,facts.skuFacts,a.basis_value)));
 
-  const dutyTotal = costMoney(ci.import_duty_total || 0);
-  if (!Number.isFinite(dutyTotal) || dutyTotal < 0) throw new CostAllocationError(400, 'CI Import Duty总金额必须为不小于0的数字');
-  if (dutyTotal > 0) {
+  const dutyOriginalTotal = costMoney(ci.import_duty_total || 0);
+  if (!Number.isFinite(dutyOriginalTotal) || dutyOriginalTotal < 0) throw new CostAllocationError(400, 'CI Import Duty总金额必须为不小于0的数字');
+
+  // CI goods are costed in the CI currency. Convert a foreign-currency duty
+  // only from immutable payment-date snapshots before creating any SKU allocations.
+  let dutyCost = {
+    amount: 0,
+    currency: normalizeCiCostCurrency(ci.currency || 'RMB'),
+    original_amount: 0,
+    original_currency: '',
+    conversion_source: 'no_customs_duty',
+    payment_request_id: '',
+    fx: []
+  };
+  if (dutyOriginalTotal > 0) {
+    const dutyItems = costItems.filter(item =>
+      item.cost_category === 'customs_duty' &&
+      item.cost_subcategory === 'duty' &&
+      Number(item.payable_amount) > 0
+    );
+    if (dutyItems.length !== 1) {
+      throw new CostAllocationError(409, 'CI关税费用必须且只能关联一笔有效的Import Duty付款申请，才能读取付款日汇率');
+    }
+    const dutyItem = dutyItems[0];
+    if (Math.abs(costMoney(dutyItem.payable_amount) - dutyOriginalTotal) > 0.01) {
+      throw new CostAllocationError(409, 'CI关税汇总金额与关税费用明细不一致，请先核对原始单据');
+    }
+    if (!dutyItem.payment_request_id) {
+      throw new CostAllocationError(409, 'CI关税费用缺少付款申请关联，不能使用当前汇率代替实际付款汇率');
+    }
+    const dutyPayment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [dutyItem.payment_request_id]);
+    if (!dutyPayment) throw new CostAllocationError(409, '找不到CI关税关联的付款申请');
+    if (normalizeCiCostCurrency(dutyItem.currency || dutyPayment.currency) !== normalizeCiCostCurrency(dutyPayment.currency)) {
+      throw new CostAllocationError(409, 'CI关税费用明细币种与付款申请币种不一致');
+    }
+    let dutyPaymentFacts;
+    try {
+      dutyPaymentFacts = paymentSettlementFacts(dutyPayment);
+      dutyCost = resolveCiCustomsDutyCost({
+        ciCurrency: ci.currency || 'RMB',
+        dutyCurrency: dutyItem.currency || dutyPayment.currency,
+        dutyAmount: dutyOriginalTotal,
+        payment: dutyPayment,
+        paymentFacts: dutyPaymentFacts
+      });
+    } catch (e) {
+      throw new CostAllocationError(e.status || 409, e.message);
+    }
+
     const missingRates = facts.itemRows.filter(row => row.actual_customs_rate === null || row.actual_customs_rate === '').map(row => row.sku_code);
     if (missingRates.length) throw new CostAllocationError(400, `CI Import Duty大于0，以下SKU未填写本票实际关税税率：${[...new Set(missingRates)].join('、')}`);
     const totalWeight = facts.skuFacts.reduce((sum, fact) => sum + fact.customs_weight, 0);
     if (!(totalWeight > 0)) throw new CostAllocationError(400, 'CI Import Duty大于0，但全部SKU的关税权重合计为0');
   }
+  const dutyTotal = costMoney(dutyCost.amount);
+  const dutyCurrency = dutyCost.currency;
 
   const goodsTotal = facts.skuFacts.reduce((sum, fact) => sum + fact.product_cost, 0);
   if (!(goodsTotal > 0)) throw new CostAllocationError(400, 'CI实际商品金额合计为0，无法分摊成本');
-  return { ...facts, costItems, transportItems, sharedFees, plBasis, dutyTotal, goodsTotal };
+  return {
+    ...facts, costItems, transportItems, sharedFees, plBasis,
+    dutyTotal, dutyCurrency, dutyOriginalTotal, dutyConversion: dutyCost, goodsTotal
+  };
 }
 
 function allocateFeeWithRemainder(fee, skuFacts, basisValues) {
@@ -19672,7 +19725,7 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
         subcategory: 'duty',
         label: 'Import Duty',
         total: inputs.dutyTotal,
-        currency: ci.currency || 'USD',
+        currency: inputs.dutyCurrency,
         basis: 'customs_weight',
         basisValues: customsBasis
       });
@@ -19754,7 +19807,14 @@ app.post('/api/cost-allocation/allocate/:ci_id', requireApiPermission('ci_edit')
     });
 
     const updated = queryOne('SELECT landing_total_cost FROM commercial_invoices WHERE id = ?', [ci.id]);
-    res.json({ success: true, allocation_run_id: allocationRunId, allocations, details, landing_total_cost: updated.landing_total_cost });
+    res.json({
+      success: true,
+      allocation_run_id: allocationRunId,
+      allocations,
+      details,
+      landing_total_cost: updated.landing_total_cost,
+      duty_conversion: inputs.dutyConversion
+    });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
