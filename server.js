@@ -1722,7 +1722,8 @@ const CI_HEADER_AMOUNT_FIELDS = [
   'goods_amount','pi_total_amount','amount_difference','should_deduct_deposit',
   'actual_deducted_deposit','payable_balance','paid_balance','unpaid_balance',
   'balance_gross_amount','balance_paid_amount','balance_deduction_amount',
-  'balance_rounding_amount','balance_unpaid_amount','import_duty_total'
+  'balance_rounding_amount','balance_unpaid_amount','import_duty_total',
+  'import_duty_currency','import_duty_rmb_conversion'
 ];
 const CI_ITEM_AMOUNT_FIELDS = ['unit_price','discount','net_unit_price','ci_amount','actual_customs_rate'];
 const HCI_AMOUNT_FIELDS = ['gross_goods_amount','historical_paid_amount','subsequent_paid_amount','deduction_amount','rounding_amount','unpaid_amount'];
@@ -10782,6 +10783,68 @@ app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_vi
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
+  // CI-DETAIL-RMB-FX-20261116: show a RMB reference only when the linked Import Duty
+  // has one authoritative payable and fully settled, immutable actual-payment RMB FX snapshots.
+  const detailDutyItems = Number(ci.import_duty_total || 0) > 0
+    ? query(
+        'SELECT currency, payment_request_id, payable_amount FROM ci_cost_items WHERE ci_id = ? AND cost_category = ? AND cost_subcategory = ? AND include_in_landing_cost = 1 AND payable_amount > 0 ORDER BY created_at',
+        [ci.id, 'customs_duty', 'duty']
+      ).rows
+    : [];
+  const detailDutyItem = detailDutyItems.length === 1 ? detailDutyItems[0] : null;
+  const detailDutyPayment = detailDutyItem && detailDutyItem.payment_request_id
+    ? queryOne('SELECT * FROM payment_requests WHERE id = ?', [detailDutyItem.payment_request_id])
+    : null;
+  const detailDutyCountryRaw = String(ci.country || '').trim();
+  const detailDutyCountryKey = COUNTRY_ALIAS_MAP[detailDutyCountryRaw] || detailDutyCountryRaw;
+  const findDetailDutyCountry = name => name
+    ? queryOne("SELECT default_currency FROM countries WHERE status = 'active' AND (name = ? OR code = ?) LIMIT 1", [name, name])
+    : null;
+  const detailDutyCountry = findDetailDutyCountry(detailDutyCountryKey) ||
+    (detailDutyCountryRaw !== detailDutyCountryKey ? findDetailDutyCountry(detailDutyCountryRaw) : null);
+  const detailDutyCurrency = String(
+    (detailDutyItem && detailDutyItem.currency) ||
+    (detailDutyPayment && detailDutyPayment.currency) ||
+    (detailDutyCountry && detailDutyCountry.default_currency) || ''
+  ).trim().toUpperCase();
+  ci.import_duty_currency = detailDutyCurrency;
+  ci.import_duty_rmb_conversion = null;
+  if (ciCanViewAmounts(req) && detailDutyCurrency && !['RMB', 'CNY'].includes(detailDutyCurrency) &&
+      Number(ci.import_duty_total || 0) > 0 && detailDutyItem && detailDutyPayment) {
+    try {
+      const convertedDuty = resolveCiCustomsDutyCost({
+        ciCurrency: ci.currency || 'RMB',
+        targetCurrency: 'RMB',
+        dutyCurrency: detailDutyCurrency,
+        dutyAmount: ci.import_duty_total,
+        payment: detailDutyPayment,
+        paymentFacts: paymentSettlementFacts(detailDutyPayment)
+      });
+      if (convertedDuty.currency === 'RMB' && Array.isArray(convertedDuty.fx) && convertedDuty.fx.length > 0) {
+        ci.import_duty_rmb_conversion = {
+          amount: convertedDuty.amount,
+          currency: 'RMB',
+          original_amount: convertedDuty.original_amount,
+          original_currency: convertedDuty.original_currency,
+          fx: convertedDuty.fx.map(row => ({
+            paid_date: row.paid_date || '',
+            from_currency: row.from_currency || detailDutyCurrency,
+            to_currency: row.to_currency || 'RMB',
+            rate: Number(row.rate),
+            rate_date: row.rate_date || '',
+            rate_type: row.rate_type || '',
+            direction: row.direction || '',
+            original_amount: Number(row.original_amount),
+            converted_amount: Number(row.converted_amount)
+          }))
+        };
+      }
+    } catch (fxError) {
+      // No historical RMB line without a complete, reconciled payment-date FX snapshot.
+      ci.import_duty_rmb_conversion = null;
+    }
+  }
+
   ci.payable_date = String(ci.due_date || '').trim() || computePayableDate(ci.actual_ship_date, ci.credit_days);
   // CI/PAYMENT UNIFY：运营 CI 尾款付款事实统一取自 payable_items settlement
   const opBalFacts = computeOperatingCIBalancePaymentFacts(ci.id);
@@ -12322,7 +12385,17 @@ app.get('/api/logistics-batches', requireApiPermission('logistics_view'), asyncH
 }));
 
 app.get('/api/logistics-batches/:id', requireApiPermission('logistics_view'), asyncHandler((req, res) => {
-  const batch = queryOne('SELECT * FROM logistics_batches WHERE id = ?', [req.params.id]);
+  const batch = queryOne(
+    `SELECT lb.*,
+       CASE WHEN lb.actual_arrival_date IS NOT NULL AND lb.actual_arrival_date != ''
+         AND ci.actual_ship_date IS NOT NULL AND ci.actual_ship_date != ''
+         THEN CAST(julianday(lb.actual_arrival_date) - julianday(ci.actual_ship_date) AS INTEGER)
+         ELSE NULL END AS actual_transit_days
+     FROM logistics_batches lb
+     LEFT JOIN commercial_invoices ci ON ci.id = lb.related_ci_id
+     WHERE lb.id = ?`,
+    [req.params.id]
+  );
   if (!batch) return res.status(404).json({ error: '物流批次不存在' });
   // P2: 返回关联 PL 信息
   const pl = queryOne('SELECT * FROM packing_lists WHERE logistics_batch_id = ?', [req.params.id]);

@@ -303,3 +303,17 @@ test('listing status change uses the dedicated endpoint with validation, audit l
   assert.match(route, /operation_type: 'listing_status_change'/);
   assert.match(route, /notifyListingStatusChanged\(lb\.id, oldStatus, newStatus, 'listing'\)/);
 });
+
+test('logistics batch detail returns the same derived actual transit days as the CI list', () => {
+  const detailStart = server.indexOf("app.get('/api/logistics-batches/:id',");
+  const detailEnd = server.indexOf("\n}));", detailStart);
+  assert.ok(detailStart >= 0 && detailEnd > detailStart, 'logistics batch detail endpoint must exist');
+  const detailRoute = server.slice(detailStart, detailEnd);
+  assert.match(detailRoute, /SELECT lb\.\*,[\s\S]*AS actual_transit_days/);
+  assert.match(detailRoute, /julianday\(lb\.actual_arrival_date\) - julianday\(ci\.actual_ship_date\)/);
+  const derivedStart = server.indexOf('const LOGI_DERIVED_COLS');
+  const derivedEnd = server.indexOf('const LOGI_CARGO_VALUE_JOIN', derivedStart);
+  assert.ok(derivedStart >= 0 && derivedEnd > derivedStart, 'CI list derived logistics fields must exist');
+  const listDerived = server.slice(derivedStart, derivedEnd);
+  assert.match(listDerived, /julianday\(lb\.actual_arrival_date\) - julianday\(ci\.actual_ship_date\)/);
+});

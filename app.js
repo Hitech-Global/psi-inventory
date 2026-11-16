@@ -4,6 +4,34 @@ let currentUser=null;let currentPage='dashboard';
 // --- 工具函数 ---
 function esc(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function fmtMoney(v,c){const n=Number(v||0);return(c?c+' ':'')+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+function fmtCIMoney(value,currency,conversion){
+  const code=String(currency||'').trim().toUpperCase();
+  const original=fmtMoney(value,code);
+  const fx=conversion&&Array.isArray(conversion.fx)?conversion.fx:[];
+  const converted=Number(conversion&&conversion.amount);
+  if(!code||code==='RMB'||code==='CNY'||!Number.isFinite(converted)||!fx.length||
+     String(conversion.currency||'').trim().toUpperCase()!=='RMB'||
+     String(conversion.original_currency||'').trim().toUpperCase()!==code) return esc(original);
+  const label=function(key,fallback){return typeof t==='function'?t(key,fallback):fallback;};
+  const lines=[label('ci.fx.title','RMB conversion details')];
+  fx.forEach(function(row){
+    const from=String(row.from_currency||code).trim().toUpperCase();
+    const to=String(row.to_currency||'RMB').trim().toUpperCase();
+    const rate=Number(row.rate);
+    if(!Number.isFinite(rate)||rate<=0) return;
+    const rateText=rate.toLocaleString('en-US',{maximumFractionDigits:12});
+    const rateDate=String(row.paid_date||row.rate_date||'—');
+    lines.push(label('ci.fx.date','FX date')+': '+rateDate);
+    lines.push(label('ci.fx.rate','Rate')+': 1 '+from+' = '+rateText+' '+to);
+    lines.push(label('ci.fx.calculation','Calculation')+': '+
+      fmtMoney(row.original_amount,from)+' × '+rateText+' = '+fmtMoney(row.converted_amount,to));
+  });
+  lines.push(label('ci.fx.source','Rate source: locked snapshot from actual payment date'));
+  return '<span class="ci-money-conversion" title="'+esc(lines.join('\n'))+'" style="display:inline-flex;flex-direction:column;align-items:flex-start;gap:2px;cursor:help">'+
+    '<span>'+esc(original)+'</span>'+
+    '<span style="font-size:11px;font-weight:500;color:var(--text-secondary);border-bottom:1px dotted var(--text-muted);line-height:1.25">≈ '+esc(fmtMoney(converted,'RMB'))+'</span>'+
+    '</span>';
+}
 // 数量类显示专用格式化：标准四舍五入取整，仅影响页面显示，不改原始数据/计算精度/导出
 // 覆盖：销量、库存、在途、PO/PI数量、建议采购、分摊库存等
 // 不覆盖：周转月数、占比、百分比、日期、金额、单价、汇率、CBM、KG
@@ -13149,7 +13177,8 @@ async function viewCI(id, backPay, backMode){
       var buf='';fields.forEach(function(f){
         var v;if(f==='related_pi_no'){var pns=[];try{pns=JSON.parse(ci.related_pi_nos||'[]');}catch(e){}if(pns.length===0&&ci.related_pi_no)pns=[ci.related_pi_no];v=pns.length>0?pns.map(esc).join('<br>'):'—';}
         else if(f==='country'){var cv=ci[f];if(typeof getLang==='function'&&getLang()==='en'){cv=({'印度尼西亚':'Indonesia','泰国':'Thailand','马来西亚':'Malaysia'})[cv]||cv;}v=esc(cv);}
-        else if(moneyFields[f]){v=fmtMoney(ci[f]);}
+        else if(f==='import_duty_total'){var dutyCurrency=String(ci.import_duty_currency||ci.currency||'').trim().toUpperCase();v=fmtCIMoney(ci[f],dutyCurrency,ci.import_duty_rmb_conversion);}
+        else if(moneyFields[f]){v=fmtCIMoney(ci[f],ci.currency);}
         else if(f==='ci_status'){var sc=ciStatusClass(ci[f]);v='<span class="status-badge '+sc+'">'+statusLabel(ci[f])+'</span>';}
         else if(f==='ci_total_qty'){v=formatQuantityDisplay((ci.items||[]).reduce(function(s,i){return s+(parseInt(i.shipped_qty,10)||0);},0));}else if(f==='balance_payment_status')v=statusLabel(ci[f]);
         else v=esc(ci[f]);
@@ -13193,13 +13222,7 @@ function renderCIItemsRows(ci){
   if(!items.length) return '<div class="empty-state" style="padding:12px">'+t('ci.items.empty','暂无CI明细')+'</div>';
   // 金额展示使用当前 CI 单据自身币种，不根据国家推断，也不改变底层金额。
   const currency=String((ci&&ci.currency)||'').trim().toUpperCase();
-  const currencySymbols={USD:'$',RMB:'¥',CNY:'¥',IDR:'Rp',MYR:'RM',THB:'฿',SGD:'S$',EUR:'€',JPY:'¥',PHP:'₱',VND:'₫',HKD:'HK$'};
-  const currencyPrefix=currencySymbols[currency]||currency;
-  const fmtCIAmount=function(value){
-    const amount=fmtMoney(value,'');
-    if(!currencyPrefix) return amount;
-    return (currencyPrefix==='Rp'||currencyPrefix==='RM'?currencyPrefix+' ':currencyPrefix)+amount;
-  };
+  const fmtCIAmount=function(value){return fmtCIMoney(value,currency);};
   return '<div class="table-container"><table class="data-table"><thead><tr>'
     +'<th>SKU</th><th>'+t('ci.item.qty','数量')+'</th><th>'+t('field.original_unit_price','原单价')+'</th><th>'+t('field.discount','折扣')+'</th><th>'+t('field.net_unit_price','折后单价')+'</th><th>'+t('ci.col.amount','金额')+'</th><th>'+t('ci.item.actual_customs_rate','实际关税税率(%)')+'</th><th>'+t('ci.item.inbound_qty','已入库')+'</th><th>'+t('ci.item.uninbound_qty','未入库')+'</th></tr></thead><tbody>'
     + items.map(function(i){ var dsc=i.discount||0; var nup=i.net_unit_price||(i.unit_price*(1-dsc));

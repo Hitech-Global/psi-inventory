@@ -5359,4 +5359,10 @@ I18N.dict.zh["user.external.missing"]="请填写姓名"; I18N.dict.en["user.exte
 I18N.dict.zh["user.external.login_missing"]="请输入登录用户名或邮箱，以及密码"; I18N.dict.en["user.external.login_missing"]="Enter username or email and password"; I18N.dict.id["user.external.login_missing"]="Masukkan nama pengguna atau email serta kata sandi";
 I18N.dict.en["user.external.login_failed"]="External login failed"; I18N.dict.id["user.external.login_failed"]="Gagal masuk pengguna eksternal";
 I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管理员授权"; I18N.dict.en["user.external.pending"]="Your external account has been registered and is awaiting administrator approval."; I18N.dict.id["user.external.pending"]="Akun eksternal Anda telah terdaftar dan menunggu persetujuan administrator.";
+
+  I18N.dict.zh["ci.fx.title"]="人民币折算明细"; I18N.dict.en["ci.fx.title"]="RMB Conversion Details"; I18N.dict.id["ci.fx.title"]="Rincian Konversi RMB";
+  I18N.dict.zh["ci.fx.date"]="汇率日期"; I18N.dict.en["ci.fx.date"]="FX Date"; I18N.dict.id["ci.fx.date"]="Tanggal Kurs";
+  I18N.dict.zh["ci.fx.rate"]="换算汇率"; I18N.dict.en["ci.fx.rate"]="Conversion Rate"; I18N.dict.id["ci.fx.rate"]="Kurs Konversi";
+  I18N.dict.zh["ci.fx.calculation"]="计算过程"; I18N.dict.en["ci.fx.calculation"]="Calculation"; I18N.dict.id["ci.fx.calculation"]="Perhitungan";
+  I18N.dict.zh["ci.fx.source"]="汇率来源：实际付款日锁定汇率"; I18N.dict.en["ci.fx.source"]="Rate source: locked snapshot from actual payment date"; I18N.dict.id["ci.fx.source"]="Sumber kurs: snapshot terkunci pada tanggal pembayaran aktual";
 })();

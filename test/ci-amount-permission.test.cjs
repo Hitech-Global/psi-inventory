@@ -62,6 +62,31 @@ must(server, /commercial-invoices\/:id\/pi-balances'[\s\S]{0,180}requireCIAmount
 must(server, /commercial-invoices\/:id\/cost-summary'[\s\S]{0,180}requireCIAmountView/, 'CI cost summary must hard-gate amounts');
 must(server, /purchase-amount-summary'[\s\S]{0,220}amount_view_allowed:\s*false/, 'purchase amount summary must not leak amounts');
 
+// CI detail money formatting and settlement-date RMB conversion.
+must(server, /'import_duty_currency'[\s\S]*'import_duty_rmb_conversion'/, 'duty currency and RMB conversion metadata must be amount-permission redacted');
+const ciDetailStart = server.indexOf("app.get('/api/commercial-invoices/:id'");
+const ciDetailEnd = server.indexOf('// ===== CI/PL × 物流合并', ciDetailStart);
+assert.ok(ciDetailStart >= 0 && ciDetailEnd > ciDetailStart, 'operational CI detail route must exist');
+const ciDetailRoute = server.slice(ciDetailStart, ciDetailEnd);
+must(ciDetailRoute, /resolveCiCustomsDutyCost/,'CI detail RMB conversion must reuse the WAC settlement FX validator');
+must(ciDetailRoute, /paymentSettlementFacts\(detailDutyPayment\)/,'CI detail conversion must use settlement facts');
+must(ciDetailRoute, /targetCurrency:\s*'RMB'/,'CI detail conversion target must be RMB');
+must(ciDetailRoute, /ci\.import_duty_rmb_conversion\s*=\s*null/,'missing or invalid FX evidence must not produce an RMB amount');
+assert.doesNotMatch(ciDetailRoute, /exchange_rates/,'CI detail must not substitute a current exchange rate for historical settlement FX');
+
+const ciViewStart = app.indexOf('async function viewCI(id, backPay, backMode){');
+const ciViewEnd = app.indexOf('// ==================== CI/PL × 物流合并 PHASE A', ciViewStart);
+assert.ok(ciViewStart >= 0 && ciViewEnd > ciViewStart, 'operational CI detail renderer must exist');
+const ciView = app.slice(ciViewStart, ciViewEnd);
+must(ciView, /fmtCIMoney\(ci\[f\],dutyCurrency,ci\.import_duty_rmb_conversion\)/,'Import Duty must use its own currency and settlement FX');
+must(ciView, /fmtCIMoney\(ci\[f\],ci\.currency\)/,'other CI detail amounts must display the CI currency code');
+const ciItemRowsStartFx = app.indexOf('function renderCIItemsRows');
+const ciItemRowsEndFx = app.indexOf('function renderCIPLShell', ciItemRowsStartFx);
+const ciItemRowsFx = app.slice(ciItemRowsStartFx, ciItemRowsEndFx);
+must(ciItemRowsFx, /fmtCIMoney\(value,currency\)/,'CI item prices and totals must show currency codes');
+must(app, /function fmtCIMoney[\s\S]*ci\.fx\.rate[\s\S]*title=/,'foreign-currency RMB line must expose the conversion rate on hover');
+must(i18n, /ci\.fx\.title[\s\S]*ci\.fx\.source/,'FX tooltip labels must be translated');
+
 // Export contract: CI&PL is available to CI viewers; amount data is included only for amount-authorized users.
 must(server, /const scope = req\.query\.scope === 'ci_pl' \? 'ci_pl' : 'pl'/, 'export scope must default fail-safe to PL');
 const exportStart = server.indexOf("app.get('/api/logistics-batches/:id/export-data'");
