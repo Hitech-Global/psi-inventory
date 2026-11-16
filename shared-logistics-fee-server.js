@@ -146,6 +146,26 @@ function ownFreightInRmb(batch){
   }
   return settledConversion(requestId,minor(amt),cur,'RMB');
 }
+
+function ownFreightDisplay(batch){
+  const amount=Number(batch.total_freight)||0,cur=normalize(batch.freight_currency||'USD');
+  if(!(amount>0))return {amount_minor:0,currency:cur,status:'original'};
+  if(cur==='RMB')return {amount_minor:minor(amount),currency:'RMB',status:'converted'};
+  const item=queryOne("SELECT payment_request_id,payable_item_id FROM ci_cost_items WHERE logistics_batch_id=? AND cost_category='warehouse_arrival' AND cost_subcategory='freight' AND include_in_landing_cost=1 ORDER BY created_at DESC LIMIT 1",[batch.id]);
+  let requestId=item&&item.payment_request_id||'';
+  if(!requestId&&item&&item.payable_item_id){
+    const linked=queryOne("SELECT pri.payment_request_id AS id FROM payment_request_items pri JOIN payment_requests p ON p.id=pri.payment_request_id WHERE pri.payable_item_id=? AND p.payment_status NOT IN ('cancelled','rejected') ORDER BY p.created_at DESC LIMIT 1",[item.payable_item_id]);
+    requestId=linked&&linked.id||'';
+  }
+  const payment=requestId?queryOne('SELECT payment_status FROM payment_requests WHERE id=?',[requestId]):null;
+  // Before payment, preserve the entered amount and currency; do not invent an FX rate.
+  if(!payment||payment.payment_status!=='paid')
+    return {amount_minor:minor(amount),currency:cur,status:'original'};
+  const converted=settledConversion(requestId,minor(amount),cur,'RMB');
+  if(converted.error)return {amount_minor:null,currency:'RMB',status:'pending_fx',error:converted.error};
+  return {amount_minor:Number(converted.amount_minor),currency:'RMB',status:'converted'};
+}
+
 function installSharedLogisticsFeeRoutes(app,ctx) {
   const {requireApiPermission,requireCIAmountView,asyncHandler,genId,createApprovalInstance,sourceExpenseCountry}=ctx;
   app.get('/api/commercial-invoices/:id/shared-logistics-fees',requireApiPermission('ci_view'),requireCIAmountView,asyncHandler((req,res)=>{
@@ -153,7 +173,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
     if(!ci)return res.status(404).json({error:'CI不存在'});
     const fees=sharedFeesForCost(ci,'RMB');
     const batches=query('SELECT id,batch_no,transport_mode,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id=? ORDER BY batch_no',[ci.id]).rows;
-    const batch_totals_rmb={};
+    const batch_totals_rmb={},batch_totals_display={};
     batches.forEach(b=>{
       const own=ownFreightInRmb(b);
       batch_totals_rmb[b.id]={
@@ -162,18 +182,35 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
         total_minor:own.error?null:Number(own.amount_minor),
         errors:own.error?[own.error]:[]
       };
+      const shown=ownFreightDisplay(b);
+      const display={batch_no:b.batch_no,transport_mode:b.transport_mode,display_totals:{},pending_fx:shown.status==='pending_fx'};
+      if(shown.status!=='pending_fx'&&shown.currency&&Number.isFinite(Number(shown.amount_minor)))
+        display.display_totals[shown.currency]=Number(shown.amount_minor)/100;
+      batch_totals_display[b.id]=display;
     });
     const {splitConvertedMinor}=require('./shared-logistics-fee-core');
     fees.forEach(f=>{
       const converted=f.conversion;
       if(converted.error){
-        f.allocations.forEach(a=>{const b=batch_totals_rmb[a.batch_id];if(b){b.errors.push(f.bill_no+': '+converted.error);b.total_minor=null;}});
+        f.allocations.forEach(a=>{
+          const b=batch_totals_rmb[a.batch_id];
+          if(b){b.errors.push(f.bill_no+': '+converted.error);b.total_minor=null;}
+        });
+        if(f.payment_status!=='paid'){
+          for(const part of splitConvertedMinor(Number(f.amount_minor),f.allocations)){
+            const b=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={display_totals:{}});
+            b.display_totals[f.currency]=(Number(b.display_totals[f.currency])||0)+Number(part.amount_minor)/100;
+          }
+        }else{
+          f.allocations.forEach(a=>{const b=batch_totals_display[a.batch_id]||(batch_totals_display[a.batch_id]={display_totals:{}});b.pending_fx=true;});
+        }
         return;
       }
       for(const part of splitConvertedMinor(Number(converted.amount_minor),f.allocations)){
         const b=batch_totals_rmb[part.batch_id];
-        if(!b)continue;
-        if(b.total_minor!==null)b.total_minor+=part.amount_minor;
+        if(b&&b.total_minor!==null)b.total_minor+=part.amount_minor;
+        const display=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={display_totals:{}});
+        display.display_totals.RMB=(Number(display.display_totals.RMB)||0)+Number(part.amount_minor)/100;
       }
     });
     const batchTotals=Object.values(batch_totals_rmb);
@@ -188,6 +225,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
       ci_currency:ci.currency,
       fees,
       batch_totals_rmb,
+      batch_totals_display,
       transport_modes:transportModes,
       total_freight_currency:'RMB',
       total_freight_rmb:totalFreightMinor==null?null:totalFreightMinor/100,
@@ -203,40 +241,74 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
       return res.status(400).json({error:'请提供1至200个CI ID'});
     const ciRows=query('SELECT id,ci_no,currency,goods_amount FROM commercial_invoices WHERE id IN ('+ids.map(()=>'?').join(',')+')',ids).rows;
     const batchRows=query('SELECT id,related_ci_id,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id IN ('+ids.map(()=>'?').join(',')+')',ids).rows;
-    const sharedIds=new Set(query('SELECT ci_id FROM shared_logistics_fees WHERE ci_id IN ('+ids.map(()=>'?').join(',')+') GROUP BY ci_id',ids).rows.map(r=>String(r.ci_id)));
     const result={};
     for(const ci of ciRows) {
-      if(!sharedIds.has(String(ci.id))){result[ci.id]={has_shared:false};continue;}
-      let totalMinor=0,referenceMinor=0,errors=[],referenceErrors=[],hasBatch=false;
       const own=batchRows.filter(b=>String(b.related_ci_id)===String(ci.id));
-      for(const b of own) {
-        hasBatch=true;
-        const cv=ownFreightInRmb(b);
-        if(cv.error){errors.push(b.id+': '+cv.error);referenceErrors.push(b.id+': '+cv.error);}
-        else{totalMinor+=cv.amount_minor;referenceMinor+=cv.amount_minor;}
-      }
-      for(const fee of sharedFeesForCost(ci,'RMB')) {
-        hasBatch=true;
-        if(fee.conversion.error){
-          errors.push(fee.bill_no+': '+fee.conversion.error);
-          if(fee.reference_conversion&&!fee.reference_conversion.error)
-            referenceMinor+=Number(fee.reference_conversion.amount_minor);
-          else referenceErrors.push(fee.bill_no+': '+(fee.reference_conversion?.error||'无可用参考汇率'));
-        }else{
-          const value=Number(fee.conversion.amount_minor);
+      const fees=sharedFeesForCost(ci,'RMB');
+      const hasBatch=own.length>0||fees.length>0;
+      let totalMinor=0,referenceMinor=0,errors=[],referenceErrors=[],displayPending=false;
+      const displayMinorByCurrency={},batch_totals_display={};
+      const addDisplay=(target,currency,amountMinor)=>{
+        const cur=normalize(currency||'');
+        if(!validCurrency(cur)||!Number.isFinite(Number(amountMinor)))return;
+        target[cur]=(target[cur]||0)+Number(amountMinor);
+      };
+      own.forEach(b=>{
+        const strict=ownFreightInRmb(b);
+        if(strict.error){errors.push(b.id+': '+strict.error);}
+        else{totalMinor+=Number(strict.amount_minor);referenceMinor+=Number(strict.amount_minor);}
+        const shown=ownFreightDisplay(b);
+        if(shown.status==='pending_fx'){displayPending=true;}
+        else addDisplay(displayMinorByCurrency,shown.currency,shown.amount_minor);
+        batch_totals_display[b.id]={amounts_by_currency:{}};
+        if(shown.status==='pending_fx')batch_totals_display[b.id].pending_fx=true;
+        else addDisplay(batch_totals_display[b.id].amounts_by_currency,shown.currency,shown.amount_minor);
+      });
+      const {splitConvertedMinor}=require('./shared-logistics-fee-core');
+      fees.forEach(f=>{
+        const converted=f.conversion;
+        if(!converted.error){
+          const value=Number(converted.amount_minor);
           totalMinor+=value;referenceMinor+=value;
+          const parts=splitConvertedMinor(value,f.allocations);
+          parts.forEach(part=>{
+            const b=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={amounts_by_currency:{}});
+            addDisplay(b.amounts_by_currency,'RMB',part.amount_minor);
+          });
+          addDisplay(displayMinorByCurrency,'RMB',value);
+          return;
         }
-      }
+        errors.push(f.bill_no+': '+converted.error);
+        if(f.payment_status!=='paid'){
+          addDisplay(displayMinorByCurrency,f.currency,f.amount_minor);
+          for(const part of splitConvertedMinor(Number(f.amount_minor),f.allocations)){
+            const b=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={amounts_by_currency:{}});
+            addDisplay(b.amounts_by_currency,f.currency,part.amount_minor);
+          }
+        }else displayPending=true;
+        if(f.reference_conversion&&!f.reference_conversion.error)
+          referenceMinor+=Number(f.reference_conversion.amount_minor);
+        else referenceErrors.push(f.bill_no+': '+(f.reference_conversion?.error||'无可用参考汇率'));
+      });
       const goods=Number(ci.goods_amount)||0;
-      result[ci.id]={currency:'RMB',has_shared:true,has_batch:hasBatch,
+      const currencies=Object.keys(displayMinorByCurrency);
+      const displayTotals={};
+      currencies.forEach(cur=>{displayTotals[cur]=displayMinorByCurrency[cur]/100;});
+      Object.keys(batch_totals_display).forEach(id=>{
+        const item=batch_totals_display[id],totals=item.amounts_by_currency||{};
+        item.display_totals={};
+        Object.keys(totals).forEach(cur=>{item.display_totals[cur]=totals[cur]/100;});
+      });
+      const onlyRmb=currencies.length===1&&currencies[0]==='RMB';
+      result[ci.id]={currency:'RMB',has_shared:fees.length>0,has_batch:hasBatch,
         total_rmb:errors.length?null:totalMinor/100,
-        freight_ratio:errors.length||normalize(ci.currency)!=='RMB'||goods<=0?null:Number((totalMinor/100/goods*100).toFixed(2)),
-        // Never represent reference as a confirmed cost. WAC and cost APIs
-        // continue to use strict `total_rmb` only.
+        freight_ratio:errors.length||!onlyRmb||normalize(ci.currency)!=='RMB'||goods<=0?null:Number((totalMinor/100/goods*100).toFixed(2)),
         reference_total_rmb:errors.length&&!referenceErrors.length?referenceMinor/100:null,
         reference_freight_ratio:errors.length&&!referenceErrors.length&&normalize(ci.currency)==='RMB'&&goods>0?
           Number((referenceMinor/100/goods*100).toFixed(2)):null,
         reference_only:errors.length>0&&!referenceErrors.length,
+        display_totals:displayTotals,display_pending_fx:displayPending,
+        batch_totals_display,
         errors:errors};
     }
     res.json(result);

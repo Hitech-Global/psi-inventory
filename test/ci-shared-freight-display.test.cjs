@@ -55,6 +55,7 @@ test('CI detail summary includes transport modes and one shared bill allocated a
     assert.equal(detail.batch_totals_rmb.batch_15359.total_minor+
       detail.batch_totals_rmb.batch_15360.total_minor,1130710);
     assert.equal(detail.batch_totals_rmb.batch_15359.transport_mode,'sea');
+    assert.equal(detail.batch_totals_display.batch_15359.display_totals.RMB>0,true);
 
     const list=await (await fetch(base+'/api/ci-freight-summaries?ids='+ciId)).json();
     assert.equal(list[ciId].has_shared,true);
@@ -74,10 +75,11 @@ test('CI freight display assets expose the combined-fee values and distinguish C
   assert.match(detail,/transport_modes/);
   assert.match(detail,/total_freight_rmb/);
   assert.match(detail,/batch_totals_rmb/);
+  assert.match(detail,/batch_totals_display/);
   assert.match(detail,/data-ci-shared-freight-summary/);
   assert.match(detail,/ci-acc-body-logi/);
   assert.match(list,/CI已付金额/);
   assert.match(list,/CI Paid Amount/);
-  assert.match(html,/ci-list-freight\.js\?v=20261110-2/);
-  assert.match(html,/ci-shared-freight-display\.js\?v=20261110-1/);
+  assert.match(html,/ci-list-freight\.js\?v=20261116-1/);
+  assert.match(html,/ci-shared-freight-display\.js\?v=20261116-1/);
 });

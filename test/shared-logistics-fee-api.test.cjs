@@ -9,6 +9,11 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
   db.initDatabase();
   db.run("INSERT INTO commercial_invoices(id,ci_no,ci_date,currency,country,goods_amount,cost_confirmed,wac_confirmed) VALUES (?,?,?,?,?,?,?,?)",
     ['ci_shared_1','CI-SHARED-TEST','2026-10-13','RMB','印度尼西亚',10000,0,0]);
+  // Legacy single-batch CI with an unpaid IDR freight amount: display original currency until settled.
+  db.run("INSERT INTO commercial_invoices(id,ci_no,ci_date,currency,country,goods_amount,cost_confirmed,wac_confirmed) VALUES (?,?,?,?,?,?,?,?)",
+    ['ci_legacy_idr','CI-LEGACY-IDR','2026-10-13','RMB','印度尼西亚',20000,0,0]);
+  db.run("INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)",
+    ['b_legacy_idr','LEGACY-IDR-1','ci_legacy_idr','air','IDR',14382235,'ff-test','丰年']);
   const entries=[['b1','SZIS0013407',4.47],['b2','SZIS0013408',2.76],['b3','SZIS0013406',3.07]];
   entries.forEach(([id,no,cbm],i)=>{
     db.run("INSERT INTO logistics_batches(id,batch_no,related_ci_id,transport_mode,freight_currency,total_freight,forwarder_id,forwarder_name) VALUES (?,?,?,?,?,?,?,?)",
@@ -48,9 +53,16 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,1);
     const unpaid=await (await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees')).json();
     a.match(unpaid.fees[0].conversion.error,/尚未实际结算|尚未付款|未审批通过/);
+    a.ok(unpaid.batch_totals_display.b2.display_totals.IDR>0,
+      'expanded logistics row must preserve original IDR while shared bill is unpaid');
     a.ok(unpaid.currency_options.includes('IDR'),'currency options must come from system currency master');
     const pre=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
     a.equal(pre.ci_shared_1.total_rmb,null,'unpaid IDR must not be counted as RMB');
+    a.deepEqual(pre.ci_shared_1.display_totals,{RMB:100,IDR:100000},
+      'settled RMB freight stays RMB while unpaid IDR freight remains in its original currency');
+    a.equal(pre.ci_legacy_idr.has_shared,false);
+    a.deepEqual(pre.ci_legacy_idr.display_totals,{IDR:14382235},
+      'CI list summaries must include legacy CIs without shared bills and preserve unpaid IDR currency');
     db.run('INSERT INTO exchange_rates (id,from_currency,to_currency,rate,rate_date,rate_type) VALUES (?,?,?,?,?,?)',
       ['rate_shared_idr_rmb','IDR','RMB',0.00045,'2026-10-13','realtime']);
     db.run("INSERT INTO payment_settlement_logs (id,payment_request_id,event_type,status,amount,original_currency,local_amount,local_currency,local_rate_date,paid_date,local_rate,rmb_rate,rmb_rate_date,rmb_rate_direction,rmb_amount) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -61,10 +73,14 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(Object.values(paid.batch_totals_rmb).reduce((sum,x)=>sum+Number(x.total_minor||0),0),14500,
       'every batch comprehensive freight must conserve RMB 145 total');
     a.equal(paid.batch_totals_rmb.b1.total_minor>10000,true,'first batch contains original RMB freight');
+    a.equal(paid.batch_totals_display.b2.display_totals.RMB>0,true,
+      'expanded logistics rows must switch shared IDR allocation to settled RMB');
     a.equal(paid.batch_totals_rmb.b2.total_minor>0,true);
     a.equal(paid.batch_totals_rmb.b3.total_minor>0,true);
     const ci=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
     a.equal(ci.ci_shared_1.total_rmb,145,'RMB100 own batch freight + RMB45 shared delivery');
+    a.deepEqual(ci.ci_shared_1.display_totals,{RMB:145},
+      'once the IDR shared bill is paid, display its locked payment-date RMB snapshot');
     a.equal(ci.ci_shared_1.freight_ratio,1.45);
     const wac=entries.map(([id])=>sharedWacParts(id,'IDR'));
     a(wac.every(x=>x.errors.length===0));

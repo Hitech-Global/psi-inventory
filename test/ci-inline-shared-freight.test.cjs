@@ -38,6 +38,32 @@ test('shared freight ratio is not calculated for non-RMB CI goods values', () =>
   assert.equal(result.ratio, null);
 });
 
+test('unpaid batch freight remains in its original currency until payment FX is locked', () => {
+  const result = sharedFreightDisplayForBatch(
+    { id: 'batch_unpaid', cargo_value: 1000, ci_currency: 'RMB' },
+    { ci_currency: 'RMB', batch_totals_display: {
+      batch_unpaid: { display_totals: { IDR: 14382235 }, pending_fx: false }
+    }}
+  );
+  assert.equal(result.status, 'ok');
+  assert.equal(result.amount, 14382235);
+  assert.equal(result.currency, 'IDR');
+  assert.equal(result.ratio, null);
+});
+
+test('paid batch freight uses the locked RMB display total', () => {
+  const result = sharedFreightDisplayForBatch(
+    { id: 'batch_paid', cargo_value: 1000, ci_currency: 'RMB' },
+    { ci_currency: 'RMB', batch_totals_display: {
+      batch_paid: { display_totals: { RMB: 531.25 }, pending_fx: false }
+    }}
+  );
+  assert.equal(result.status, 'ok');
+  assert.equal(result.amount, 531.25);
+  assert.equal(result.currency, 'RMB');
+  assert.equal(result.ratio, 53.125);
+});
+
 test('missing FX evidence is shown as pending instead of being displayed as zero', () => {
   const result = sharedFreightDisplayForBatch(
     { id: 'batch_pending', cargo_value: 1000 },
@@ -55,9 +81,11 @@ test('expanded logistics rows hydrate shared allocations by batch ID on every op
   assert.match(source, /data-ci-logi-freight-ratio="1"/);
   assert.match(source, /\/shared-logistics-fees\?view=ci-summary/);
   assert.match(source, /batch_totals_rmb/);
+  assert.match(source, /batch_totals_display/);
+  assert.match(source, /display\.currencies\.map/);
   assert.match(source, /hydrateSharedFreight\(ciId, cached\.data \|\| \[\], token\)/);
   assert.match(source, /hydrateSharedFreight\(ciId, data \|\| \[\], token\)/);
   assert.match(source, /hydrateSharedFreight\(ciId, rows \|\| \[\], state\.reqSeq\)/);
   assert.match(source, /Number\(item\.total_minor\) \/ 100/);
-  assert.match(html, /ci-list-inline-logistics\.js\?v=20261113-3/);
+  assert.match(html, /ci-list-inline-logistics\.js\?v=20261116-1/);
 });
