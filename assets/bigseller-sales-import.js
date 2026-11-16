@@ -602,7 +602,7 @@
             var statsEl = win.document && win.document.getElementById('sales-preview-stats');
             if (statsEl && typeof statsEl.innerHTML === 'string') {
               statsEl.innerHTML = statsEl.innerHTML
-                .replace(/SKU\\/品牌预检查失败\\s*(\\d+)\\s*行：整批禁止导入/g, function (_, count) {
+                .replace(/SKU\/品牌预检查失败\s*(\d+)\s*行：整批禁止导入/g, function (_, count) {
                   return 'SKU/品牌异常 ' + count + ' 行：已自动跳过，其余有效记录可继续导入';
                 })
                 .replace(/整批禁止导入/g, '异常记录已自动跳过，其余有效记录可继续导入');
