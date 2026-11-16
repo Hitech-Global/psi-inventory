@@ -25,6 +25,8 @@ on:
       - 'test/app-perf-diagnostics.test.cjs'
       - 'test/app-perf-brand-invalidation.test.cjs'
       - 'server.js'
+      - 'ci-customs-duty-fx.js'
+      - 'test/ci-customs-duty-fx.test.cjs'
       - 'wave2b-pi-batch-import-pg.js'
       - 'test/pi-deposit-payable-date.test.cjs'
       - 'index.html'
@@ -185,6 +187,8 @@ jobs:
           node --check test/app-perf-diagnostics.test.cjs
           node --check test/app-perf-brand-invalidation.test.cjs
           node --check server.js
+          node --check ci-customs-duty-fx.js
+          node --check test/ci-customs-duty-fx.test.cjs
           node --check wave2b-pi-batch-import-pg.js
           node --check test/pi-deposit-payable-date.test.cjs
           node --check assets/bigseller-inventory-import.js
@@ -255,6 +259,8 @@ jobs:
         run: node --test test/ci-shared-freight-display.test.cjs
       - name: Test payment settlement FX snapshot precision
         run: node test/shared-logistics-fee-fx-precision.test.cjs
+      - name: Test CI customs duty WAC currency conversion from locked payment FX
+        run: node --test test/ci-customs-duty-fx.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test CI date and logistics carrier / mode field separation
