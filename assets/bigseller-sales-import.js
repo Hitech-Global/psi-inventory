@@ -564,23 +564,56 @@
       try {
         var result = await originalRequestSalesPreview.apply(this, arguments);
         if (isBigSeller) {
-          var blocked = Array.isArray(win._salesImportBlocking) && win._salesImportBlocking.length > 0;
+          var blocking = Array.isArray(win._salesImportBlocking) ? win._salesImportBlocking.slice() : [];
+          var blocked = blocking.length > 0;
           var ready = win._salesImportPreviewReady === true;
           var previewError = String(win._salesImportPreviewError || '').trim();
           var records = Array.isArray(win._salesImportData) ? win._salesImportData : [];
-          var invalidRows = records.filter(function (record) {
-            return !record || !Array.isArray(record._errors) || record._errors.length > 0;
-          }).length;
+          var blockedRowNumbers = new Set();
+          blocking.forEach(function (item) {
+            var rowNo = Number(item && item.row);
+            if (rowNo > 0) blockedRowNumbers.add(rowNo);
+          });
+          var validRows = 0;
+          var skippedRows = 0;
+          records.forEach(function (record, index) {
+            var rowNo = Number(record && record._rowNum) > 0 ? Number(record._rowNum) : index + 2;
+            var hasSourceErrors = !record || !Array.isArray(record._errors) || record._errors.length > 0;
+            if (blockedRowNumbers.has(rowNo) || hasSourceErrors) skippedRows += 1;
+            else validRows += 1;
+          });
+          // A blocking row is a row-level exclusion, not a batch-level failure.
+          // Keep its details for the error download, but let valid rows proceed.
+          skippedRows = Math.max(skippedRows, blockedRowNumbers.size);
+          validRows = Math.max(0, records.length - skippedRows);
+          var hasRowFailures = blocked || skippedRows > 0;
           renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
 
           if (previewError) {
             setImportProgress(win, '后台数据匹配/校验失败：' + previewError, 85, 'error');
+          } else if (hasRowFailures && validRows > 0) {
+            win._salesImportPreviewReady = true;
+            win._salesImportSkippedRows = blocking;
+            // The original preview handler uses this array as its submit gate.
+            // The row errors remain available in _lastSalesImportErrors.
+            win._salesImportBlocking = [];
+            var importButton = win.document && win.document.getElementById('sales-import-btn');
+            if (importButton) importButton.disabled = false;
+            var statsEl = win.document && win.document.getElementById('sales-preview-stats');
+            if (statsEl && typeof statsEl.innerHTML === 'string') {
+              statsEl.innerHTML = statsEl.innerHTML
+                .replace(/SKU\/品牌预检查失败\s*(\d+)\s*行：整批禁止导入/g, function (_, count) {
+                  return 'SKU/品牌异常 ' + count + ' 行：已自动跳过，其余有效记录可继续导入';
+                })
+                .replace(/整批禁止导入/g, '异常记录已自动跳过，其余有效记录可继续导入');
+            }
+            setImportProgress(win, '校验完成：' + skippedRows + ' 条异常记录已自动跳过，剩余 ' + validRows + ' 条有效记录可以导入。', 100, 'done');
           } else if (ready) {
             setImportProgress(win, 'SKU / 品牌校验及历史销售匹配完成，可以开始导入。', 100, 'done');
-          } else if (blocked) {
-            setImportProgress(win, 'SKU / 品牌预检查失败：' + win._salesImportBlocking.length + ' 行异常，暂不能导入。', 100, 'blocked');
-          } else if (invalidRows > 0) {
-            setImportProgress(win, '文件有 ' + invalidRows + ' 条异常记录，暂不能导入。', 100, 'blocked');
+          } else if (hasRowFailures) {
+            win._salesImportPreviewReady = false;
+            win._salesImportSkippedRows = blocking;
+            setImportProgress(win, '校验完成：' + skippedRows + ' 条异常记录已跳过，但没有可导入的有效记录。', 100, 'blocked');
           } else if (records.length === 0) {
             setImportProgress(win, '没有符合导入规则的有效记录。', 100, 'blocked');
           } else {

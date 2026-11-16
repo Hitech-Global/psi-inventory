@@ -800,12 +800,12 @@ function makePreviewStatsElement(initialHtml = '') {
   };
 }
 
-test('BigSeller summary preserves backend SKU/brand blocking details and downloadable error list', async () => {
+test('BigSeller summary keeps row errors visible and allows the valid rows to import', async () => {
   const stats = makePreviewStatsElement();
   const button = { disabled: false };
   const backendValidationHtml =
-    '<div style="margin-top:10px"><b>SKU/品牌预检查失败 2 行：整批禁止导入</b>' +
-    '<div>第 2 行 · M724：品牌与 SKU 主数据不一致</div>' +
+    '<div style="margin-top:10px"><b>SKU/品牌预检查失败 1 行：整批禁止导入</b>' +
+    '<div>第 2 行 · M724：SKU 主数据不存在：M724</div>' +
     '<button type="button" onclick="downloadSalesImportErrors()">下载错误清单</button></div>';
   const win = {
     document: {
@@ -827,23 +827,64 @@ test('BigSeller summary preserves backend SKU/brand blocking details and downloa
   win._salesImportSourceMode = 'bigseller';
   win._salesImportSkippedStats = { sourceRows: 2, includedRows: 2, trueRows: 2, falseRows: 0 };
   win._salesImportCountry = '印度尼西亚';
-  win._salesImportData = [{ _errors: [] }, { _errors: [] }];
-  win._salesImportBlocking = [{ row: 2, sku_code: 'M724', reason: '品牌与 SKU 主数据不一致' }];
+  win._salesImportData = [{ _rowNum: 2, _errors: [] }, { _rowNum: 3, _errors: [] }];
+  win._salesImportBlocking = [{ row: 2, sku_code: 'M724', reason: 'SKU 主数据不存在：M724' }];
   win._salesImportPreviewReady = false;
 
   await win.requestSalesPreview();
 
   assert.match(stats.innerHTML, /已识别 BigSeller 销售数据/);
-  assert.match(stats.innerHTML, /SKU\/品牌预检查失败 2 行：整批禁止导入/);
-  assert.match(stats.innerHTML, /第 2 行 · M724：品牌与 SKU 主数据不一致/);
+  assert.match(stats.innerHTML, /SKU\/品牌异常 1 行：已自动跳过，其余有效记录可继续导入/);
+  assert.doesNotMatch(stats.innerHTML, /整批禁止导入/);
+  assert.match(stats.innerHTML, /第 2 行 · M724：SKU 主数据不存在：M724/);
   assert.match(stats.innerHTML, /downloadSalesImportErrors\(\)/);
   assert.match(stats.innerHTML, /下载错误清单/);
   assert.match(stats.innerHTML, /id="bigseller-sales-progress"/);
   assert.ok(
     stats.innerHTML.indexOf('id="bigseller-sales-summary"') <
-    stats.innerHTML.indexOf('SKU/品牌预检查失败'),
-    'BigSeller file summary should appear before the preserved backend validation details'
+    stats.innerHTML.indexOf('SKU/品牌异常'),
+    'BigSeller file summary should appear before the preserved row-level validation details'
   );
-  assert.equal(win._salesImportBigSellerProgress.state, 'blocked');
+  assert.equal(win._salesImportBigSellerProgress.state, 'done');
+  assert.match(win._salesImportBigSellerProgress.message, /1 条异常记录已自动跳过，剩余 1 条有效记录可以导入/);
+  assert.equal(win._salesImportPreviewReady, true);
+  assert.equal(button.disabled, false);
+  assert.equal(win._salesImportBlocking.length, 0, 'row-level errors must not remain as a batch submit gate');
+  assert.equal(win._salesImportSkippedRows.length, 1);
+});
+
+test('BigSeller keeps import disabled when every row is invalid', async () => {
+  const stats = makePreviewStatsElement();
+  const button = { disabled: false };
+  const win = {
+    document: {
+      getElementById(id) {
+        return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null;
+      }
+    },
+    handleSalesFile() {},
+    openSalesBatchImport() {},
+    requestSalesPreview: async () => {
+      button.disabled = true;
+      return {};
+    },
+    renderSalesPreview() {}
+  };
+  BigSeller.install(win);
+  win._salesImportSourceMode = 'bigseller';
+  win._salesImportSkippedStats = { sourceRows: 2, includedRows: 2, trueRows: 2, falseRows: 0 };
+  win._salesImportCountry = '印度尼西亚';
+  win._salesImportData = [{ _rowNum: 2, _errors: [] }, { _rowNum: 3, _errors: [] }];
+  win._salesImportBlocking = [
+    { row: 2, sku_code: 'BAD-1', reason: 'SKU 主数据不存在：BAD-1' },
+    { row: 3, sku_code: 'BAD-2', reason: 'SKU 主数据不存在：BAD-2' }
+  ];
+  win._salesImportPreviewReady = false;
+
+  await win.requestSalesPreview();
+
+  assert.equal(win._salesImportPreviewReady, false);
   assert.equal(button.disabled, true);
+  assert.equal(win._salesImportBigSellerProgress.state, 'blocked');
+  assert.match(win._salesImportBigSellerProgress.message, /2 条异常记录已跳过，但没有可导入的有效记录/);
 });

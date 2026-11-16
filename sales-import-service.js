@@ -123,7 +123,7 @@ function normalizeSalesRows(items) {
   });
 }
 
-// SKU master is authoritative; case-only variants are standardized, other mismatches block the entire import.
+// SKU master is authoritative; case-only variants are standardized. Invalid rows remain in the preview/result as row-level failures and are excluded from the write plan.
 async function validateSalesBrandRows(adapter, rows) {
   if (!adapter || typeof adapter.loadSkuBrands !== 'function')
     throw new Error('销售导入 SKU 品牌主数据校验不可用，禁止写库');
@@ -900,7 +900,6 @@ async function executeSalesImport(adapter, items, options = {}) {
   const rows = normalizeSalesRows(items);
   const brandPrecheck=await validateSalesBrandRows(adapter,rows);
   timings.validation_ms = clockNow() - validationStart;
-  if(brandPrecheck.failures.length)throw new SalesBrandPrecheckError(brandPrecheck.failures);
   await reportImportProgress(options, {
     status: 'validating', phase: 'validating', percent: 10,
     processed_count: 0, total_count: rows.length,

@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),Database=require('better-sqlite3');
-const {createSqliteSalesImportAdapter,executeSalesImport,previewSalesImport,SalesBrandPrecheckError}=require('../sales-import-service');
+const {createSqliteSalesImportAdapter,executeSalesImport,previewSalesImport}=require('../sales-import-service');
 const base={source_system:'Bigseller',order_date:'2026-10-15',country:'印度尼西亚',shop_platform:'线上渠道',quantity:1,brand:'Boya',sku_code:'SKU-B'};
 function row(i,o={}){return {...base,order_no:'BS-'+i,...o};}
 function dbFactory(){
@@ -33,22 +33,36 @@ test('real SQLite: preview and committed import both use canonical BOYA without 
   assert(entries.every(r=>r.country==='印度尼西亚'&&r.quantity===1));
  }finally{raw.close();}
 });
-test('real SQLite: wrong warehouse-brand mixed with valid row blocks ALL writes',async()=>{
+test('real SQLite: wrong warehouse-brand row is skipped while valid row commits',async()=>{
  const {raw,adapter}=dbFactory();
  try{
   const inputs=[row(1),row(2,{sku_code:'SKU-R',brand:'Redragon Warehouse'})];
   const pre=await previewSalesImport(adapter,inputs);
   assert.equal(pre.blocking.length,1);
-  await assert.rejects(executeSalesImport(adapter,inputs,{importBatchId:'NO-WRITE'}),SalesBrandPrecheckError);
-  assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM sales_records').get().n,0);
+  assert.deepEqual(pre.preview.map(item=>item.action),['insert','failed']);
+  const result=await executeSalesImport(adapter,inputs,{importBatchId:'PARTIAL-IMPORT'});
+  assert.equal(result.result.inserted,1);
+  assert.equal(result.result.updated,0);
+  assert.equal(result.result.failed,1);
+  assert.match(result.result.errors[0].reason,/品牌与 SKU 主数据不一致/);
+  const entries=raw.prepare('SELECT order_no,sku_code,brand FROM sales_records').all();
+  assert.deepEqual(entries,[{order_no:'BS-1',sku_code:'SKU-B',brand:'BOYA'}]);
  }finally{raw.close();}
 });
-test('real SQLite: missing master and empty master both block batch, no sale rows',async()=>{
+test('real SQLite: missing and empty SKU masters are skipped while valid rows commit',async()=>{
  const {raw,adapter}=dbFactory();
  try{
-  await assert.rejects(executeSalesImport(adapter,[row(1,{sku_code:'SKU-MISSING'}),row(2,{sku_code:'SKU-EMPTY'})]),e=>{
-   assert.equal(e.rowErrors.length,2);return true;
-  });
-  assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM sales_records').get().n,0);
+  const result=await executeSalesImport(adapter,[
+   row(1,{sku_code:'SKU-MISSING'}),
+   row(2,{sku_code:'SKU-EMPTY'}),
+   row(3)
+  ]);
+  assert.equal(result.result.inserted,1);
+  assert.equal(result.result.failed,2);
+  assert.equal(result.result.errors.length,2);
+  assert.match(result.result.errors[0].reason,/SKU 主数据不存在/);
+  assert.match(result.result.errors[1].reason,/SKU 主数据品牌为空/);
+  const entries=raw.prepare('SELECT sku_code FROM sales_records').all();
+  assert.deepEqual(entries,[{sku_code:'SKU-B'}]);
  }finally{raw.close();}
 });

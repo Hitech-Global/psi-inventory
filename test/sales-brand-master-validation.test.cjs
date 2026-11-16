@@ -2,7 +2,7 @@
 const test=require('node:test'), assert=require('node:assert/strict'), fs=require('node:fs'), path=require('node:path');
 const {
  validateSalesBrandRows,normalizeSalesRows,executeSalesImport,previewSalesImport,
- createSqliteSalesImportAdapter,createPostgresSalesImportAdapter,SalesBrandPrecheckError
+ createSqliteSalesImportAdapter,createPostgresSalesImportAdapter
 }=require('../sales-import-service.js');
 const base={source_system:'Bigseller',order_no:'SALES-1',order_date:'2026-10-15',country:'印度尼西亚',sku_code:'SKU-B',quantity:1,brand:'BOYA'};
 function row(values={}){return {...base,...values};}
@@ -30,19 +30,19 @@ test('case-only BOYA/Boya canonicalization and blank brand use actual SKU master
  assert(y.events.indexOf('masters')<y.events.indexOf('transaction'),'validation must precede transaction');
  assert(y.events.includes('write'));
 });
-test('a wrong brand in ANY row blocks the entire import before staging and writing',async()=>{
- const m=mock(new Map([['SKU-B','BOYA'],['SKU-R','Redragon']]));
+test('a wrong-brand row is excluded while valid rows are staged and written',async()=>{
+ const masters=new Map([['SKU-B','BOYA'],['SKU-R','Redragon']]);
  const items=[row(),row({brand:'Redragon Warehouse',sku_code:'SKU-R',order_no:'SALES-2'})];
- const v=await previewSalesImport(m.adapter,items);
+ const v=await previewSalesImport(mock(masters).adapter,items);
  assert.equal(v.blocking.length,1);
  assert.match(v.blocking[0].reason,/导入「Redragon Warehouse」，主数据「Redragon」/);
  assert.deepEqual(v.preview.map(p=>p.action),['insert','failed']);
- const a=mock(new Map([['SKU-B','BOYA'],['SKU-R','Redragon']]));
- await assert.rejects(executeSalesImport(a.adapter,items),err=>{
-  assert(err instanceof SalesBrandPrecheckError);
-  assert.equal(err.status,422);assert.equal(err.rowErrors[0].row,3);return true;
- });
- assert.deepEqual(a.events,['masters'],'no transaction or sales mutations on any blocking row');
+ const a=mock(masters);
+ const run=await executeSalesImport(a.adapter,items);
+ assert.equal(run.result.inserted,1);
+ assert.equal(run.result.failed,1);
+ assert.deepEqual(run.preview.map(p=>p.action),['insert','failed']);
+ assert.deepEqual(a.events,['masters','transaction','stage','write']);
 });
 test('missing SKU master and blank canonical SKU brand fail with row-specific messages',async()=>{
  const x=mock(new Map([['SKU-B','']]));
