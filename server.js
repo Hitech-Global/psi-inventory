@@ -19296,9 +19296,19 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
     // 获取该CI的所有费用项
     const costItems = query('SELECT * FROM ci_cost_items WHERE ci_id = ? ORDER BY created_at', [req.params.id]).rows;
 
+    // 商品金额使用CI原币；关税使用目的国主数据中的本币，禁止把不同币种直接相加。
+    const dutyCountryRaw = String(ci.country || '').trim();
+    const dutyCountryKey = COUNTRY_ALIAS_MAP[dutyCountryRaw] || dutyCountryRaw;
+    const dutyCountry = dutyCountryKey
+      ? queryOne("SELECT default_currency FROM countries WHERE status = 'active' AND (name = ? OR code = ?) LIMIT 1", [dutyCountryKey, dutyCountryKey])
+      : null;
+    const customsDutyCurrency = String(dutyCountry && dutyCountry.default_currency || '').trim().toUpperCase();
+
     // 按类别汇总
     const summary = {
       goods_amount: ci.goods_amount || 0,
+      goods_currency: String(ci.currency || 'RMB').trim().toUpperCase(),
+      customs_duty_currency: customsDutyCurrency,
       paid_deposit: ci.actual_deducted_deposit || 0,
       payable_balance: ci.payable_balance || 0,
       goods_paid: ci.paid_balance || 0,
@@ -19337,8 +19347,9 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
     });
     summary.shared_fees=shared;
     summary.fx_blockers=fxBlockers;
-    summary.landing_cost_total=fxBlockers.length?null:
-      summary.goods_amount + summary.warehouse_arrival_total + summary.customs_duty_total + summary.inspection_fee_total;
+    // CI费用可能分别以商品原币、目的国本币和费用原币记录。此处不生成跨币种总额；
+    // 统一目标币种后的落地成本只在WAC核算模块计算和分摊。
+    summary.landing_cost_total = null;
     summary.cost_items = costItems;
     summary.ci_items = query('SELECT id, sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount, actual_customs_rate FROM commercial_invoice_items WHERE ci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
 
