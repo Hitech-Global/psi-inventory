@@ -1167,6 +1167,7 @@ describe('computeWacCostFacts - CI-level duty source', () => {
       'logistics_batches', 'packing_lists', 'packing_list_items',
       'commercial_invoices', 'commercial_invoice_items', 'ci_cost_items',
       'payment_requests', 'payment_settlement_logs', 'payment_transactions',
+      'shared_logistics_fees', 'shared_logistics_fee_batches',
       'exchange_rates', 'inventory', 'wac_history'
     ]) db.exec('DELETE FROM ' + table);
     run('INSERT OR REPLACE INTO countries (id, name, code, default_currency, sort_order) VALUES (?, ?, ?, ?, ?)',
