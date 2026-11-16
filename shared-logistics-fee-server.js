@@ -246,7 +246,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
         if(shown.status==='pending_fx')batch_totals_display[b.id].pending_fx=true;
         else addDisplay(batch_totals_display[b.id].amounts_by_currency,shown.currency,shown.amount_minor);
       });
-      const {splitConvertedMinor,splitMinor}=require('./shared-logistics-fee-core');
+      const {splitConvertedMinor}=require('./shared-logistics-fee-core');
       fees.forEach(f=>{
         const converted=f.conversion;
         if(!converted.error){
@@ -263,7 +263,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
         errors.push(f.bill_no+': '+converted.error);
         if(f.payment_status!=='paid'){
           addDisplay(displayMinorByCurrency,f.currency,f.amount_minor);
-          for(const part of splitMinor(Number(f.amount_minor),f.allocations)){
+          for(const part of splitConvertedMinor(Number(f.amount_minor),f.allocations)){
             const b=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={amounts_by_currency:{}});
             addDisplay(b.amounts_by_currency,f.currency,part.amount_minor);
           }
