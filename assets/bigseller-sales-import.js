@@ -75,6 +75,22 @@
     return { value: Number.isFinite(number) ? number : value, valid: Number.isFinite(number) && Number.isInteger(number) && number > 0 };
   }
 
+  function isMissingAmount(value) {
+    var raw = text(value).replace(/[\\s\\u3000]+/g, '').toLowerCase();
+    return !raw || ['--', '—', '–', '-', 'n/a', 'na', 'null'].indexOf(raw) >= 0;
+  }
+
+  function isNoAmountRow(row, columns) {
+    var amountColumns = [columns.productCost, columns.unitPrice, columns.productTotal].filter(function (index) {
+      return index >= 0;
+    });
+    // Older BigSeller exports may omit all amount columns; do not infer that
+    // those rows are duplicates when the source provides no amount evidence.
+    return amountColumns.length > 0 && amountColumns.every(function (index) {
+      return isMissingAmount(row && row[index]);
+    });
+  }
+
   function normalizeMarker(value) {
     return text(value).replace(/[\s\u3000]+/g, '').toLowerCase();
   }
@@ -155,6 +171,9 @@
         status: findColumn(headers, ['订单状态', 'order status', 'status']),
         sku: findColumn(headers, ['商品SKU', '商品 SKU', 'sku', 'sku code']),
         quantity: findColumn(headers, ['数量', '商品数量', 'quantity', 'qty']),
+        productCost: findColumn(headers, ['商品成本', 'product cost', 'cost']),
+        unitPrice: findColumn(headers, ['单价', 'unit price']),
+        productTotal: findColumn(headers, ['产品总价', '商品总价', 'product total', 'total price', 'total amount']),
         packageNo: findColumn(headers, ['包裹号', '包裹编号', 'package no', 'package number']),
         platform: findColumn(headers, ['平台', '销售平台', '平台名称', '平台类型', '店铺平台', '渠道', 'platform', 'sales platform', 'marketplace']),
         store: findColumn(headers, ['平台店铺', '店铺', 'platform shop', 'shop name']),
@@ -201,6 +220,7 @@
       includedRows: 0,
       excludedMarkerRows: 0,
       excludedUnpaidRows: 0,
+      excludedNoAmountRows: 0,
       exactDuplicateRows: 0,
       snapshotDuplicateRows: 0,
       conflictGroups: 0,
@@ -231,6 +251,14 @@
       var status = text(row[c.status]);
       if (isUnpaidStatus(status)) {
         stats.excludedUnpaidRows++;
+        continue;
+      }
+
+      // BigSeller sometimes exports a duplicate order-item row with no
+      // monetary values. Exclude it before grouping, so a different package
+      // number on that placeholder cannot quarantine the valid paid row.
+      if (isNoAmountRow(row, c)) {
+        stats.excludedNoAmountRows++;
         continue;
       }
 
@@ -474,6 +502,7 @@
       '</div>' +
       '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
       ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
+      ' 条；无金额重复记录排除：' + Number(stats.excludedNoAmountRows || 0).toLocaleString('en-US') +
       ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
