@@ -502,6 +502,7 @@
       '</div>' +
       '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
       ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
+      ' 条；无金额记录排除：' + Number(stats.excludedNoAmountRows || 0).toLocaleString('en-US') +
       ' 条；同订单同包裹商品行合计：' + Number(stats.aggregatedLineRows || 0).toLocaleString('en-US') +
       ' 行；较早状态快照排除：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
