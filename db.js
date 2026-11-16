@@ -349,6 +349,8 @@ if (driver === 'pg') {
         "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'draft'",
         "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS logistics_batch_id TEXT DEFAULT ''",
         "ALTER TABLE packing_lists ADD COLUMN IF NOT EXISTS updated_at TEXT DEFAULT NOW()",
+        // PAYMENT-FX-PRECISION-01：付款汇率快照与 exchange_rates 同步保留 12 位小数，防止大额 IDR→RMB 付款被截断。
+        "DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_settlement_logs' AND column_name IN ('local_rate','rmb_rate') AND data_type='numeric' AND numeric_scale < 12) THEN ALTER TABLE public.payment_settlement_logs ALTER COLUMN local_rate TYPE NUMERIC(24,12) USING local_rate::numeric, ALTER COLUMN rmb_rate TYPE NUMERIC(24,12) USING rmb_rate::numeric; END IF; END $$",
         // CI/PL PERF-01：CI 付款链路与筛选列索引（全部幂等 CREATE INDEX IF NOT EXISTS，零数据触碰）。
         // 此前 payable_items(source)/pri/alloc/settlement/tx 索引只存在于 db-sqlite.js initDatabase，
         // PG 生产从未拥有 → 历史/运营 CI 列表付款事实 N+1 查询在生产全表扫描。
