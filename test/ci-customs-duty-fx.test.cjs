@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { resolveCiCustomsDutyCost } = require('../ci-customs-duty-fx');
 
 function makeInput(overrides = {}) {
@@ -144,4 +146,11 @@ test('uses the locked local-currency snapshot when CI goods currency matches the
 test('does not fall back to a live rate when the CI currency has no locked snapshot', () => {
   const input = makeInput({ ciCurrency: 'USD' });
   assert.throws(() => resolveCiCustomsDutyCost(input), /没有锁定 USD 汇率快照/);
+});
+
+test('WAC allocation consumes the converted duty amount and retains conversion evidence', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(server, /dutyCost = resolveCiCustomsDutyCost/);
+  assert.match(server, /total: inputs\\.dutyTotal,[\\s\\S]{0,120}currency: inputs\\.dutyCurrency/);
+  assert.match(server, /duty_conversion: inputs\\.dutyConversion/);
 });
