@@ -1900,12 +1900,12 @@ async function initDatabase() {
       original_currency TEXT DEFAULT '',
       settlement_country TEXT DEFAULT '',
       local_currency TEXT DEFAULT '',
-      local_rate NUMERIC(18,8) DEFAULT 0,
+      local_rate NUMERIC(24,12) DEFAULT 0,
       local_rate_date TEXT DEFAULT '',
       local_rate_type TEXT DEFAULT '',
       local_rate_direction TEXT DEFAULT '',
       local_amount NUMERIC(18,4) DEFAULT 0,
-      rmb_rate NUMERIC(18,8) DEFAULT 0,
+      rmb_rate NUMERIC(24,12) DEFAULT 0,
       rmb_rate_date TEXT DEFAULT '',
       rmb_rate_type TEXT DEFAULT '',
       rmb_rate_direction TEXT DEFAULT '',
@@ -1926,6 +1926,8 @@ async function initDatabase() {
       FOREIGN KEY (payment_request_id) REFERENCES payment_requests(id) ON DELETE RESTRICT
     )
   `);
+  // PAYMENT-FX-PRECISION-01: existing PG databases must retain the same 12-decimal rate precision as exchange_rates.
+  await exec("DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_settlement_logs' AND column_name IN ('local_rate','rmb_rate') AND data_type='numeric' AND numeric_scale < 12) THEN ALTER TABLE public.payment_settlement_logs ALTER COLUMN local_rate TYPE NUMERIC(24,12) USING local_rate::numeric, ALTER COLUMN rmb_rate TYPE NUMERIC(24,12) USING rmb_rate::numeric; END IF; END $$");
   await exec(`CREATE INDEX IF NOT EXISTS ix_payment_settlement_request ON payment_settlement_logs(payment_request_id, event_type, status)`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_legacy_baseline ON payment_settlement_logs(payment_request_id, event_type) WHERE is_legacy = 1`);
   await exec(`CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_settlement_payment_idempotency ON payment_settlement_logs(idempotency_key) WHERE event_type = 'payment' AND idempotency_key <> ''`);
