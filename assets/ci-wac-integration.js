@@ -14,7 +14,7 @@
     return typeof global.t === 'function' ? global.t(key, fallback) : fallback;
   }
   // Only translate fixed module UI phrases; never rewrite SKU, batch, price, or note values.
-  var CI_WAC_EN = {"合并运费分摊（已计入WAC）":"Shared Freight Allocation (Included in WAC)","上方费用为物流批次自身录入费用；合并账单按原分摊比例折算为目标本币后，在此单独列示。":"The costs above are entered directly on this logistics batch. Shared bills are converted to the target local currency using their original allocation ratios and shown separately here.","本批合并运费分摊合计":"Total Shared Freight Allocated to This Batch","最后实际付款日期":"Last Actual Payment Date","CI商品成本汇率":"CI Goods Cost FX Rate","合并账单":"Shared Freight Bill","分摊依据":"Allocation Basis","本批分摊金额":"Amount Allocated to This Batch","实际付款及汇率快照":"Actual Payments and FX Snapshots","该物流批次尚未进入 WAC 待确认阶段。请检查物流状态是否已到仓，以及 PL 是否存在有效商品数量；满足条件后系统会将状态更新为待确认 WAC。":"This batch is not eligible for WAC confirmation yet. Verify warehouse arrival and positive PL quantities; it will then become pending WAC confirmation.","不会删除物流批次、CI、PL、付款记录，也不会修改库存数量、当前WAC或WAC历史。":"This does not delete logistics, CI, PL, or payment records, and does not change inventory quantities, current WAC, or WAC history.","恢复后需要重新导入原库存并手动确认，不会自动计算。":"After restoring, reimport opening inventory and confirm manually. No calculation is triggered automatically.","当前批次暂时无法加载WAC计算详情，请检查物流批次、PL明细及WAC阻断原因后重试。":"WAC calculation details cannot be loaded. Check the batch, PL items, and any WAC blockers before retrying.","历史批次已人工核算，无需再次计算":"Historical batch calculated manually; no further WAC calculation is required","该物流批次已标记为无需计算":"This logistics batch was marked as no calculation required","确定将物流批次":"Mark logistics batch","标记为无需计算吗？":"as no WAC calculation required?","确定恢复物流批次":"Restore logistics batch","的WAC待确认任务吗？":"to the pending WAC queue?","WAC处理状态":"WAC Processing Status","物流批次详情 / WAC成本详情":"Logistics Batch / WAC Cost Details","物流批次详情 / WAC":"Logistics Batch / WAC","物流批次详情":"Logistics Batch Details","物流费用概览":"Logistics Cost Overview","PL装箱明细":"PL Packing Details","CTN数量":"Cartons","总数量":"Total Quantity","总毛重(KG)":"Gross Weight (kg)","总净重(KG)":"Net Weight (kg)","总体积(CBM)":"Total Volume (CBM)","清关方式":"Customs Clearance","天":"days","无需计算":"No Calculation Required","暂不可计算":"Not Ready for WAC","WAC预览":"WAC Preview","处理原因（必填）":"Reason (required)","标记无需计算":"Mark as No Calculation","确认标记无需计算":"Confirm No Calculation","恢复WAC待确认任务":"Restore WAC Pending","确认恢复":"Confirm Restore","取消":"Cancel","关闭":"Close","请填写无需计算的原因":"Enter a reason for skipping WAC","处理中":"Processing","已标记为无需计算":"Marked as no calculation required","标记无需计算失败":"Failed to mark WAC as not required","恢复中":"Restoring","批次已恢复到WAC待确认列表":"Batch restored to pending WAC confirmation","恢复失败，请刷新后重试":"Restore failed. Refresh and retry","物流批次详情加载失败":"Failed to load logistics batch details","当前版本未加载WAC CC功能，请刷新页面后重试":"WAC CC is unavailable in this version. Refresh and retry","可以在CI列表对应物流批次行点击 CC 补充发送。":"You can send additional CC notifications from the logistics batch row in the CI list."};
+  var CI_WAC_EN = {"合并运费分摊（已计入WAC）":"Shared Freight Allocation (Included in WAC)","上方费用为物流批次自身录入费用；合并账单按原分摊比例折算为目标本币后，在此单独列示。":"The costs above are entered directly on this logistics batch. Shared bills are converted to the target local currency using their original allocation ratios and shown separately here.","本批合并运费分摊合计":"Total Shared Freight Allocated to This Batch","最后实际付款日期":"Last Actual Payment Date","CI商品成本汇率":"CI Goods Cost FX Rate","合并账单":"Shared Freight Bill","分摊依据":"Allocation Basis","本批分摊金额":"Amount Allocated to This Batch","实际付款及汇率快照":"Actual Payments and FX Snapshots","该物流批次尚未进入 WAC 待确认阶段。请检查物流状态是否已到仓，以及 PL 是否存在有效商品数量；满足条件后系统会将状态更新为待确认 WAC。":"This batch is not eligible for WAC confirmation yet. Verify warehouse arrival and positive PL quantities; it will then become pending WAC confirmation.","不会删除物流批次、CI、PL、付款记录，也不会修改库存数量、当前WAC或WAC历史。":"This does not delete logistics, CI, PL, or payment records, and does not change inventory quantities, current WAC, or WAC history.","恢复后需要重新导入原库存并手动确认，不会自动计算。":"After restoring, reimport opening inventory and confirm manually. No calculation is triggered automatically.","当前批次暂时无法加载WAC计算详情，请检查物流批次、PL明细及WAC阻断原因后重试。":"WAC calculation details cannot be loaded. Check the batch, PL items, and any WAC blockers before retrying.","历史批次已人工核算，无需再次计算":"Historical batch calculated manually; no further WAC calculation is required","该物流批次已标记为无需计算":"This logistics batch was marked as no calculation required","确定将物流批次":"Mark logistics batch","标记为无需计算吗？":"as no WAC calculation required?","确定恢复物流批次":"Restore logistics batch","的WAC待确认任务吗？":"to the pending WAC queue?","WAC处理状态":"WAC Processing Status","物流批次详情 / WAC成本详情":"Logistics Batch / WAC Cost Details","物流批次详情 / WAC":"Logistics Batch / WAC","物流批次详情":"Logistics Batch Details","物流费用概览":"Logistics Cost Overview","PL装箱明细":"PL Packing Details","CTN数量":"Cartons","总数量":"Total Quantity","总毛重(KG)":"Gross Weight (kg)","总净重(KG)":"Net Weight (kg)","总体积(CBM)":"Total Volume (CBM)","清关方式":"Customs Clearance","天":"days","无需计算":"No Calculation Required","暂不可计算":"Not Ready for WAC","WAC预览":"WAC Preview","处理原因（必填）":"Reason (required)","标记无需计算":"Mark as No Calculation","确认标记无需计算":"Confirm No Calculation","恢复WAC待确认任务":"Restore WAC Pending","确认恢复":"Confirm Restore","取消":"Cancel","关闭":"Close","请填写无需计算的原因":"Enter a reason for skipping WAC","处理中":"Processing","已标记为无需计算":"Marked as no calculation required","标记无需计算失败":"Failed to mark WAC as not required","恢复中":"Restoring","批次已恢复到WAC待确认列表":"Batch restored to pending WAC confirmation","恢复失败，请刷新后重试":"Restore failed. Refresh and retry","物流批次详情加载失败":"Failed to load logistics batch details","当前版本未加载WAC CC功能，请刷新页面后重试":"WAC CC is unavailable in this version. Refresh and retry","可以在CI列表对应物流批次行点击 CC 补充发送。":"You can send additional CC notifications from the logistics batch row in the CI list.","汇率来源":"FX Source","结算汇率":"Settlement FX Rate","原币金额":"Original Amount","折算金额":"Converted Amount","实际付款日期":"Actual Payment Date","同币种 1:1":"Same currency (1:1)","实际付款结算快照":"Actual payment settlement snapshot","运费实际付款结算快照":"Freight payment settlement snapshot","实际付款日汇率快照":"Actual payment-date FX snapshot","历史批次汇率":"Legacy batch FX rate"};
   var CI_WAC_EN_TERMS = Object.entries(CI_WAC_EN).sort(function(a,b){return b[0].length-a[0].length;});
   function localizeCiWacModal() {
     if(typeof global.getLang!=='function'||global.getLang()!=='en')return;
@@ -123,7 +123,7 @@
       }, 0);
       var fxRate = Number(wacMeta.product_fx_rate) || 0;
       var fxLabel = fxRate > 0
-        ? '1 ' + (wacMeta.ci_currency || '') + ' = ' + fxRate.toFixed(4) + ' ' + localCurrency
+        ? '1 ' + (wacMeta.ci_currency || '') + ' = ' + fxRate.toFixed(2) + ' ' + localCurrency
         : '—';
       var sharedRows = sharedFees.map(function (fee) {
         var basis = String(fee.basis || '').toUpperCase() + ' ' +
@@ -139,7 +139,7 @@
               });
               var rate = Number(event.local_rate) || 0;
               var rateText = rate > 0
-                ? '1 ' + esc(event.original_currency || '') + ' = ' + rate.toFixed(4) + ' ' + esc(event.local_currency || '')
+                ? '1 ' + esc(event.original_currency || '') + ' = ' + rate.toFixed(2) + ' ' + esc(event.local_currency || '')
                 : '—';
               return '<div style="margin:2px 0">' + esc(date(event.paid_date)) + ' · ' +
                 esc(originalAmount) + ' ' + esc(event.original_currency || '') + ' → ' +
@@ -204,6 +204,207 @@
     openLocalizedCiWacModal('物流批次详情 / WAC - ' + (log.batch_no || ''), body,
       '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
       'modal-wac');
+  }
+
+
+  function normalizeWacFxCurrency(value) {
+    var currency = String(value || '').trim().toUpperCase();
+    return currency === 'CNY' ? 'RMB' : currency;
+  }
+  function formatWacFxPair(fromCurrency, toCurrency, rate) {
+    var from = normalizeWacFxCurrency(fromCurrency);
+    var to = normalizeWacFxCurrency(toCurrency);
+    if (!from || !to) return '—';
+    var value = from === to ? 1 : Number(rate);
+    if (!Number.isFinite(value) || value <= 0) return '—';
+    return '1 ' + from + ' = ' + value.toFixed(2) + ' ' + to;
+  }
+  function wacFxSourceLabel(source, rateType, sameCurrency) {
+    if (sameCurrency || source === 'same_currency' || rateType === 'identity') {
+      return tr('wac.same_currency_fx', '同币种 1:1');
+    }
+    if (source === 'freight_payment_settlement' || rateType === 'payment_settlement' ||
+        source === 'locked_payment_settlement_snapshot') {
+      return tr('wac.payment_settlement_fx', '实际付款结算快照');
+    }
+    if (rateType === 'realtime') return tr('wac.realtime_fx', '实际付款日汇率快照');
+    if (source === 'legacy_batch') return tr('wac.legacy_fx', '历史批次汇率');
+    return source || rateType || '—';
+  }
+  function findWacCostCard(formCard, title) {
+    var children = Array.prototype.slice.call(formCard.children || []);
+    for (var i = 0; i < children.length; i++) {
+      var heading = children[i].querySelector('div[style*="font-weight:bold"]');
+      if (heading && heading.textContent.indexOf(title) !== -1) return children[i];
+    }
+    return null;
+  }
+  function replaceWacFxMetric(section, label, value) {
+    if (!section) return false;
+    var spans = section.querySelectorAll('span');
+    for (var i = 0; i < spans.length; i++) {
+      if (spans[i].textContent.trim().indexOf(label + ':') === 0) {
+        spans[i].innerHTML = esc(label) + ': <b>' + esc(value) + '</b>';
+        return true;
+      }
+    }
+    return false;
+  }
+  function appendWacFxMetric(section, key, label, value) {
+    if (!section) return;
+    var row = section.querySelector('div[style*="display:flex"]');
+    if (!row) return;
+    var old = row.querySelector('[data-ci-wac-fx-meta="' + key + '"]');
+    if (old) old.remove();
+    var span = document.createElement('span');
+    span.setAttribute('data-ci-wac-fx-meta', key);
+    span.innerHTML = esc(label) + ': <b>' + esc(value) + '</b>';
+    row.appendChild(span);
+  }
+  function renderWacFxSettlementDisplay() {
+    var preview = global._wacPreview;
+    var meta = preview && preview.meta;
+    var items = preview && Array.isArray(preview.items) ? preview.items : [];
+    var modal = document.getElementById('modal-content');
+    var formCard = modal && modal.querySelector('.form-card');
+    if (!meta || !formCard || !items.length) return;
+
+    var localCurrency = meta.local_currency || '';
+    var productCurrency = meta.ci_currency || '';
+    var freightCurrency = meta.freight_currency || '';
+    var dutyCurrency = meta.duty_currency || freightCurrency;
+    var item0 = items[0];
+
+    // Product cost FX: keep the full-precision calculation untouched; format only the visible rate.
+    var productCard = findWacCostCard(formCard, tr('wac.product_cost_section', '产品成本'));
+    var productRate = item0.product_fx_rate != null ? item0.product_fx_rate : meta.product_fx_rate;
+    var productDate = item0.product_fx_rate_date || meta.product_fx_rate_date || meta.freight_last_paid_date;
+    var productSource = wacFxSourceLabel(
+      item0.product_fx_rate_source || meta.product_fx_rate_source,
+      item0.product_fx_rate_type || meta.product_fx_rate_type,
+      normalizeWacFxCurrency(productCurrency) === normalizeWacFxCurrency(localCurrency)
+    );
+    replaceWacFxMetric(productCard, tr('wac.product_fx', '产品汇率'),
+      formatWacFxPair(productCurrency, localCurrency, productRate));
+    appendWacFxMetric(productCard, 'product-source', tr('wac.fx_source', '汇率来源'), productSource);
+    if (productCard) {
+      var productDateLabel = tr('wac.fx_rate_date', '汇率日期');
+      replaceWacFxMetric(productCard, productDateLabel, date(productDate));
+    }
+
+    // Freight FX: show the amount-weighted applied payment rate, or 1.00 for same-currency settlement.
+    var freightPayments = Array.isArray(meta.freight_payment_breakdown) ? meta.freight_payment_breakdown : [];
+    var freightPaidTotal = 0;
+    var freightWeightedRateTotal = 0;
+    freightPayments.forEach(function (payment) {
+      var amount = Number(payment.amount) || 0;
+      var rate = Number(payment.local_rate) || 0;
+      if (amount > 0 && rate > 0) {
+        freightPaidTotal += amount;
+        freightWeightedRateTotal += amount * rate;
+      }
+    });
+    var freightRate = Number(meta.freight_effective_rate);
+    if (!(freightRate > 0) && freightPaidTotal > 0) {
+      freightRate = freightWeightedRateTotal / freightPaidTotal;
+    }
+    var sameFreightCurrency = normalizeWacFxCurrency(freightCurrency) === normalizeWacFxCurrency(localCurrency);
+    var freightSource = sameFreightCurrency
+      ? tr('wac.same_currency_fx', '同币种 1:1')
+      : wacFxSourceLabel('', freightPayments.length ? freightPayments[0].local_rate_type : '', false);
+    var freightCard = findWacCostCard(formCard, tr('wac.freight_section', '运费'));
+    replaceWacFxMetric(freightCard, tr('wac.effective_rate', '有效汇率'),
+      formatWacFxPair(freightCurrency, localCurrency, freightRate));
+    appendWacFxMetric(freightCard, 'freight-source', tr('wac.fx_source', '汇率来源'), freightSource);
+
+    // Each freight payment row shows its own immutable source/target pair and two-decimal rate.
+    if (freightCard) {
+      var freightTable = freightCard.querySelector('table');
+      if (freightTable) {
+        var headers = freightTable.querySelectorAll('thead th');
+        if (headers[3]) headers[3].textContent = tr('wac.settlement_fx_rate', '结算汇率');
+        var freightRows = freightTable.querySelectorAll('tbody tr');
+        freightRows.forEach(function (row, index) {
+          var payment = freightPayments[index];
+          if (!payment) return;
+          var sourceCurrency = payment.original_currency || freightCurrency;
+          var targetCurrency = payment.local_currency || localCurrency;
+          if (row.children[1]) {
+            row.children[1].textContent =
+              (Number(payment.amount) || 0).toFixed(2) + ' ' + normalizeWacFxCurrency(sourceCurrency);
+          }
+          if (row.children[3]) {
+            row.children[3].textContent = formatWacFxPair(sourceCurrency, targetCurrency, payment.local_rate);
+            row.children[3].title = wacFxSourceLabel('', payment.local_rate_type, normalizeWacFxCurrency(sourceCurrency) === normalizeWacFxCurrency(targetCurrency));
+          }
+        });
+      }
+    }
+
+    // Customs duty FX: same-currency duties still show 1.00 and the actual payment date.
+    var dutyEvents = Array.isArray(meta.duty_fx_breakdown) ? meta.duty_fx_breakdown : [];
+    var dutyPaidTotal = 0;
+    var dutyWeightedRateTotal = 0;
+    dutyEvents.forEach(function (event) {
+      var amount = Number(event.original_amount) || 0;
+      var rate = Number(event.rate) || 0;
+      if (amount > 0 && rate > 0) {
+        dutyPaidTotal += amount;
+        dutyWeightedRateTotal += amount * rate;
+      }
+    });
+    var dutyRate = dutyPaidTotal > 0 ? dutyWeightedRateTotal / dutyPaidTotal : null;
+    var sameDutyCurrency = normalizeWacFxCurrency(dutyCurrency) === normalizeWacFxCurrency(localCurrency);
+    var dutySource = wacFxSourceLabel(meta.duty_conversion_source,
+      dutyEvents.length ? dutyEvents[0].rate_type : '', sameDutyCurrency);
+    var dutyDate = meta.duty_payment_date ||
+      (dutyEvents.length ? dutyEvents[dutyEvents.length - 1].paid_date : '');
+    var dutyCard = findWacCostCard(formCard, tr('wac.duty_section', '关税'));
+    appendWacFxMetric(dutyCard, 'duty-rate', tr('wac.settlement_fx_rate', '结算汇率'),
+      formatWacFxPair(dutyCurrency, localCurrency, dutyRate));
+    appendWacFxMetric(dutyCard, 'duty-paid-date', tr('wac.actual_payment_date', '实际付款日期'), date(dutyDate));
+    appendWacFxMetric(dutyCard, 'duty-source', tr('wac.fx_source', '汇率来源'), dutySource);
+
+    if (dutyCard) {
+      var oldDutyBreakdown = dutyCard.querySelector('.ci-wac-duty-fx-breakdown');
+      if (oldDutyBreakdown) oldDutyBreakdown.remove();
+      if (dutyEvents.length) {
+        var dutyBox = document.createElement('div');
+        dutyBox.className = 'ci-wac-duty-fx-breakdown';
+        var dutyRows = dutyEvents.map(function (event) {
+          return '<tr>' +
+            '<td>' + esc(date(event.paid_date)) + '</td>' +
+            '<td>' + esc((Number(event.original_amount) || 0).toFixed(2) + ' ' + normalizeWacFxCurrency(event.from_currency || dutyCurrency)) + '</td>' +
+            '<td>' + esc((Number(event.converted_amount) || 0).toFixed(2) + ' ' + normalizeWacFxCurrency(event.to_currency || localCurrency)) + '</td>' +
+            '<td>' + esc(formatWacFxPair(event.from_currency || dutyCurrency, event.to_currency || localCurrency, event.rate)) + '</td>' +
+            '<td>' + esc(date(event.rate_date)) + '</td>' +
+          '</tr>';
+        }).join('');
+        dutyBox.innerHTML =
+          '<div style="font-size:12px;font-weight:bold;margin:8px 0 4px">' + esc(tr('wac.payment_breakdown', '付款明细')) + '</div>' +
+          '<div class="table-container" style="box-shadow:none;border-radius:0;overflow:auto">' +
+            '<table class="data-table wac-left-align" style="font-size:11px;min-width:560px;text-align:left">' +
+              '<thead><tr><th>' + esc(tr('wac.actual_payment_date', '付款日期')) + '</th>' +
+                '<th>' + esc(tr('wac.original_amount', '原始金额')) + '</th>' +
+                '<th>' + esc(tr('wac.converted_amount', '折算金额')) + '</th>' +
+                '<th>' + esc(tr('wac.settlement_fx_rate', '结算汇率')) + '</th>' +
+                '<th>' + esc(tr('wac.fx_rate_date', '汇率日期')) + '</th></tr></thead>' +
+              '<tbody>' + dutyRows + '</tbody></table></div>';
+        dutyCard.appendChild(dutyBox);
+      }
+    }
+    localizeCiWacModal();
+  }
+  var originalWacConfirmFxDisplay = global.wacConfirm;
+  if (typeof originalWacConfirmFxDisplay === 'function' && !originalWacConfirmFxDisplay.__ciWacFxDisplayWrapped) {
+    var wrappedWacConfirmFxDisplay = async function () {
+      var result = await originalWacConfirmFxDisplay.apply(this, arguments);
+      renderWacFxSettlementDisplay();
+      return result;
+    };
+    wrappedWacConfirmFxDisplay.__ciWacFxDisplayWrapped = true;
+    wrappedWacConfirmFxDisplay.__original = originalWacConfirmFxDisplay;
+    global.wacConfirm = wrappedWacConfirmFxDisplay;
   }
 
   var wacDetailBusy = false;
