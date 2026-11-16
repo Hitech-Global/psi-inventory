@@ -48,6 +48,7 @@ on:
       - 'assets/ci-list-freight.js'
       - 'assets/ci-shared-freight-display.js'
       - 'shared-logistics-fee-server.js'
+      - 'test/shared-logistics-fee-fx-precision.test.cjs'
       - 'test/ci-shared-freight-display.test.cjs'
       - 'scripts/ci-list-i18n-hotfix.cjs'
       - 'test/ci-list-i18n-hotfix.test.cjs'
@@ -160,6 +161,7 @@ jobs:
           node --check assets/ci-shared-freight-display.js
           node --check test/ci-shared-freight-display.test.cjs
           node --check shared-logistics-fee-server.js
+          node --check test/shared-logistics-fee-fx-precision.test.cjs
           node --check assets/ci-summary-compact.js
           node --check assets/ci-expense-modal-mac.js
           node --check test/ci-expense-modal-mac.test.cjs
@@ -251,6 +253,8 @@ jobs:
         run: node test/ci-expense-modal-mac.test.cjs
       - name: Test CI shared freight summary and detail display
         run: node --test test/ci-shared-freight-display.test.cjs
+      - name: Test payment settlement FX snapshot precision
+        run: node test/shared-logistics-fee-fx-precision.test.cjs
       - name: Test CI logistics-status filter
         run: node --test test/ci-logistics-status-filter.test.cjs
       - name: Test CI date and logistics carrier / mode field separation
