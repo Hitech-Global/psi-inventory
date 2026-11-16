@@ -151,6 +151,6 @@ test('does not fall back to a live rate when the CI currency has no locked snaps
 test('WAC allocation consumes the converted duty amount and retains conversion evidence', () => {
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.match(server, /dutyCost = resolveCiCustomsDutyCost/);
-  assert.match(server, /total: inputs\\.dutyTotal,[\\s\\S]{0,120}currency: inputs\\.dutyCurrency/);
-  assert.match(server, /duty_conversion: inputs\\.dutyConversion/);
+  assert.match(server, /total: inputs\.dutyTotal,[\s\S]{0,120}currency: inputs\.dutyCurrency/);
+  assert.match(server, /duty_conversion: inputs\.dutyConversion/);
 });
