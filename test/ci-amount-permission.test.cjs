@@ -138,8 +138,8 @@ must(inline, /data-ci-logi-export-ci-pl/, 'CI&PL export action must remain avail
 assert.doesNotMatch(inline, /canViewAmounts\(\) \? '<button[^']*data-ci-logi-export-ci-pl=/, 'CI&PL export action must not be gated by amount permission');
 
 // Updated CI money helper and FX tooltip translations must not be served from stale browser caches.
-assert.ok(index.includes('i18n.js?v=20261116-1'), 'CI FX tooltip translations must use the current i18n asset');
-assert.ok(index.includes('app.js?v=20261116-3'), 'CI detail money formatter must use the current app asset');
+assert.ok(index.includes('i18n.js?v=20261116-2'), 'CI FX tooltip translations must use the current i18n asset');
+assert.ok(index.includes('app.js?v=20261116-4'), 'CI detail money formatter must use the current app asset');
 
 // Role UI label and script ordering.
 must(i18n, /permission\.label\.ci_amount_view/, 'permission i18n label missing');

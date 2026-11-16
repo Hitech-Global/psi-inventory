@@ -1005,6 +1005,18 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
 }
 
 
+
+/* WAC calculation hover: compact horizontal spreadsheet-style details */
+.wac-calc-hover{cursor:help;text-decoration:underline dotted;text-underline-offset:3px;text-decoration-color:rgba(31,35,41,.35)}
+#wac-calc-tooltip{position:fixed;z-index:10050;display:block;box-sizing:border-box;width:max-content;max-width:calc(100vw - 24px);padding:10px 12px;background:#fff;color:var(--text,#1f2329);border:1px solid var(--border,#e5e6eb);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.16);opacity:0;visibility:hidden;transition:opacity .12s ease,visibility .12s ease;pointer-events:none}
+#wac-calc-tooltip.visible{opacity:1;visibility:visible}
+#wac-calc-tooltip .wac-calc-tip-title{font-size:12px;font-weight:600;margin:0 0 8px;color:var(--text,#1f2329)}
+#wac-calc-tooltip .wac-calc-tip-scroll{max-width:calc(100vw - 48px);overflow-x:auto}
+#wac-calc-tooltip table{border-collapse:collapse;width:max-content;min-width:100%;white-space:nowrap;font-size:12px;line-height:1.45}
+#wac-calc-tooltip th,#wac-calc-tooltip td{padding:7px 10px;border:1px solid #e5e6eb;text-align:left;vertical-align:middle}
+#wac-calc-tooltip th{background:#f5f6f8;font-weight:600;color:#646a73}
+#wac-calc-tooltip td{background:#fff;color:#1f2329;font-variant-numeric:tabular-nums}
+
 </style>
 </head>
 <body>
@@ -1079,14 +1091,14 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
 <div class="drawer-overlay" id="cockpit-drawer-overlay" onclick="if(event.target===this)closeCockpitDrawer()"></div>
 <aside class="drawer" id="cockpit-drawer"></aside>
 <div id="global-tooltip"></div>
-<script src="i18n.js?v=20261116-1"></script>
+<script src="i18n.js?v=20261116-2"></script>
 <script src="assets/wac-bigseller-old-inventory.js?v=20261110-1"></script>
 <script src="assets/inv-import-rules.js?v=20261113-1"></script>
 <script src="assets/rp-review-report.js"></script>
 <script src="app-perf.js"></script>
 <script src="assets/finance-payment-calendar.js"></script>
 <script src="assets/pi-multi-po-ui.js"></script>
-<script src="app.js?v=20261116-3"></script>
+<script src="app.js?v=20261116-4"></script>
 <script src="assets/pl-import-parser.js?v=20261107-1"></script>
 <script src="assets/bigseller-sales-import.js?v=20261116-6"></script>
 <script src="assets/zhisu-sales-import.js?v=20261110-1"></script>
