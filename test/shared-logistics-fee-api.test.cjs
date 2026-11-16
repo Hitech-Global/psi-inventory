@@ -53,6 +53,8 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(db.queryOne('SELECT COUNT(*) AS n FROM payment_requests').n,1);
     const unpaid=await (await fetch(url+'/api/commercial-invoices/ci_shared_1/shared-logistics-fees')).json();
     a.match(unpaid.fees[0].conversion.error,/尚未实际结算|尚未付款|未审批通过/);
+    a.ok(unpaid.batch_totals_display.b2.display_totals.IDR>0,
+      'expanded logistics row must preserve original IDR while shared bill is unpaid');
     a.ok(unpaid.currency_options.includes('IDR'),'currency options must come from system currency master');
     const pre=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
     a.equal(pre.ci_shared_1.total_rmb,null,'unpaid IDR must not be counted as RMB');
@@ -71,6 +73,8 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.equal(Object.values(paid.batch_totals_rmb).reduce((sum,x)=>sum+Number(x.total_minor||0),0),14500,
       'every batch comprehensive freight must conserve RMB 145 total');
     a.equal(paid.batch_totals_rmb.b1.total_minor>10000,true,'first batch contains original RMB freight');
+    a.equal(paid.batch_totals_display.b2.display_totals.RMB>0,true,
+      'expanded logistics rows must switch shared IDR allocation to settled RMB');
     a.equal(paid.batch_totals_rmb.b2.total_minor>0,true);
     a.equal(paid.batch_totals_rmb.b3.total_minor>0,true);
     const ci=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
