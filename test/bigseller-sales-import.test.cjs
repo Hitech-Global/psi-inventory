@@ -773,7 +773,7 @@ function makePreviewStatsElement(initialHtml = '') {
     let match;
     while ((match = token.exec(html))) {
       if (match[0].slice(0, 2) === '</') depth -= 1;
-      else if (!/\\/>$/.test(match[0])) depth += 1;
+      else if (match[0].slice(-2) !== '/>') depth += 1;
       if (depth === 0) return html.slice(0, start) + html.slice(token.lastIndex);
     }
     return html;
