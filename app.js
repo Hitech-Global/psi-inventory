@@ -7206,26 +7206,30 @@ async function onRpCountryChange(skipDataReload){
       else if(prevWarehouse && (whs||[]).some(w=>w.name===prevWarehouse)) wSel.value=prevWarehouse;
       else wSel.value='';
     }
-    // 品牌列表优先取仓库配置，并补充当前销售市场中有销售记录的 SKU 品牌。
-    const brandSet=new Set();
+    // 品牌列表优先取仓库配置；历史销售行只补充尚未出现的品牌。
+    // 使用 trim + 小写作为比较键，但保留仓库主数据中的原始展示名称（例如 BOYA）。
+    const brandMap=new Map();
+    const addBrand=function(value){
+      const name=String(value||'').trim();
+      const key=rpBrandKey(name);
+      if(key && !brandMap.has(key)) brandMap.set(key,name);
+    };
     (whs||[]).forEach(w=>{
-      if(w.brands){
-        String(w.brands).split(',').forEach(b=>{
-          const t=b.trim();
-          if(t) brandSet.add(t);
-        });
-      }
+      if(w.brands) String(w.brands).split(',').forEach(addBrand);
     });
     (_snapW&&_snapW.salesOnlyRows||[]).forEach(function(r){
-      if((!country||r.country===country) && r.brand) brandSet.add(String(r.brand).trim());
+      if((!country||r.country===country) && r.brand) addBrand(r.brand);
     });
-    const brands=Array.from(brandSet).filter(Boolean).sort();
+    window._rpBrandCanonicalMap=brandMap;
+    const brands=Array.from(brandMap.values()).sort();
     const bSel=document.getElementById('rp-b');
     if(bSel){
       bSel.innerHTML=t('html.onRpCountryChange.2', '<option value="">全部</option>{v1}', {v1: brands.map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('')});
-      // 按依赖顺序恢复：优先使用 savedState 中的 brand
-      if(restoreBrand && brands.includes(restoreBrand)) bSel.value=restoreBrand;
-      else if(prevBrand && brands.includes(prevBrand)) bSel.value=prevBrand;
+      // 旧偏好可能保存的是 Boya；按不区分大小写匹配并恢复到规范品牌 BOYA。
+      const restoredBrand=brands.find(function(b){return rpBrandMatches(b,restoreBrand);});
+      const previousBrand=brands.find(function(b){return rpBrandMatches(b,prevBrand);});
+      if(restoredBrand) bSel.value=restoredBrand;
+      else if(previousBrand) bSel.value=previousBrand;
       else bSel.value='';
     }
   }catch(e){console.warn('onRpCountryChange failed',e)}
@@ -7585,7 +7589,7 @@ function rpLocalSnapshotRows(){
     var r=rows[i];
     if(c && r.country!==c) continue;
     if(w && r.target_warehouse!==w) continue;
-    if(b && r.brand!==b) continue;
+    if(b && !rpBrandMatches(r.brand,b)) continue;
     if(ss && r.sales_status!==ss) continue;
     if(ls && r.lifecycle_status!==ls) continue;
     if(k && (r.sku_code||'').indexOf(k)<0 && (r.product_name||'').indexOf(k)<0) continue;
@@ -7599,11 +7603,11 @@ function rpLocalSnapshotRows(){
     (snapshot.salesOnlyRows||[]).forEach(function(sr){
       var key=(sr.sku_code||'')+'|'+(sr.country||'');
       if(sr.country!==c || existing[key]) return;
-      if(b && sr.brand!==b) return;
+      if(b && !rpBrandMatches(sr.brand,b)) return;
       if(k && String(sr.sku_code||'').indexOf(k)<0 && String(sr.product_name||'').indexOf(k)<0) return;
       out.push({
         id:'sales-only-'+String(sr.country||'')+'-'+String(sr.sku_code||''),
-        sku_code:sr.sku_code, country:sr.country, brand:sr.brand,
+        sku_code:sr.sku_code, country:sr.country, brand:rpCanonicalBrand(sr.brand),
         product_name:sr.product_name, model:sr.model, category:sr.category,
         target_warehouse:'', available_qty:0, in_transit_qty:0,
         pi_confirmed_unshipped_qty:0, po_unconfirmed_pi_qty:0,
@@ -7641,15 +7645,29 @@ function rpDeriveCountriesFallback(master,salesRows){
   (salesRows||[]).forEach(function(r){ var c=r&&r.country; if(c&&!seen[c]){seen[c]=true;out.push(c);} });
   return out.sort();
 }
+function rpBrandKey(value){
+  return String(value==null?'':value).trim().toLowerCase();
+}
+function rpBrandMatches(left,right){
+  var a=rpBrandKey(left),b=rpBrandKey(right);
+  return !!a && a===b;
+}
+function rpCanonicalBrand(value){
+  var raw=String(value==null?'':value).trim();
+  var map=window._rpBrandCanonicalMap;
+  return map && map.get(rpBrandKey(raw)) || raw;
+}
 function rpFilterWarehousesByCountry(master,country){
   if(!country) return (master||[]).slice();
   return (master||[]).filter(function(w){ return w.country_name===country; });
 }
 function rpFilterWarehousesByCountryBrand(master,country,brand){
+  var target=rpBrandKey(brand);
   return rpFilterWarehousesByCountry(master,country).filter(function(w){
-    if(!brand) return true;
+    if(!target) return true;
     var bstr=String(w.brands||'');
-    return bstr==='' || bstr.indexOf(brand)>=0;
+    if(!bstr.trim()) return true;
+    return bstr.split(',').some(function(item){return rpBrandMatches(item,target);});
   });
 }
 async function rpGetWarehouseMaster(){
