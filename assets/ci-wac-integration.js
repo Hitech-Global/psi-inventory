@@ -123,7 +123,7 @@
       }, 0);
       var fxRate = Number(wacMeta.product_fx_rate) || 0;
       var fxLabel = fxRate > 0
-        ? '1 ' + (wacMeta.ci_currency || '') + ' = ' + fxRate.toFixed(4) + ' ' + localCurrency
+        ? '1 ' + (wacMeta.ci_currency || '') + ' = ' + fxRate.toFixed(2) + ' ' + localCurrency
         : '—';
       var sharedRows = sharedFees.map(function (fee) {
         var basis = String(fee.basis || '').toUpperCase() + ' ' +
@@ -139,7 +139,7 @@
               });
               var rate = Number(event.local_rate) || 0;
               var rateText = rate > 0
-                ? '1 ' + esc(event.original_currency || '') + ' = ' + rate.toFixed(4) + ' ' + esc(event.local_currency || '')
+                ? '1 ' + esc(event.original_currency || '') + ' = ' + rate.toFixed(2) + ' ' + esc(event.local_currency || '')
                 : '—';
               return '<div style="margin:2px 0">' + esc(date(event.paid_date)) + ' · ' +
                 esc(originalAmount) + ' ' + esc(event.original_currency || '') + ' → ' +

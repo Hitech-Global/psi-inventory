@@ -22,6 +22,7 @@ for (const file of [app, ciLogistics, integration, patch]) {
 execFileSync(process.execPath, [patch], { stdio: 'pipe' });
 execFileSync(process.execPath, ['--check', server], { stdio: 'pipe' });
 
+const appSrc = fs.readFileSync(app, 'utf8');
 const ciSrc = fs.readFileSync(ciLogistics, 'utf8');
 const integrationSrc = fs.readFileSync(integration, 'utf8');
 const serverSrc = fs.readFileSync(server, 'utf8');
@@ -50,10 +51,16 @@ assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confir
 assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
 assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
 assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261113-4'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261116-6'), 'WAC submit integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
+assert.ok((appSrc.match(/Number\(pd\.local_rate\)\.toFixed\(2\)/g) || []).length >= 2, 'freight payment FX rates must display two decimals in logistics detail and WAC preview');
+assert.ok(appSrc.includes('Number(fpf.effective_rate).toFixed(2)'), 'freight effective FX rate must display two decimals in logistics detail');
+assert.ok(appSrc.includes('Number(it0.product_fx_rate).toFixed(2)'), 'product FX rate must display two decimals in WAC preview');
+assert.ok(appSrc.includes('Number(m.freight_effective_rate).toFixed(2)'), 'freight effective FX rate must display two decimals in WAC preview');
+assert.ok(integrationSrc.includes('fxRate.toFixed(2)'), 'shared freight product FX rate must display two decimals');
+assert.ok(integrationSrc.includes('rate.toFixed(2)'), 'shared freight payment FX rate must display two decimals');
 assert.ok(integrationSrc.includes('wacMeta.shared_freight_breakdown'), 'shared freight allocation must be visible in logistics batch detail');
 assert.ok(integrationSrc.includes('合并运费分摊（已计入WAC）'), 'shared freight section must clearly distinguish allocated common bills');
 assert.ok(integrationSrc.includes("\"合并运费分摊（已计入WAC）\":\"Shared Freight Allocation (Included in WAC)\""), 'missing English translation for 合并运费分摊（已计入WAC）');

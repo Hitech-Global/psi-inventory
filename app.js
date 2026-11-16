@@ -14460,7 +14460,7 @@ async function viewLogDetail(id){
             '<td class="cell-id">'+esc(pd.payment_request_id)+'</td>'+
             '<td>'+Number(pd.amount).toFixed(2)+'</td>'+
             '<td>'+esc(pd.local_currency)+'</td>'+
-            '<td>'+Number(pd.local_rate).toFixed(4)+'</td>'+
+            '<td>'+Number(pd.local_rate).toFixed(2)+'</td>'+
             '<td class="cell-date">'+fmtDate(pd.local_rate_date)+'</td>'+
             '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
             '<td>'+Number(pd.local_amount).toFixed(2)+'</td>'+
@@ -14472,7 +14472,7 @@ async function viewLogDetail(id){
           '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.business_freight','业务运费金额')+'</span><span class="detail-value">'+fmtMoney(l.total_freight,l.freight_currency)+'</span></div>'+
           '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.actual_payment_date','实际付款日期')+'</span><span class="detail-value">'+fmtDate(fpf.last_paid_date)+'</span></div>'+
           '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.local_currency','本币')+'</span><span class="detail-value">'+esc(pb[0]?pb[0].local_currency:'')+'</span></div>'+
-          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.effective_rate','有效汇率')+'</span><span class="detail-value">'+(fpf.effective_rate!=null?Number(fpf.effective_rate).toFixed(4):'-')+'</span></div>'+
+          '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.effective_rate','有效汇率')+'</span><span class="detail-value">'+(fpf.effective_rate!=null?Number(fpf.effective_rate).toFixed(2):'-')+'</span></div>'+
           '<div class="detail-item"><span class="detail-label">'+t('logistics.detail.local_amount','本币金额')+'</span><span class="detail-value">'+Number(fpf.local_total||0).toFixed(2)+'</span></div>'+
           '</div>'+pbHtml+'</div>';
       })()+
@@ -16275,7 +16275,7 @@ async function wacConfirm(batchId){
           '<span>'+t('wac.original_currency','原始货币')+': <b>'+esc(m.ci_currency||'')+'</b></span>'+
           '<span>'+t('wac.original_amount','原始金额')+': <b>'+fmtMoney(m.ci_goods_amount_total,m.ci_currency)+'</b></span>'+
           '<span>'+t('wac.actual_payment_date','运费付款日')+': <b>'+fmtDate(m.freight_last_paid_date)+'</b></span>'+
-          '<span>'+t('wac.product_fx','产品汇率')+': <b>'+(it0.product_fx_rate!=null?Number(it0.product_fx_rate).toFixed(4)+' ('+esc(it0.product_fx_direction||'')+')':'-')+'</b></span>'+
+          '<span>'+t('wac.product_fx','产品汇率')+': <b>'+(it0.product_fx_rate!=null?Number(it0.product_fx_rate).toFixed(2)+' ('+esc(it0.product_fx_direction||'')+')':'-')+'</b></span>'+
           '<span>'+t('wac.fx_rate_date','汇率日期')+': <b>'+fmtDate(it0.product_fx_rate_date||m.freight_last_paid_date)+'</b></span>'+
         '</div></div>';
 
@@ -16289,7 +16289,7 @@ async function wacConfirm(batchId){
           '<td class="cell-id" style="text-align:left!important">'+esc(pd.payment_request_id)+'</td>'+
           '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.amount).toFixed(2)+'</td>'+
           '<td style="text-align:left!important">'+esc(pd.local_currency)+'</td>'+
-          '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_rate).toFixed(4)+'</td>'+
+          '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_rate).toFixed(2)+'</td>'+
           '<td class="cell-date" style="text-align:left!important">'+fmtDate(pd.local_rate_date)+'</td>'+
           '<td class="cell-date">'+fmtDate(pd.paid_date)+'</td>'+
           '<td class="wac-left-cell" style="text-align:left!important">'+Number(pd.local_amount).toFixed(2)+'</td>'+
@@ -16303,7 +16303,7 @@ async function wacConfirm(batchId){
           '<span>'+t('wac.business_amount','业务金额')+': <b>'+fmtMoney(m.freight_business_amount,m.freight_currency)+'</b></span>'+
           '<span>'+t('wac.payment_status','付款状态')+': <b>'+(pb.length>0?'✅ '+t('wac.import_ok','就绪'):'❌')+'</b></span>'+
           '<span>'+t('wac.last_paid_date','最后付款日期')+': <b>'+fmtDate(m.freight_last_paid_date)+'</b></span>'+
-          '<span>'+t('wac.effective_rate','有效汇率')+': <b>'+(m.freight_effective_rate!=null?Number(m.freight_effective_rate).toFixed(4):'-')+'</b></span>'+
+          '<span>'+t('wac.effective_rate','有效汇率')+': <b>'+(m.freight_effective_rate!=null?Number(m.freight_effective_rate).toFixed(2):'-')+'</b></span>'+
           '<span>'+t('wac.local_amount','本币金额')+': <b>'+fmtMoney(m.freight_local_amount,m.local_currency)+'</b></span>'+
         '</div>'+pbHtml+'</div>';
 
