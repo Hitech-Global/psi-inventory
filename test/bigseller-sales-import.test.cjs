@@ -818,6 +818,7 @@ test('BigSeller summary preserves backend SKU/brand blocking details and downloa
     requestSalesPreview: async () => {
       // Simulate the original app.js preview handler rendering its backend result.
       stats.innerHTML = backendValidationHtml;
+      button.disabled = true;
       return {};
     },
     renderSalesPreview() {}
