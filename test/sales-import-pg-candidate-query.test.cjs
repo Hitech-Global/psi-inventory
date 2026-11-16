@@ -44,7 +44,7 @@ test('PostgreSQL sales candidate matching analyzes staging rows and uses set-bas
   assert.match(sql, /WITH matched_ids AS/i);
   assert.match(sql, /UNION/i);
   assert.match(sql, /JOIN\s+"?sales_import_stage_/i);
-  assert.match(sql, /JOIN\s+sales_records\s+sr/i);
+  assert.match(sql, /FROM\s+sales_records\s+sr/i);
   assert.match(sql, /CASE WHEN lower\(sr\.source_system\)='bigseller'/i);
   assert.match(sql, /CASE WHEN lower\(s\.source_system\)='bigseller'/i);
   assert.match(sql, /WHERE sr\.id IN \(SELECT id FROM matched_ids\)/i);
