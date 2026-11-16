@@ -76,7 +76,7 @@
   }
 
   function isMissingAmount(value) {
-    var raw = text(value).replace(/[\\s\\u3000]+/g, '').toLowerCase();
+    var raw = text(value).replace(/[\s\u3000]+/g, '').toLowerCase();
     return !raw || ['--', '—', '–', '-', 'n/a', 'na', 'null'].indexOf(raw) >= 0;
   }
 
