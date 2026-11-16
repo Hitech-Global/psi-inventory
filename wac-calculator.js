@@ -650,6 +650,7 @@ function computeWacCostFacts(logisticsBatchId) {
   }
 
   // ── 10. Duty ──
+  let dutyAllocations = null;
   // New source of truth: CI Import Duty + its paid cost item/payment FX snapshot.
   // Legacy batch.customs_duty remains supported only when no CI-level duty exists.
   const legacyDutyBusinessAmount = Number(batch.customs_duty) || 0;
