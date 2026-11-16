@@ -50,10 +50,14 @@ assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confir
 assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
 assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
 assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261113-4'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261116-5'), 'WAC FX display integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
+assert.ok(integrationSrc.includes('function renderWacFxSettlementDisplay()'), 'WAC preview must show product, freight, and duty settlement FX evidence');
+assert.ok(integrationSrc.includes('formatWacFxPair'), 'WAC settlement FX must show currency pairs and two-decimal rates');
+assert.ok(integrationSrc.includes('duty_fx_breakdown'), 'customs duty payment FX breakdown must be displayed when present');
+assert.ok(integrationSrc.includes('toFixed(2)'), 'shared freight FX rates must display two decimals');
 assert.ok(integrationSrc.includes('wacMeta.shared_freight_breakdown'), 'shared freight allocation must be visible in logistics batch detail');
 assert.ok(integrationSrc.includes('合并运费分摊（已计入WAC）'), 'shared freight section must clearly distinguish allocated common bills');
 assert.ok(integrationSrc.includes("\"合并运费分摊（已计入WAC）\":\"Shared Freight Allocation (Included in WAC)\""), 'missing English translation for 合并运费分摊（已计入WAC）');
