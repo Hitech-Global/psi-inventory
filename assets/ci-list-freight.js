@@ -1,8 +1,7 @@
 // CI list presentation patch.
 // Adds "总运费 / 运费占比" immediately after CI amount for operational CI rows.
 // Removes the redundant "入库状态" column because logistics status already covers the list-level flow state.
-// Total freight = SUM(total_freight) across UNIQUE logistics batches linked by related_ci_id.
-// Ratio = total freight / CI goods_amount. Cross-currency freight is never guessed or converted.
+// Freight display prefers RMB using immutable actual-payment FX snapshots. Before payment, retain original currency; never guess a rate.
 (function (global) {
   'use strict';
   if (!global || typeof document === 'undefined') return;
@@ -311,25 +310,17 @@
         var ratioCell=x.row.querySelector('[data-ci-freight-cell="ratio"]');
         if(!totalCell||!ratioCell)return;
         var row=summary[x.id];
-        if(!row||!row.has_shared)return; // Preserve legacy CI calculation untouched.
-        if(row.total_rmb==null){
-          if(row.reference_only&&Number.isFinite(Number(row.reference_total_rmb))){
-            totalCell.textContent='≈ '+global.fmtMoney(row.reference_total_rmb,'RMB')+'（参考）';
-            ratioCell.textContent=row.reference_freight_ratio==null?'—':
-              '≈ '+Number(row.reference_freight_ratio).toFixed(2)+'%';
-            totalCell.title='自动汇率参考折算，待财务确认；不参与CI正式成本、WAC或已确认运费。\n'+(row.errors||[]).join('\n');
-            ratioCell.title=totalCell.title;
-          }else{
-            totalCell.textContent='待折算';ratioCell.textContent='—';
-            totalCell.title=(row.errors||[]).join('\n');
-            ratioCell.title=totalCell.title;
-          }
-          return;
-        }
-        totalCell.textContent=global.fmtMoney(row.total_rmb,'RMB');
-        totalCell.title='综合运费（含合并费用，已换算RMB）';
+        if(!row||!row.has_batch)return;
+        var displayTotals=row.display_totals||{};
+        var displayCurrencies=Object.keys(displayTotals);
+        var displayParts=displayCurrencies.map(function(currency){
+          return global.fmtMoney(Number(displayTotals[currency]),currency);
+        });
+        if(row.display_pending_fx)displayParts.push('待折算');
+        totalCell.textContent=displayParts.length?displayParts.join(' + '):'—';
+        totalCell.title=(row.errors||[]).join('\n') || '已付款运费按实际付款汇率折算RMB；未付款运费暂按原币种显示';
         ratioCell.textContent=row.freight_ratio==null?'—':Number(row.freight_ratio).toFixed(2)+'%';
-        if(row.freight_ratio==null)ratioCell.title='CI货值币种或汇率不支持与RMB直接比较';
+        if(row.freight_ratio==null)ratioCell.title='运费或CI货值尚未统一为RMB，暂不计算运费占比';
       });
       });
     }).catch(function () { /* Legacy freight remains visible if new endpoint is unavailable. */ });
