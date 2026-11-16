@@ -323,8 +323,6 @@
         '<th>' + esc(tr('ci.cost.goods_amount', 'CI实际金额')) + '（' + esc(goodsCurrency) + '）</th>' +
         '<th>' + esc(tr('ci.cost.duty_rate', '本票实际关税税率(%)')) + '</th></tr></thead><tbody>' + skuRows +
         '</tbody></table></div>' +
-        (canEdit && !summary.cost_confirmed ? '<div class="ci-cost-actions"><button class="btn btn-secondary btn-sm" onclick="saveCiCostInputs(\'' +
-          esc(id) + '\')">' + esc(tr('ci.cost.save_inputs', '保存分摊输入')) + '</button></div>' : '') +
         '</section>' +
 
         '<section class="ci-cost-section"><h3 class="ci-cost-section-title">' + esc(tr('ci.cost.summary', '费用汇总')) + '</h3>' +
@@ -355,7 +353,11 @@
         '<div class="ci-cost-footer-note">' + esc(tr('ci.cost.currency_note', '金额按币种分别显示，不进行跨币种直接相加。')) + '</div>' +
         '</div>';
 
-      var footer = '<button class="btn btn-secondary" onclick="closeModal()">' +
+      var footer = (canEdit && !summary.cost_confirmed
+        ? '<button class="btn btn-secondary" onclick="saveCiCostInputs(\\\\'' + jsArg(id) + '\\\\')">' +
+          esc(tr('ci.cost.save_inputs', '保存分摊输入')) + '</button>'
+        : '') +
+        '<button class="btn btn-secondary" onclick="closeModal()">' +
         esc(tr('ci.cost.close', '关闭')) + '</button>';
       ensureStyles();
       global.openModal(
