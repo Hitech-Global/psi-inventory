@@ -63,6 +63,7 @@ on:
       - 'test/inventory-import-cache-version.test.cjs'
       - 'assets/bigseller-sales-import.js'
       - 'test/bigseller-sales-import.test.cjs'
+      - 'test/sales-brand-import-preview-ui.test.cjs'
       - 'assets/zhisu-sales-import.js'
       - 'test/zhisu-sales-import.test.cjs'
       - 'sales-import-service.js'
@@ -195,6 +196,7 @@ jobs:
           node --check test/bigseller-inventory-import.test.cjs
           node --check assets/bigseller-sales-import.js
           node --check test/bigseller-sales-import.test.cjs
+          node --check test/sales-brand-import-preview-ui.test.cjs
           node --check assets/zhisu-sales-import.js
           node --check test/zhisu-sales-import.test.cjs
           node --check sales-import-service.js
@@ -308,7 +310,7 @@ jobs:
       - name: Test BigSeller inventory import adapter and SKU master-data blocking
         run: node --test test/bigseller-inventory-import.test.cjs test/inventory-import-precheck.test.cjs test/inv-import-ui-rules.test.cjs test/inventory-import-cache-version.test.cjs
       - name: Test BigSeller sales import marker / status rules
-        run: node --test test/bigseller-sales-import.test.cjs
+        run: node --test test/bigseller-sales-import.test.cjs test/sales-brand-import-preview-ui.test.cjs
       - name: Test Zhisu sales import payment / status / country / warehouse rules
         run: node --test test/zhisu-sales-import.test.cjs
       - name: Test supplier original PL workbook import and CBM allocation
