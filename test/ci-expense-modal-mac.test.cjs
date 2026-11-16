@@ -12,6 +12,9 @@ const server = fs.readFileSync(path.join(root, 'server.js'), 'utf8');
 assert.match(html, /assets\/ci-expense-modal-mac\.js\?v=/);
 assert.match(asset, /global\.viewCICost = viewCICost/);
 assert.match(asset, /shared-logistics-fees/);
+assert.match(asset, /manual_freight_display_totals/);
+assert.match(asset, /manual_freight_pending_fx/);
+assert.match(asset, /ci\.cost\.kg_pl_gross_weight/);
 assert.match(asset, /batch_totals_display/);
 assert.match(asset, /fmtMoney\(value, code\)/);
 assert.match(asset, /ci\.cost\.freight_fx_note/);
@@ -34,6 +37,9 @@ assert.ok(routeStart >= 0 && routeEnd > routeStart, 'CI cost-summary route must 
 const route = server.slice(routeStart, routeEnd);
 assert.match(route, /goods_currency/);
 assert.match(route, /customs_duty_currency/);
+assert.match(route, /manualFreightDisplayTotals/);
+assert.match(route, /settledConversion/);
+assert.match(route, /manual_freight_display_totals/);
 assert.match(route, /summary\.landing_cost_total\s*=\s*null/);
 assert.doesNotMatch(route, /summary\.goods_amount\s*\+\s*summary\.warehouse_arrival_total/);
 

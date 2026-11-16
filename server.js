@@ -19347,6 +19347,54 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
     });
     summary.shared_fees=shared;
     summary.fx_blockers=fxBlockers;
+
+    // Manual freight entered directly against a CI has no logistics_batch_id.
+    // Keep unpaid amounts in their original currency; fully paid freight uses
+    // the immutable RMB snapshot recorded on the actual payment date.
+    const manualFreightDisplayTotals = {};
+    let manualFreightPendingFx = false;
+    const addManualFreightTotal = (currency, amount) => {
+      const code = String(currency || '').trim().toUpperCase();
+      const value = Number(amount);
+      if (!code || !Number.isFinite(value)) return;
+      manualFreightDisplayTotals[code] =
+        Math.round(((Number(manualFreightDisplayTotals[code]) || 0) + value) * 100) / 100;
+    };
+    costItems.forEach(item => {
+      if (!item.include_in_landing_cost ||
+          item.cost_category !== 'warehouse_arrival' ||
+          item.cost_subcategory !== 'freight' ||
+          String(item.logistics_batch_id || '').trim()) return;
+      const amount = Number(item.payable_amount) || 0;
+      if (!(amount > 0)) return;
+      const currency = String(item.currency || '').trim().toUpperCase();
+      if (!currency) {
+        manualFreightPendingFx = true;
+        return;
+      }
+      if (currency === 'RMB') {
+        addManualFreightTotal(currency, amount);
+        return;
+      }
+      const payment = item.payment_request_id
+        ? queryOne('SELECT payment_status FROM payment_requests WHERE id = ?', [item.payment_request_id])
+        : null;
+      if (!payment || payment.payment_status !== 'paid') {
+        // Before full settlement, retain the original face currency.
+        addManualFreightTotal(currency, amount);
+        return;
+      }
+      const converted = feeModule.settledConversion(
+        item.payment_request_id, Math.round(amount * 100), currency, 'RMB'
+      );
+      if (converted.error || !Number.isFinite(Number(converted.amount_minor))) {
+        manualFreightPendingFx = true;
+        return;
+      }
+      addManualFreightTotal('RMB', Number(converted.amount_minor) / 100);
+    });
+    summary.manual_freight_display_totals = manualFreightDisplayTotals;
+    summary.manual_freight_pending_fx = manualFreightPendingFx;
     // CI费用可能分别以商品原币、目的国本币和费用原币记录。此处不生成跨币种总额；
     // 统一目标币种后的落地成本只在WAC核算模块计算和分摊。
     summary.landing_cost_total = null;
