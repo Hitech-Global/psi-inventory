@@ -3,27 +3,50 @@
 
   function sharedFreightDisplayForBatch(batch, summary) {
     var id = String(batch && batch.id || '');
-    var totals = summary && summary.batch_totals_rmb && typeof summary.batch_totals_rmb === 'object'
+    var displayRows = summary && summary.batch_totals_display && typeof summary.batch_totals_display === 'object'
+      ? summary.batch_totals_display : null;
+    if (displayRows && displayRows[id]) {
+      var displayItem = displayRows[id] || {};
+      var totals = displayItem.display_totals && typeof displayItem.display_totals === 'object'
+        ? displayItem.display_totals : {};
+      var currencies = Object.keys(totals);
+      var ciCurrency = String(summary && summary.ci_currency || batch && batch.ci_currency || '').trim().toUpperCase();
+      if (ciCurrency === 'CNY') ciCurrency = 'RMB';
+      var amount = currencies.length === 1 ? Number(totals[currencies[0]]) : null;
+      return {
+        status: currencies.length || displayItem.pending_fx ? 'ok' : 'missing',
+        amounts: totals,
+        currencies: currencies,
+        amount: amount,
+        currency: currencies.length === 1 ? currencies[0] : null,
+        pendingFx: !!displayItem.pending_fx,
+        ratio: currencies.length === 1 && currencies[0] === 'RMB' && ciCurrency === 'RMB' &&
+          Number(batch && batch.cargo_value) > 0
+          ? amount / Number(batch.cargo_value) * 100 : null,
+        error: ''
+      };
+    }
+    var legacyTotals = summary && summary.batch_totals_rmb && typeof summary.batch_totals_rmb === 'object'
       ? summary.batch_totals_rmb : {};
-    var item = totals[id];
+    var item = legacyTotals[id];
     if (!item) {
       return { status: 'missing', amount: null, currency: 'RMB', ratio: null, error: 'No allocated freight result for this batch' };
     }
     if (item.total_minor == null || !Number.isFinite(Number(item.total_minor))) {
       return {
         status: 'pending_fx', amount: null, currency: 'RMB', ratio: null,
-        error: Array.isArray(item.errors) ? item.errors.join('\\n') : ''
+        error: Array.isArray(item.errors) ? item.errors.join('\n') : ''
       };
     }
-    var amount = Number(item.total_minor) / 100;
-    var ciCurrency = String(summary && summary.ci_currency || batch && batch.ci_currency || '').trim().toUpperCase();
-    if (ciCurrency === 'CNY') ciCurrency = 'RMB';
+    var legacyAmount = Number(item.total_minor) / 100;
+    var legacyCiCurrency = String(summary && summary.ci_currency || batch && batch.ci_currency || '').trim().toUpperCase();
+    if (legacyCiCurrency === 'CNY') legacyCiCurrency = 'RMB';
     var goodsValue = Number(batch && batch.cargo_value) || 0;
     return {
       status: 'ok',
-      amount: amount,
+      amount: legacyAmount,
       currency: 'RMB',
-      ratio: ciCurrency === 'RMB' && goodsValue > 0 ? amount / goodsValue * 100 : null,
+      ratio: legacyCiCurrency === 'RMB' && goodsValue > 0 ? legacyAmount / goodsValue * 100 : null,
       error: ''
     };
   }
@@ -527,7 +550,11 @@
           ratioCell.title = totalCell.title;
           return;
         }
-        totalCell.textContent = fmtMoney(display.amount, 'RMB');
+        var displayParts = display.currencies
+          ? display.currencies.map(function (currency) { return fmtMoney(display.amounts[currency], currency); })
+          : [fmtMoney(display.amount, display.currency || 'RMB')];
+        if (display.pendingFx) displayParts.push(freightUiText('pending'));
+        totalCell.textContent = displayParts.join(' + ');
         totalCell.title = freightUiText('allocated');
         if (display.ratio == null) {
           ratioCell.textContent = '—';
