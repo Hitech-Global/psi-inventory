@@ -80,6 +80,6 @@ test('CI freight display assets expose the combined-fee values and distinguish C
   assert.match(detail,/ci-acc-body-logi/);
   assert.match(list,/CI已付金额/);
   assert.match(list,/CI Paid Amount/);
-  assert.match(html,/ci-list-freight\.js\?v=20261110-2/);
-  assert.match(html,/ci-shared-freight-display\.js\?v=20261110-1/);
+  assert.match(html,/ci-list-freight\.js\?v=20261116-1/);
+  assert.match(html,/ci-shared-freight-display\.js\?v=20261116-1/);
 });
