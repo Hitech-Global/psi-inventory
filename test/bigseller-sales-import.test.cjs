@@ -529,6 +529,8 @@ test('opening a new import clears stale file data and preview state', () => {
   win.openSalesBatchImport();
   assert.deepEqual(win._salesImportData, []);
   assert.equal(win._salesImportPreviewReady, false);
+  assert.equal(win._salesImportPreviewError, '');
+  assert.deepEqual(win._salesImportBlocking, []);
   assert.deepEqual(win._lastSalesImportErrors, []);
   assert.equal(stats.innerHTML, '');
   assert.equal(button.disabled, true);
@@ -685,4 +687,74 @@ test('different timestamps are status snapshots and only the latest snapshot qua
   assert.equal(parsed.records[0].original_order_status, '已完成');
   assert.equal(parsed.stats.snapshotDuplicateRows, 1);
   assert.equal(parsed.stats.aggregatedLineRows, 0);
+});
+
+
+function makeSalesPreviewProgressHarness(requestSalesPreview) {
+  const stats = {
+    innerHTML: '',
+    querySelector() { return null; },
+    insertAdjacentHTML(position, html) { this.innerHTML = html + this.innerHTML; }
+  };
+  const button = { disabled: true };
+  const win = {
+    document: {
+      getElementById(id) {
+        return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null;
+      }
+    },
+    handleSalesFile() {},
+    openSalesBatchImport() {},
+    requestSalesPreview,
+    renderSalesPreview() {}
+  };
+  BigSeller.install(win);
+  win._salesImportSourceMode = 'bigseller';
+  win._salesImportSkippedStats = { sourceRows: 1, includedRows: 1, trueRows: 1, falseRows: 0 };
+  win._salesImportCountry = '印度尼西亚';
+  win._salesImportData = [{ _errors: [] }];
+  win._salesImportBlocking = [];
+  win._salesImportPreviewReady = false;
+  return { win, stats, button };
+}
+
+test('BigSeller progress stays below 100 while backend SKU/brand precheck is pending', async () => {
+  let resolvePreview;
+  const harness = makeSalesPreviewProgressHarness(() => new Promise(resolve => { resolvePreview = resolve; }));
+  const pending = harness.win.requestSalesPreview();
+
+  assert.equal(harness.win._salesImportBigSellerProgress.percent, 78);
+  assert.equal(harness.win._salesImportBigSellerProgress.state, 'loading');
+  assert.match(harness.win._salesImportBigSellerProgress.message, /正在校验/);
+
+  harness.win._salesImportPreviewReady = true;
+  resolvePreview({ preview: [], blocking: [], warnings: [] });
+  await pending;
+
+  assert.equal(harness.win._salesImportBigSellerProgress.percent, 100);
+  assert.equal(harness.win._salesImportBigSellerProgress.state, 'done');
+  assert.match(harness.win._salesImportBigSellerProgress.message, /可以开始导入/);
+});
+
+test('BigSeller progress does not report 100 when preview returns without a ready or blocking result', async () => {
+  const harness = makeSalesPreviewProgressHarness(async () => ({}));
+  await harness.win.requestSalesPreview();
+
+  assert.equal(harness.win._salesImportBigSellerProgress.percent, 85);
+  assert.equal(harness.win._salesImportBigSellerProgress.state, 'blocked');
+  assert.match(harness.win._salesImportBigSellerProgress.message, /未返回可导入结果/);
+});
+
+test('BigSeller progress exposes backend preview errors instead of showing pending validation', async () => {
+  let winRef;
+  const harness = makeSalesPreviewProgressHarness(async () => {
+    winRef._salesImportPreviewError = 'Network failed';
+    return undefined;
+  });
+  winRef = harness.win;
+  await harness.win.requestSalesPreview();
+
+  assert.equal(harness.win._salesImportBigSellerProgress.percent, 100);
+  assert.equal(harness.win._salesImportBigSellerProgress.state, 'error');
+  assert.match(harness.win._salesImportBigSellerProgress.message, /Network failed/);
 });

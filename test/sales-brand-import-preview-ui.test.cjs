@@ -41,5 +41,6 @@ test('network or auth failure fail-closes submission',async()=>{
  await h.run();
  assert.equal(h.btn.disabled,true);
  assert.equal(h.context.window._salesImportPreviewReady,false);
+ assert.equal(h.context.window._salesImportPreviewError,'Network failed');
  assert.equal(h.messages.length,1);
 });
