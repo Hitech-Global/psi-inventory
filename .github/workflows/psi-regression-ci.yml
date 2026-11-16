@@ -125,6 +125,7 @@ on:
       - 'test/inventory-asset-values.test.cjs'
       - 'test/inventory-overview-export.test.cjs'
       - 'test/rp-excel-snapshot-export.test.cjs'
+      - 'test/rp-brand-case-normalization.test.cjs'
       - 'test/inventory-onhand-local-currency-kpi.test.cjs'
       - 'i18n.js'
       - '.github/workflows/psi-regression-ci.yml'
@@ -327,6 +328,8 @@ jobs:
         run: node --test test/inventory-overview-export.test.cjs
       - name: Test forecast Excel export and local XLSX bundle
         run: node --test test/rp-excel-snapshot-export.test.cjs
+      - name: Test forecast brand case-insensitive normalization and filtering
+        run: node --test test/rp-brand-case-normalization.test.cjs
       - name: Test inventory on-hand local currency KPI
         run: node --test test/inventory-onhand-local-currency-kpi.test.cjs
       - name: Test WAC calculation and transport-basis rules
