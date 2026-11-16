@@ -535,6 +535,8 @@
       win._salesImportCountry = '';
       win._salesImportData = [];
       win._salesImportPreviewReady = false;
+      win._salesImportPreviewError = '';
+      win._salesImportBlocking = [];
       win._salesImportBigSellerProgress = null;
       win._lastSalesImportErrors = [];
       var stats = win.document && win.document.getElementById('sales-preview-stats');
@@ -551,20 +553,44 @@
 
     win.requestSalesPreview = async function () {
       var isBigSeller = win._salesImportSourceMode === 'bigseller' && !!win._salesImportSkippedStats;
-      if (isBigSeller) setImportProgress(win, '正在校验 SKU 与品牌主数据…', 78);
+      if (isBigSeller) {
+        win._salesImportPreviewError = '';
+        setImportProgress(win, '正在校验 SKU 与品牌主数据…', 78);
+      }
       try {
         var result = await originalRequestSalesPreview.apply(this, arguments);
         if (isBigSeller) {
           var blocked = Array.isArray(win._salesImportBlocking) && win._salesImportBlocking.length > 0;
           var ready = win._salesImportPreviewReady === true;
+          var previewError = String(win._salesImportPreviewError || '').trim();
+          var records = Array.isArray(win._salesImportData) ? win._salesImportData : [];
+          var invalidRows = records.filter(function (record) {
+            return !record || !Array.isArray(record._errors) || record._errors.length > 0;
+          }).length;
           renderSummary(win, win._salesImportSkippedStats, win._salesImportCountry);
-          setImportProgress(win,
-            ready ? 'SKU / 品牌校验完成，可以开始导入。' : blocked ? 'SKU / 品牌校验未通过，请先处理异常。' : '后台校验尚未完成，暂不能导入。',
-            100, ready ? 'done' : 'blocked');
+
+          if (previewError) {
+            setImportProgress(win, '后台校验失败：' + previewError, 100, 'error');
+          } else if (ready) {
+            setImportProgress(win, 'SKU / 品牌校验完成，可以开始导入。', 100, 'done');
+          } else if (blocked) {
+            setImportProgress(win, 'SKU / 品牌预检查失败：' + win._salesImportBlocking.length + ' 行异常，暂不能导入。', 100, 'blocked');
+          } else if (invalidRows > 0) {
+            setImportProgress(win, '文件有 ' + invalidRows + ' 条异常记录，暂不能导入。', 100, 'blocked');
+          } else if (records.length === 0) {
+            setImportProgress(win, '没有符合导入规则的有效记录。', 100, 'blocked');
+          } else {
+            // A resolved preview call without a ready/blocking/error result is
+            // not a completed validation. Keep the bar below 100% and fail closed.
+            setImportProgress(win, '后台校验未返回可导入结果，请重试。', 85, 'blocked');
+          }
         }
         return result;
       } catch (error) {
-        if (isBigSeller) setImportProgress(win, '后台校验失败，暂不能导入。', 100, 'error');
+        if (isBigSeller) {
+          var message = String(error && error.message || '未知错误');
+          setImportProgress(win, '后台校验失败：' + message, 100, 'error');
+        }
         throw error;
       }
     };
@@ -606,6 +632,12 @@
           win._salesImportCountry = parsed.country || '';
           win._salesImportData = parsed.records;
           setImportProgress(win, '订单识别完成，正在生成导入预览…', 68);
+          var validRows = parsed.records.filter(function (record) {
+            return record && Array.isArray(record._errors) && record._errors.length === 0;
+          }).length;
+          if (validRows > 0) {
+            setImportProgress(win, '文件识别完成，等待 SKU / 品牌后台校验。', 72, 'loading');
+          }
           win.renderSalesPreview(parsed.records);
           var button = win.document.getElementById('sales-import-btn');
           if (button) button.disabled = true;
@@ -615,7 +647,12 @@
           if (parsed.records.length === 0 && typeof win.showToast === 'function') {
             win.showToast('没有符合指定订单标记和订单状态规则的销售记录。', 'warning');
           }
-          setImportProgress(win, parsed.records.length ? '文件识别完成，等待 SKU / 品牌后台校验。' : '识别完成，没有可导入记录。', 72, parsed.records.length ? 'loading' : 'blocked');
+          if (validRows === 0) {
+            var invalidRows = parsed.records.length;
+            setImportProgress(win,
+              invalidRows ? '文件有 ' + invalidRows + ' 条异常记录，暂不能导入。' : '识别完成，没有可导入记录。',
+              100, 'blocked');
+          }
         } catch (error) {
           setImportProgress(win, 'BigSeller 销售文件解析失败。', 100, 'error');
           if (typeof win.showToast === 'function') {
