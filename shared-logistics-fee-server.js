@@ -173,7 +173,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
     if(!ci)return res.status(404).json({error:'CI不存在'});
     const fees=sharedFeesForCost(ci,'RMB');
     const batches=query('SELECT id,batch_no,transport_mode,total_freight,freight_currency FROM logistics_batches WHERE related_ci_id=? ORDER BY batch_no',[ci.id]).rows;
-    const batch_totals_rmb={};
+    const batch_totals_rmb={},batch_totals_display={};
     batches.forEach(b=>{
       const own=ownFreightInRmb(b);
       batch_totals_rmb[b.id]={
@@ -182,18 +182,35 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
         total_minor:own.error?null:Number(own.amount_minor),
         errors:own.error?[own.error]:[]
       };
+      const shown=ownFreightDisplay(b);
+      const display={batch_no:b.batch_no,transport_mode:b.transport_mode,display_totals:{},pending_fx:shown.status==='pending_fx'};
+      if(shown.status!=='pending_fx'&&shown.currency&&Number.isFinite(Number(shown.amount_minor)))
+        display.display_totals[shown.currency]=Number(shown.amount_minor)/100;
+      batch_totals_display[b.id]=display;
     });
     const {splitConvertedMinor}=require('./shared-logistics-fee-core');
     fees.forEach(f=>{
       const converted=f.conversion;
       if(converted.error){
-        f.allocations.forEach(a=>{const b=batch_totals_rmb[a.batch_id];if(b){b.errors.push(f.bill_no+': '+converted.error);b.total_minor=null;}});
+        f.allocations.forEach(a=>{
+          const b=batch_totals_rmb[a.batch_id];
+          if(b){b.errors.push(f.bill_no+': '+converted.error);b.total_minor=null;}
+        });
+        if(f.payment_status!=='paid'){
+          for(const part of splitConvertedMinor(Number(f.amount_minor),f.allocations)){
+            const b=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={display_totals:{}});
+            b.display_totals[f.currency]=(Number(b.display_totals[f.currency])||0)+Number(part.amount_minor)/100;
+          }
+        }else{
+          f.allocations.forEach(a=>{const b=batch_totals_display[a.batch_id]||(batch_totals_display[a.batch_id]={display_totals:{}});b.pending_fx=true;});
+        }
         return;
       }
       for(const part of splitConvertedMinor(Number(converted.amount_minor),f.allocations)){
         const b=batch_totals_rmb[part.batch_id];
-        if(!b)continue;
-        if(b.total_minor!==null)b.total_minor+=part.amount_minor;
+        if(b&&b.total_minor!==null)b.total_minor+=part.amount_minor;
+        const display=batch_totals_display[part.batch_id]||(batch_totals_display[part.batch_id]={display_totals:{}});
+        display.display_totals.RMB=(Number(display.display_totals.RMB)||0)+Number(part.amount_minor)/100;
       }
     });
     const batchTotals=Object.values(batch_totals_rmb);
@@ -208,6 +225,7 @@ function installSharedLogisticsFeeRoutes(app,ctx) {
       ci_currency:ci.currency,
       fees,
       batch_totals_rmb,
+      batch_totals_display,
       transport_modes:transportModes,
       total_freight_currency:'RMB',
       total_freight_rmb:totalFreightMinor==null?null:totalFreightMinor/100,
