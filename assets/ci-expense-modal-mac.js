@@ -11,6 +11,7 @@
     'ci.cost.toggle_inspection': ['Toggle Inspection Fee', 'Ubah Penanda Biaya Pemeriksaan'],
     'ci.cost.allocation_snapshot': ['Allocation Inputs', 'Snapshot Alokasi'],
     'ci.cost.freight_basis': ['Actual Freight Billing Basis', 'Dasar Perhitungan Angkut Aktual'],
+    'ci.cost.kg_pl_gross_weight': ['KG (PL total gross weight)', 'KG (Berat Kotor Total PL)'],
     'ci.cost.no_freight_basis': ['No freight-type fee / Not selected', 'Tidak ada biaya angkut / Belum dipilih'],
     'ci.cost.ci_duty_total': ['CI Import Duty Total', 'Total Bea Masuk CI'],
     'ci.cost.duty_rate': ['Actual Duty Rate (%)', 'Tarif Bea Masuk Aktual (%)'],
@@ -66,6 +67,10 @@
       : String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) {
           return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
         });
+  }
+
+  function jsArg(value) {
+    return esc(JSON.stringify(String(value == null ? '' : value)));
   }
 
   function money(value, currency) {
@@ -171,7 +176,7 @@
       if (subcategory === 'freight') subcategory = tr('logistics.col.freight', '运费');
       else if (subcategory === 'duty') subcategory = tr('cost.stat_duty', '关税');
       else if (subcategory === 'inspection') subcategory = tr('cost.stat_inspection_fee', '商检费用');
-      var currency = String(item.currency || goodsCurrency || '').trim().toUpperCase();
+      var currency = String(item.currency || '').trim().toUpperCase();
       return '<tr>' +
         '<td>' + esc(category || '—') + '</td>' +
         '<td>' + esc(subcategory) + '</td>' +
@@ -209,7 +214,13 @@
       var warehouseTotals = {};
       var inspectionTotals = {};
       var freightPendingFx = false;
-      var freightUnavailable = freightFailed || (!freight && Array.isArray(summary.shared_fees) && summary.shared_fees.length > 0);
+      var hasBatchFreightItems = items.some(function (item) {
+        return item.cost_category === 'warehouse_arrival' &&
+          item.cost_subcategory === 'freight' &&
+          !!String(item.logistics_batch_id || '').trim();
+      });
+      var freightUnavailable = freightFailed &&
+        (hasBatchFreightItems || (Array.isArray(summary.shared_fees) && summary.shared_fees.length > 0));
 
       batchIds.forEach(function (batchId) {
         var batch = batchDisplay[batchId] || {};
@@ -218,14 +229,23 @@
         });
         if (batch.pending_fx) freightPendingFx = true;
       });
+      Object.keys(summary.manual_freight_display_totals || {}).forEach(function (currency) {
+        addTotal(warehouseTotals, currency, summary.manual_freight_display_totals[currency]);
+      });
+      if (summary.manual_freight_pending_fx) freightPendingFx = true;
 
       items.forEach(function (item) {
         if (!item.include_in_landing_cost) return;
-        var currency = String(item.currency || goodsCurrency || '').trim().toUpperCase();
+        var currency = String(item.currency || '').trim().toUpperCase();
         if (item.cost_category === 'warehouse_arrival') {
-          var batchId = String(item.logistics_batch_id || '');
-          var freightCoveredByBatch = item.cost_subcategory === 'freight' && batchId && Object.prototype.hasOwnProperty.call(batchDisplay, batchId);
-          if (!freightCoveredByBatch) addTotal(warehouseTotals, currency, item.payable_amount);
+          if (item.cost_subcategory === 'freight') {
+            var batchId = String(item.logistics_batch_id || '').trim();
+            // Batch freight is already represented by the dedicated display endpoint.
+            // Manual freight without a batch is represented by manual_freight_display_totals.
+            if (batchId && !Object.prototype.hasOwnProperty.call(batchDisplay, batchId)) freightUnavailable = true;
+            return;
+          }
+          addTotal(warehouseTotals, currency, item.payable_amount);
         } else if (item.cost_category === 'inspection_fee') {
           addTotal(inspectionTotals, currency, item.payable_amount);
         }
@@ -238,11 +258,11 @@
         statusPill(summary.has_inspection_fee, tr('ci.cost.yes', '是'), tr('ci.cost.no', '否')) + '</div></div></div>';
 
       var flagActions = '';
-      if (typeof global.hasPermission === 'function' && global.hasPermission('ci_edit')) {
+      if (typeof global.hasPermission === 'function' && global.hasPermission('ci_edit') && !summary.cost_confirmed) {
         flagActions = '<div class="ci-cost-actions">' +
-          '<button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'' + esc(id) + '\',' +
+          '<button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'' + jsArg(id) + '\',' +
           (summary.has_customs_duty ? '0' : '1') + ',null)">' + esc(tr('ci.cost.toggle_duty', '切换关税标记')) + '</button>' +
-          '<button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'' + esc(id) + '\',null,' +
+          '<button class="btn btn-secondary btn-sm" onclick="toggleCiCostFlag(\'' + jsArg(id) + '\',null,' +
           (summary.has_inspection_fee ? '0' : '1') + ')">' + esc(tr('ci.cost.toggle_inspection', '切换商检标记')) + '</button>' +
           '</div>';
       }
@@ -263,23 +283,23 @@
       var canEdit = typeof global.hasPermission === 'function' && global.hasPermission('ci_edit');
       var canPay = typeof global.hasPermission === 'function' && global.hasPermission('payment_create');
       if (canEdit && !summary.cost_confirmed) {
-        actions += '<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\'' + esc(id) + '\')">' +
+        actions += '<button class="btn btn-secondary btn-sm" onclick="confirmCiCosts(\'' + jsArg(id) + '\')">' +
           esc(tr('ci.cost.confirm_complete', '确认费用完整')) + '</button>';
       }
       if (canEdit) {
-        actions += '<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\'' + esc(id) + '\')">' +
+        actions += '<button class="btn btn-secondary btn-sm" onclick="allocateCosts(\'' + jsArg(id) + '\')">' +
           esc(tr('ci.cost.allocate_action', '费用分摊')) + '</button>';
       }
       if (canPay && summary.has_customs_duty && !summary.cost_confirmed) {
-        actions += '<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\'' + esc(id) + '\')">' +
+        actions += '<button class="btn btn-secondary btn-sm" onclick="createCustomsDutyPay(\'' + jsArg(id) + '\')">' +
           esc(tr('ci.cost.create_duty_pay', '关税付款')) + '</button>';
       }
       if (canPay && summary.has_inspection_fee && !summary.cost_confirmed) {
-        actions += '<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\'' + esc(id) + '\')">' +
+        actions += '<button class="btn btn-secondary btn-sm" onclick="createInspectionFeePay(\'' + jsArg(id) + '\')">' +
           esc(tr('ci.cost.create_inspection_pay', '商检付款')) + '</button>';
       }
       if (canPay && !summary.cost_confirmed) {
-        actions += '<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\'' + esc(id) + '\')">' +
+        actions += '<button class="btn btn-secondary btn-sm" onclick="createWarehousePay(\'' + jsArg(id) + '\')">' +
           esc(tr('ci.cost.create_warehouse_pay', '到仓费用付款')) + '</button>';
       }
 
@@ -293,7 +313,7 @@
         '<div class="ci-cost-form-group"><label for="ci-cost-basis">' + esc(tr('ci.cost.freight_basis', '本票实际运输计费基础')) + '</label>' +
         '<select id="ci-cost-basis" ' + basisDisabled + '><option value="">' + esc(tr('ci.cost.no_freight_basis', '无运输类费用 / 未选择')) + '</option>' +
         '<option value="cbm" ' + (summary.transport_basis === 'cbm' ? 'selected' : '') + '>CBM</option>' +
-        '<option value="kg" ' + (summary.transport_basis === 'kg' ? 'selected' : '') + '>KG（PL总毛重）</option></select></div>' +
+        '<option value="kg" ' + (summary.transport_basis === 'kg' ? 'selected' : '') + '>' + esc(tr('ci.cost.kg_pl_gross_weight', 'KG（PL总毛重）')) + '</option></select></div>' +
         '<div class="ci-cost-form-group"><label for="ci-duty-total">' + esc(tr('ci.cost.ci_duty_total', 'CI Import Duty总金额')) +
         '（' + esc(dutyPrefix) + '）</label><div class="ci-cost-money-input"><span class="ci-cost-money-prefix">' + esc(dutyPrefix) +
         '</span><input type="number" min="0" step="0.01" id="ci-duty-total" value="' +
