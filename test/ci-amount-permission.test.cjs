@@ -137,9 +137,16 @@ must(inline, /showAmounts[\s\S]*logistics\.col\.freight_ratio/, 'inline logistic
 must(inline, /data-ci-logi-export-ci-pl/, 'CI&PL export action must remain available to CI viewers');
 assert.doesNotMatch(inline, /canViewAmounts\(\) \? '<button[^']*data-ci-logi-export-ci-pl=/, 'CI&PL export action must not be gated by amount permission');
 
+// WAC hover layers must remain reachable while the pointer crosses from trigger to tooltip.
+must(app, /function clearWacCalcHideTimer[\s\S]*function scheduleWacCalcHide/, 'WAC parent hover bridge timer missing');
+must(app, /tooltip\.onmouseenter=clearWacCalcHideTimer/, 'WAC first-level tooltip must cancel pending close');
+must(app, /function hideWacCalcTooltip\(event\)[\s\S]*related===tooltip[\s\S]*scheduleWacCalcHide\(\)/, 'WAC first-level tooltip must accept pointer entry and defer close');
+must(app, /sub\.onmouseenter=function\(\)\{clearWacCalcHideTimer\(\);clearWacCalcSubHideTimer\(\);\}/, 'WAC second-level tooltip must cancel pending close');
+must(app, /function hideWacCalcSubTooltip\(event\)[\s\S]*related===sub[\s\S]*scheduleWacCalcSubHide\(\)/, 'WAC second-level tooltip must accept pointer entry and defer close');
+
 // Updated CI money helper and FX tooltip translations must not be served from stale browser caches.
 assert.ok(index.includes('i18n.js?v=20261116-3'), 'CI FX tooltip translations must use the current i18n asset');
-assert.ok(index.includes('app.js?v=20261116-5'), 'CI detail money formatter must use the current app asset');
+assert.ok(index.includes('app.js?v=20261116-6'), 'CI detail money formatter must use the current app asset');
 
 // Role UI label and script ordering.
 must(i18n, /permission\.label\.ci_amount_view/, 'permission i18n label missing');

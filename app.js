@@ -16505,7 +16505,43 @@ function wacCalcBuildTips(it,m,oldQty,oldWac,oldValue,newWac){
     ])
   };
 }
+function clearWacCalcHideTimer(){
+  if(window.__wacCalcHideTimer!==undefined&&window.__wacCalcHideTimer!==null){
+    window.clearTimeout(window.__wacCalcHideTimer);
+    window.__wacCalcHideTimer=null;
+  }
+}
+function clearWacCalcSubHideTimer(){
+  if(window.__wacCalcSubHideTimer!==undefined&&window.__wacCalcSubHideTimer!==null){
+    window.clearTimeout(window.__wacCalcSubHideTimer);
+    window.__wacCalcSubHideTimer=null;
+  }
+}
+function scheduleWacCalcHide(){
+  clearWacCalcHideTimer();
+  window.__wacCalcHideTimer=window.setTimeout(function(){
+    window.__wacCalcHideTimer=null;
+    const tooltip=document.getElementById('wac-calc-tooltip');
+    if(tooltip)tooltip.classList.remove('visible');
+    clearWacCalcSubHideTimer();
+    const sub=document.getElementById('wac-calc-subtooltip');
+    if(sub)sub.classList.remove('visible');
+    window.__wacCalcActiveTarget=null;
+    window.__wacCalcActiveSubTarget=null;
+  },220);
+}
+function scheduleWacCalcSubHide(){
+  clearWacCalcSubHideTimer();
+  window.__wacCalcSubHideTimer=window.setTimeout(function(){
+    window.__wacCalcSubHideTimer=null;
+    const sub=document.getElementById('wac-calc-subtooltip');
+    if(sub)sub.classList.remove('visible');
+    window.__wacCalcActiveSubTarget=null;
+  },220);
+}
 function showWacCalcTooltip(target){
+  clearWacCalcHideTimer();
+  clearWacCalcSubHideTimer();
   const html=target&&target.getAttribute('data-wac-calc');
   if(!html)return;
   window.__wacCalcActiveTarget=target;
@@ -16513,6 +16549,7 @@ function showWacCalcTooltip(target){
   let tooltip=document.getElementById('wac-calc-tooltip');
   if(!tooltip){tooltip=document.createElement('div');tooltip.id='wac-calc-tooltip';document.body.appendChild(tooltip);}
   tooltip.innerHTML=html;
+  tooltip.onmouseenter=clearWacCalcHideTimer;
   tooltip.onmouseleave=hideWacCalcTooltip;
   const oldSub=document.getElementById('wac-calc-subtooltip');
   if(oldSub)oldSub.classList.remove('visible');
@@ -16530,15 +16567,15 @@ function hideWacCalcTooltip(event){
   const tooltip=document.getElementById('wac-calc-tooltip');
   const related=event&&event.relatedTarget;
   const active=window.__wacCalcActiveTarget;
-  if(related&&tooltip&&tooltip.contains(related))return;
+  // Moving from the trigger into the tooltip itself is still inside this hover interaction.
+  if(related&&tooltip&&(related===tooltip||tooltip.contains(related)))return;
   if(related&&active&&(related===active||(active.contains&&active.contains(related))))return;
-  if(tooltip)tooltip.classList.remove('visible');
-  const sub=document.getElementById('wac-calc-subtooltip');
-  if(sub)sub.classList.remove('visible');
-  window.__wacCalcActiveTarget=null;
-  window.__wacCalcActiveSubTarget=null;
+  // Keep the tooltip alive briefly while the pointer crosses the small visual gap.
+  scheduleWacCalcHide();
 }
 function showWacCalcSubTooltip(target){
+  clearWacCalcHideTimer();
+  clearWacCalcSubHideTimer();
   const html=target&&target.getAttribute('data-wac-subcalc');
   const parent=document.getElementById('wac-calc-tooltip');
   if(!html||!parent||!parent.classList.contains('visible'))return;
@@ -16546,6 +16583,7 @@ function showWacCalcSubTooltip(target){
   let sub=document.getElementById('wac-calc-subtooltip');
   if(!sub){sub=document.createElement('div');sub.id='wac-calc-subtooltip';parent.appendChild(sub);}
   sub.innerHTML=html;
+  sub.onmouseenter=function(){clearWacCalcHideTimer();clearWacCalcSubHideTimer();};
   sub.onmouseleave=hideWacCalcSubTooltip;
   sub.style.left='12px';sub.style.top='12px';sub.classList.add('visible');
   const targetRect=target.getBoundingClientRect();
@@ -16563,10 +16601,10 @@ function hideWacCalcSubTooltip(event){
   const sub=document.getElementById('wac-calc-subtooltip');
   const related=event&&event.relatedTarget;
   const active=window.__wacCalcActiveSubTarget;
-  if(related&&sub&&sub.contains(related))return;
+  // Entering the second-level tooltip (including its blank padding) must not close it.
+  if(related&&sub&&(related===sub||sub.contains(related)))return;
   if(related&&active&&(related===active||(active.contains&&active.contains(related))))return;
-  if(sub)sub.classList.remove('visible');
-  window.__wacCalcActiveSubTarget=null;
+  scheduleWacCalcSubHide();
 }
 
 // WAC确认弹窗：展示PL明细与成本计算详情。
