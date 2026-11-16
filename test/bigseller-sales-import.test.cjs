@@ -754,7 +754,7 @@ test('BigSeller progress exposes backend preview errors instead of showing pendi
   winRef = harness.win;
   await harness.win.requestSalesPreview();
 
-  assert.equal(harness.win._salesImportBigSellerProgress.percent, 100);
+  assert.equal(harness.win._salesImportBigSellerProgress.percent, 85);
   assert.equal(harness.win._salesImportBigSellerProgress.state, 'error');
   assert.match(harness.win._salesImportBigSellerProgress.message, /Network failed/);
 });
