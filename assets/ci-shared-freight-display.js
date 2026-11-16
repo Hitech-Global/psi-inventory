@@ -81,17 +81,27 @@
       }
     }
     var freightValue = freightItem.querySelector('.detail-value');
+    var displayTotals = {};
+    var displayPending = false;
+    Object.keys(data.batch_totals_display || {}).forEach(function (id) {
+      var item = data.batch_totals_display[id] || {};
+      Object.keys(item.display_totals || {}).forEach(function (currency) {
+        displayTotals[currency] = (displayTotals[currency] || 0) + Number(item.display_totals[currency] || 0);
+      });
+      if (item.pending_fx) displayPending = true;
+    });
+    var displayCurrencies = Object.keys(displayTotals);
+    var displayParts = displayCurrencies.map(function (currency) { return money(displayTotals[currency], currency); });
+    if (displayPending) displayParts.push(lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'));
     var total = data.total_freight_rmb;
-    if (total == null && data.batch_totals_rmb) {
-      var entries = Object.keys(data.batch_totals_rmb).map(function (id) { return data.batch_totals_rmb[id]; });
-      if (entries.every(function (item) { return item && item.total_minor != null; })) {
-        total = entries.reduce(function (sum, item) { return sum + Number(item.total_minor || 0); }, 0) / 100;
-      }
-    }
     if (freightValue) {
-      freightValue.textContent = total == null
-        ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'))
-        : money(total, data.total_freight_currency || 'RMB');
+      if (data.batch_totals_display) {
+        freightValue.textContent = displayParts.length ? displayParts.join(' + ') : '—';
+      } else {
+        freightValue.textContent = total == null
+          ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'))
+          : money(total, data.total_freight_currency || 'RMB');
+      }
       freightValue.title = (data.total_freight_errors || []).join('\n');
     }
   }
@@ -113,10 +123,17 @@
     var body = document.getElementById('ci-acc-body-logi');
     if (!body || !body.querySelectorAll || !data.batch_totals_rmb) return;
     var batchMap = {};
-    Object.keys(data.batch_totals_rmb).forEach(function (id) {
-      var item = data.batch_totals_rmb[id] || {};
+    var displayMap = data.batch_totals_display || {};
+    Object.keys(displayMap).forEach(function (id) {
+      var item = displayMap[id] || {};
       if (item.batch_no) batchMap[key(item.batch_no)] = item;
     });
+    if (!Object.keys(batchMap).length) {
+      Object.keys(data.batch_totals_rmb).forEach(function (id) {
+        var item = data.batch_totals_rmb[id] || {};
+        if (item.batch_no) batchMap[key(item.batch_no)] = item;
+      });
+    }
     var tables = body.querySelectorAll('table');
     for (var ti = 0; ti < tables.length; ti++) {
       var table = tables[ti];
@@ -136,16 +153,21 @@
         if (!item) return;
         if (modeIndex >= 0 && cells[modeIndex]) cells[modeIndex].textContent = label(item.transport_mode);
         if (freightIndex >= 0 && cells[freightIndex]) {
-          cells[freightIndex].textContent = item.total_minor == null
-            ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'))
-            : money(Number(item.total_minor) / 100, 'RMB');
+          var totals = item.display_totals || {};
+          var currencies = Object.keys(totals);
+          var parts = currencies.map(function (currency) { return money(totals[currency], currency); });
+          if (item.pending_fx) parts.push(lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算'));
+          cells[freightIndex].textContent = parts.length ? parts.join(' + ') :
+            (item.total_minor == null ? (lang() === 'en' ? 'Pending FX' : (lang() === 'id' ? 'Menunggu kurs' : '待折算')) : money(Number(item.total_minor) / 100, 'RMB'));
           cells[freightIndex].title = (item.errors || []).join('\n');
         }
         if (ratioIndex >= 0 && cells[ratioIndex]) {
           var goods = goodsIndex >= 0 && cells[goodsIndex] ? parseAmount(cells[goodsIndex].textContent) : null;
           var ciCurrency = String(data.ci_currency || '').toUpperCase();
-          cells[ratioIndex].textContent = item.total_minor == null || !(goods > 0) || ciCurrency !== 'RMB'
-            ? '—' : (Number(item.total_minor) / 100 / goods * 100).toFixed(2) + '%';
+          var onlyRmb = Object.keys(item.display_totals || {}).length === 1 && Number(item.display_totals.RMB) >= 0 && !item.pending_fx;
+          var rmbAmount = Number((item.display_totals || {}).RMB);
+          cells[ratioIndex].textContent = !onlyRmb || !(goods > 0) || ciCurrency !== 'RMB'
+            ? '—' : (rmbAmount / goods * 100).toFixed(2) + '%';
         }
       });
     }
