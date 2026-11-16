@@ -511,9 +511,13 @@
         '<button type="button" id="bigseller-sales-conflict-download" style="margin-top:7px;padding:5px 10px;border:1px solid #d1d5db;border-radius:7px;background:#fff;color:#333;cursor:pointer">下载冲突明细</button>' : '') +
       '<div style="color:#888;margin-top:4px">仅导入：非 Manual 平台的空白订单标记，以及 Pay in Advance、Credit；其他标记和 Manual 空白订单均排除。</div>' +
       '</div>';
-    // Replace the previous summary instead of stacking another copy after each preview.
-    el.innerHTML = '';
-    el.insertAdjacentHTML('beforeend', html);
+    // Keep the file-level BigSeller summary separate from the backend SKU/brand
+    // preview. The original requestSalesPreview() writes blocking rows, warnings,
+    // and the downloadable error list into this same host; clearing innerHTML here
+    // used to erase those details immediately after the request completed.
+    var previousSummary = el.querySelector && el.querySelector('#bigseller-sales-summary');
+    if (previousSummary && typeof previousSummary.remove === 'function') previousSummary.remove();
+    el.insertAdjacentHTML('afterbegin', '<section id="bigseller-sales-summary" style="margin-bottom:10px">' + html + '</section>');
     var button = win.document.getElementById('bigseller-sales-conflict-download');
     if (button) button.addEventListener('click', function () { downloadConflictReport(win, stats); });
   }
