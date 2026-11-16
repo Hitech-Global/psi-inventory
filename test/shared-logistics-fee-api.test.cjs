@@ -56,7 +56,7 @@ test('shared IDR bill → single approval request → 3 sea batches → RMB/IDR 
     a.ok(unpaid.batch_totals_display.b2.display_totals.IDR>0,
       'expanded logistics row must preserve original IDR while shared bill is unpaid');
     a.ok(unpaid.currency_options.includes('IDR'),'currency options must come from system currency master');
-    const pre=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1')).json();
+    const pre=await (await fetch(url+'/api/ci-freight-summaries?ids=ci_shared_1,ci_legacy_idr')).json();
     a.equal(pre.ci_shared_1.total_rmb,null,'unpaid IDR must not be counted as RMB');
     a.deepEqual(pre.ci_shared_1.display_totals,{RMB:100,IDR:100000},
       'settled RMB freight stays RMB while unpaid IDR freight remains in its original currency');
