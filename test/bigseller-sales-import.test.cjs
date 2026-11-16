@@ -538,7 +538,7 @@ test('opening a new import clears stale file data and preview state', () => {
 });
 
 test('repeated BigSeller preview replaces its summary instead of stacking duplicates', async () => {
-  const stats = { innerHTML: '', insertAdjacentHTML(position, html) { this.innerHTML += html; } };
+  const stats = makePreviewStatsElement();
   const button = { disabled: false };
   const win = {
     document: { getElementById(id) { return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null; } },
@@ -757,4 +757,92 @@ test('BigSeller progress exposes backend preview errors instead of showing pendi
   assert.equal(harness.win._salesImportBigSellerProgress.percent, 85);
   assert.equal(harness.win._salesImportBigSellerProgress.state, 'error');
   assert.match(harness.win._salesImportBigSellerProgress.message, /Network failed/);
+});
+
+
+function makePreviewStatsElement(initialHtml = '') {
+  function removeElement(html, tagName, id) {
+    const opening = '<' + tagName + ' id="' + id + '"';
+    const start = html.indexOf(opening);
+    if (start < 0) return html;
+    const openEnd = html.indexOf('>', start);
+    if (openEnd < 0) return html;
+    const token = new RegExp('<\\/?' + tagName + '\\b[^>]*>', 'gi');
+    token.lastIndex = openEnd + 1;
+    let depth = 1;
+    let match;
+    while ((match = token.exec(html))) {
+      if (match[0].slice(0, 2) === '</') depth -= 1;
+      else if (!/\\/>$/.test(match[0])) depth += 1;
+      if (depth === 0) return html.slice(0, start) + html.slice(token.lastIndex);
+    }
+    return html;
+  }
+
+  return {
+    innerHTML: initialHtml,
+    insertAdjacentHTML(position, html) {
+      this.innerHTML = position === 'afterbegin' ? html + this.innerHTML : this.innerHTML + html;
+    },
+    querySelector(selector) {
+      const selectors = {
+        '#bigseller-sales-summary': { tag: 'section', id: 'bigseller-sales-summary' },
+        '#bigseller-sales-progress': { tag: 'div', id: 'bigseller-sales-progress' }
+      };
+      const target = selectors[selector];
+      if (!target || !this.innerHTML.includes('<' + target.tag + ' id="' + target.id + '"')) return null;
+      return {
+        remove: () => {
+          this.innerHTML = removeElement(this.innerHTML, target.tag, target.id);
+        }
+      };
+    }
+  };
+}
+
+test('BigSeller summary preserves backend SKU/brand blocking details and downloadable error list', async () => {
+  const stats = makePreviewStatsElement();
+  const button = { disabled: false };
+  const backendValidationHtml =
+    '<div style="margin-top:10px"><b>SKU/品牌预检查失败 2 行：整批禁止导入</b>' +
+    '<div>第 2 行 · M724：品牌与 SKU 主数据不一致</div>' +
+    '<button type="button" onclick="downloadSalesImportErrors()">下载错误清单</button></div>';
+  const win = {
+    document: {
+      getElementById(id) {
+        return id === 'sales-preview-stats' ? stats : id === 'sales-import-btn' ? button : null;
+      }
+    },
+    handleSalesFile() {},
+    openSalesBatchImport() {},
+    requestSalesPreview: async () => {
+      // Simulate the original app.js preview handler rendering its backend result.
+      stats.innerHTML = backendValidationHtml;
+      return {};
+    },
+    renderSalesPreview() {}
+  };
+  BigSeller.install(win);
+  win._salesImportSourceMode = 'bigseller';
+  win._salesImportSkippedStats = { sourceRows: 2, includedRows: 2, trueRows: 2, falseRows: 0 };
+  win._salesImportCountry = '印度尼西亚';
+  win._salesImportData = [{ _errors: [] }, { _errors: [] }];
+  win._salesImportBlocking = [{ row: 2, sku_code: 'M724', reason: '品牌与 SKU 主数据不一致' }];
+  win._salesImportPreviewReady = false;
+
+  await win.requestSalesPreview();
+
+  assert.match(stats.innerHTML, /已识别 BigSeller 销售数据/);
+  assert.match(stats.innerHTML, /SKU\/品牌预检查失败 2 行：整批禁止导入/);
+  assert.match(stats.innerHTML, /第 2 行 · M724：品牌与 SKU 主数据不一致/);
+  assert.match(stats.innerHTML, /downloadSalesImportErrors\(\)/);
+  assert.match(stats.innerHTML, /下载错误清单/);
+  assert.match(stats.innerHTML, /id="bigseller-sales-progress"/);
+  assert.ok(
+    stats.innerHTML.indexOf('id="bigseller-sales-summary"') <
+    stats.innerHTML.indexOf('SKU/品牌预检查失败'),
+    'BigSeller file summary should appear before the preserved backend validation details'
+  );
+  assert.equal(win._salesImportBigSellerProgress.state, 'blocked');
+  assert.equal(button.disabled, true);
 });
