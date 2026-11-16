@@ -4687,6 +4687,7 @@ function handleSalesFile(file){
 
 async function requestSalesPreview(){
   window._salesImportPreviewReady=false;
+  window._salesImportPreviewError='';
   var submitting=document.getElementById('sales-import-btn');if(submitting)submitting.disabled=true;
   var records=window._salesImportData||[];
   var valid=records.filter(function(r){return r._errors.length===0});
@@ -4731,6 +4732,7 @@ async function requestSalesPreview(){
     var _sib2=document.getElementById('sales-import-btn'); if(_sib2) _sib2.disabled=!window._salesImportPreviewReady;
   }catch(e){
     window._salesImportPreviewReady=false;
+    window._salesImportPreviewError=String(e&&e.message||'后台 SKU/品牌预检查请求失败');
     var _sib2=document.getElementById('sales-import-btn');if(_sib2)_sib2.disabled=true;
     showToast(t('toast.requestSalesPreview', '预览失败: {v1}', {v1: e.message||''}),'danger');
   }
