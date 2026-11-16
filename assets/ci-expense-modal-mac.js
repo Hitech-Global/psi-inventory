@@ -354,7 +354,7 @@
         '</div>';
 
       var footer = (canEdit && !summary.cost_confirmed
-        ? '<button class="btn btn-secondary" onclick="saveCiCostInputs(\'' + jsArg(id) + '\')">' +
+        ? '<button class="btn btn-secondary" onclick="saveCiCostInputs(' + jsArg(id) + ')">' +
           esc(tr('ci.cost.save_inputs', '保存分摊输入')) + '</button>'
         : '') +
         '<button class="btn btn-secondary" onclick="closeModal()">' +

@@ -36,6 +36,10 @@ assert.match(modalFooter, /canEdit && !summary\.cost_confirmed/,
 assert.ok(modalFooter.indexOf('saveCiCostInputs') >= 0 &&
   modalFooter.indexOf('saveCiCostInputs') < modalFooter.indexOf('closeModal'),
   'save action must be visible in the fixed modal footer before Close');
+assert.match(modalFooter, /saveCiCostInputs\(' \+ jsArg\(id\) \+ '\)/,
+  'save handler must receive the JSON-quoted CI ID exactly once');
+assert.doesNotMatch(modalFooter, /saveCiCostInputs\(\\\\' \+ jsArg\(id\)/,
+  'save handler must not wrap the JSON-quoted CI ID in a second set of quotes');
 assert.match(asset, /confirmCiCosts/);
 assert.match(asset, /allocateCosts/);
 assert.match(asset, /createCustomsDutyPay/);
