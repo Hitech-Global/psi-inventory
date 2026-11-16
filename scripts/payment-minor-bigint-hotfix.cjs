@@ -19,20 +19,7 @@ const INSERT_AFTER = '// PAY-CORE：payable_items 后续新增列迁移。';
 
 const MIGRATION = [
   '        // ' + MARKER,
-  '        "DO $$ BEGIN',
-  "          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payable_items' AND column_name='payable_amount_minor' AND data_type='integer') THEN",
-  '            ALTER TABLE public.payable_items ALTER COLUMN payable_amount_minor TYPE BIGINT USING payable_amount_minor::BIGINT;',
-  '          END IF;',
-  "          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_request_items' AND column_name='requested_amount_minor' AND data_type='integer') THEN",
-  '            ALTER TABLE public.payment_request_items ALTER COLUMN requested_amount_minor TYPE BIGINT USING requested_amount_minor::BIGINT;',
-  '          END IF;',
-  "          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_transactions' AND column_name='paid_amount_minor' AND data_type='integer') THEN",
-  '            ALTER TABLE public.payment_transactions ALTER COLUMN paid_amount_minor TYPE BIGINT USING paid_amount_minor::BIGINT;',
-  '          END IF;',
-  "          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_allocations' AND column_name='allocated_amount_minor' AND data_type='integer') THEN",
-  '            ALTER TABLE public.payment_allocations ALTER COLUMN allocated_amount_minor TYPE BIGINT USING allocated_amount_minor::BIGINT;',
-  '          END IF;',
-  '        END $$",'
+  "        \"DO $$ BEGIN IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payable_items' AND column_name='payable_amount_minor' AND data_type='integer') THEN ALTER TABLE public.payable_items ALTER COLUMN payable_amount_minor TYPE BIGINT USING payable_amount_minor::BIGINT; END IF; IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_request_items' AND column_name='requested_amount_minor' AND data_type='integer') THEN ALTER TABLE public.payment_request_items ALTER COLUMN requested_amount_minor TYPE BIGINT USING requested_amount_minor::BIGINT; END IF; IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_transactions' AND column_name='paid_amount_minor' AND data_type='integer') THEN ALTER TABLE public.payment_transactions ALTER COLUMN paid_amount_minor TYPE BIGINT USING paid_amount_minor::BIGINT; END IF; IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='payment_allocations' AND column_name='allocated_amount_minor' AND data_type='integer') THEN ALTER TABLE public.payment_allocations ALTER COLUMN allocated_amount_minor TYPE BIGINT USING allocated_amount_minor::BIGINT; END IF; END $$\","
 ].join('\n');
 
 function patchDbSource(input) {
