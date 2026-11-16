@@ -687,6 +687,10 @@ function createPostgresSalesImportAdapter(db, options = {}) {
         quantity INTEGER, is_valid_order INTEGER, original_order_status TEXT, remark TEXT, country TEXT, error_json JSONB
       )`, [json]);
     }
+    // The staging table can contain 10k+ rows. Without fresh statistics,
+    // PostgreSQL may estimate the correlated match as one row and choose a
+    // repeated nested-loop scan of sales_records. Analyze before planning joins.
+    await callRun(`ANALYZE ${stageName}`);
   }
 
   async function loadSkuBrands(rows) {
@@ -700,16 +704,33 @@ function createPostgresSalesImportAdapter(db, options = {}) {
   }
 
   async function loadCandidates() {
-    const result = await callQuery(`SELECT ${getCandidateFieldsSql()} FROM sales_records sr
-      WHERE EXISTS (SELECT 1 FROM ${stageName} s WHERE
-        (s.source_system=sr.source_system OR
-          (lower(s.source_system)='bigseller' AND lower(sr.source_system)='bigseller'))
-        AND s.order_detail_id <> '' AND s.order_detail_id=sr.order_detail_id)
-      OR EXISTS (SELECT 1 FROM ${stageName} s WHERE
-        (s.source_system=sr.source_system OR
-          (lower(s.source_system)='bigseller' AND lower(sr.source_system)='bigseller'))
-        AND s.order_no=sr.order_no AND s.sku_code=sr.sku_code
-        AND COALESCE(s.shop_platform,'')=COALESCE(sr.shop_platform,''))`);
+    // Match in two set-based joins and union their ids. The former correlated
+    // EXISTS ... OR EXISTS shape made PostgreSQL rescan the 11k-row staging
+    // table for each of ~70k sales rows (statement_timeout in production).
+    // The joins allow hash/merge plans; ANALYZE above gives the planner the
+    // actual staging cardinality. UNION preserves one candidate per sale.
+    const sourceKey = alias => `(CASE WHEN lower(${alias}.source_system)='bigseller' THEN 'bigseller' ELSE ${alias}.source_system END)`;
+    const stageSource = sourceKey('s');
+    const salesSource = sourceKey('sr');
+    const result = await callQuery(`WITH matched_ids AS (
+      SELECT sr.id
+      FROM sales_records sr
+      JOIN ${stageName} s
+        ON ${salesSource} = ${stageSource}
+       AND s.order_detail_id <> ''
+       AND s.order_detail_id = sr.order_detail_id
+      UNION
+      SELECT sr.id
+      FROM sales_records sr
+      JOIN ${stageName} s
+        ON ${salesSource} = ${stageSource}
+       AND s.order_no = sr.order_no
+       AND s.sku_code = sr.sku_code
+       AND COALESCE(s.shop_platform,'') = COALESCE(sr.shop_platform,'')
+    )
+    SELECT ${getCandidateFieldsSql()}
+    FROM sales_records sr
+    WHERE sr.id IN (SELECT id FROM matched_ids)`);
     return result.rows || [];
   }
 
