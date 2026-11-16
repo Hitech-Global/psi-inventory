@@ -632,7 +632,7 @@ test('WAC history export mirrors the filtered matrix and keeps every historical 
   assert.deepEqual(JSON.parse(JSON.stringify(model.dates)),['2026-10-29','2026-09-28']);
   assert.deepEqual(JSON.parse(JSON.stringify(model.headers.slice(0,7))),
     ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','最后入库日期']);
-  assert.match(model.headers[7],/1 RMB = 2,500 IDR[\s\S]*2026-10-29/);
+  assert.match(model.headers[7],/1 RMB = 2,500\.00 IDR[\s\S]*2026-10-29/);
   assert.equal(model.rows[0][0],'M724');
   assert.equal(model.rows[0][4],'120,000.00 IDR');
   assert.match(model.rows[0][5], /9\.09%/);
