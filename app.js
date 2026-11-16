@@ -16252,18 +16252,199 @@ function wacCalcFmtQty(value){
   const n=Number(value);
   return Number.isFinite(n)?n.toLocaleString('en-US',{maximumFractionDigits:2}):'—';
 }
-function wacCalcTable(title,headers,values){
+function wacCalcTable(title,headers,values,nestedTips){
   const th=(headers||[]).map(function(v){return '<th>'+esc(v)+'</th>';}).join('');
-  const td=(values||[]).map(function(v){return '<td>'+esc(v==null?'—':String(v))+'</td>';}).join('');
+  const td=(values||[]).map(function(v,i){
+    const nested=nestedTips&&nestedTips[i];
+    return '<td>'+(nested?wacCalcNestedHover(v,nested):esc(v==null?'—':String(v)))+'</td>';
+  }).join('');
   return '<div class="wac-calc-tip"><div class="wac-calc-tip-title">'+esc(title)+'</div>'+
     '<div class="wac-calc-tip-scroll"><table><thead><tr>'+th+'</tr></thead><tbody><tr>'+td+'</tr></tbody></table></div></div>';
 }
 function wacCalcHover(displayValue,tooltipHtml){
   if(!tooltipHtml)return String(displayValue==null?'—':displayValue);
   return '<span class="wac-calc-hover" tabindex="0" data-wac-calc="'+esc(tooltipHtml)+'" '+
-    'onmouseenter="showWacCalcTooltip(this)" onmouseleave="hideWacCalcTooltip()" '+
-    'onfocus="showWacCalcTooltip(this)" onblur="hideWacCalcTooltip()">'+
+    'onmouseenter="showWacCalcTooltip(this)" onmouseleave="hideWacCalcTooltip(event)" '+
+    'onfocus="showWacCalcTooltip(this)" onblur="hideWacCalcTooltip(event)">'+
     String(displayValue==null?'—':displayValue)+'</span>';
+}
+function wacCalcNestedHover(displayValue,tooltipHtml){
+  if(!tooltipHtml)return esc(displayValue==null?'—':String(displayValue));
+  return '<span class="wac-calc-sub-hover" tabindex="0" data-wac-subcalc="'+esc(tooltipHtml)+'" '+
+    'onmouseenter="showWacCalcSubTooltip(this)" onmouseleave="hideWacCalcSubTooltip(event)" '+
+    'onfocus="showWacCalcSubTooltip(this)" onblur="hideWacCalcSubTooltip(event)">'+
+    esc(displayValue==null?'—':String(displayValue))+'</span>';
+}
+function wacCalcFmtBasis(value){
+  if(value===null||value===undefined||value==='')return '—';
+  const n=Number(value);
+  return Number.isFinite(n)?n.toLocaleString('en-US',{maximumFractionDigits:4}):'—';
+}
+function wacCalcFmtPercent(value){
+  const n=Number(value);
+  return Number.isFinite(n)?(n*100).toFixed(4)+'%':'—';
+}
+function wacCalcSubTable(title,headers,rows,footer,note){
+  const th=(headers||[]).map(function(v){return '<th>'+esc(v)+'</th>';}).join('');
+  const body=(rows||[]).map(function(row){
+    return '<tr>'+(row||[]).map(function(v){return '<td>'+esc(v==null?'—':String(v))+'</td>';}).join('')+'</tr>';
+  }).join('');
+  return '<div class="wac-calc-subtip"><div class="wac-calc-subtip-title">'+esc(title)+'</div>'+
+    '<div class="wac-calc-subtip-scroll"><table><thead><tr>'+th+'</tr></thead><tbody>'+body+'</tbody></table></div>'+
+    (footer?'<div class="wac-calc-subtip-footer">'+esc(footer)+'</div>':'')+
+    (note?'<div class="wac-calc-subtip-note">'+esc(note)+'</div>':'')+'</div>';
+}
+function wacCalcSubNotice(title,message){
+  return '<div class="wac-calc-subtip"><div class="wac-calc-subtip-title">'+esc(title)+'</div>'+
+    '<div class="wac-calc-subtip-empty">'+esc(message)+'</div></div>';
+}
+function wacCalcBuildFreightSubTip(it,m,unitAmount){
+  const details=it.allocation_details&&Array.isArray(it.allocation_details.freight)?it.allocation_details.freight:[];
+  const title=t('wac.calc.alloc.title_freight','运费分摊计算');
+  if(!details.length){
+    return wacCalcSubNotice(title,Number(it.freight_cost_local||0)>0
+      ?t('wac.calc.alloc.detail_unavailable','分摊明细暂不可用，请刷新WAC预览')
+      :t('wac.calc.alloc.no_freight','当前批次无运费分摊'));
+  }
+  const currency=String(m.local_currency||'');
+  const basisLabel=details[0].basis==='kg'?'KG':'CBM';
+  const rows=details.map(function(d){
+    const source=d.source_type==='shared_freight'
+      ?t('wac.calc.alloc.source_shared_freight','合并运费')+' '+String(d.source_label||'')
+      :t('wac.calc.alloc.source_batch_freight','本批次运费');
+    return [
+      source,
+      wacCalcFmtMoney(d.total_amount)+' '+currency,
+      wacCalcFmtBasis(d.weight)+' '+basisLabel,
+      wacCalcFmtBasis(d.total_weight)+' '+basisLabel,
+      wacCalcFmtPercent(d.ratio),
+      wacCalcFmtMoney(d.theoretical_amount),
+      wacCalcFmtMoney(d.rounding_adjustment),
+      wacCalcFmtMoney(d.allocated_amount)+' '+currency
+    ];
+  });
+  const qty=Number(it.batch_qty)||0;
+  const footer=t('wac.calc.alloc.unit_formula_freight','单位运费 = SKU运费分摊额合计 ÷ 本批次数量')+
+    '：'+wacCalcFmtMoney(it.freight_cost_local)+' ÷ '+wacCalcFmtQty(qty)+' = '+wacCalcFmtMoney(unitAmount)+' '+currency;
+  return wacCalcSubTable(title,[
+    t('wac.calc.alloc.fee_source','费用来源'),
+    t('wac.calc.alloc.fee_total','费用总额')+' ('+currency+')',
+    t('wac.calc.alloc.sku_basis','当前SKU基数')+' ('+basisLabel+')',
+    t('wac.calc.alloc.total_basis','批次基数合计')+' ('+basisLabel+')',
+    t('wac.calc.alloc.ratio','分摊比例'),
+    t('wac.calc.alloc.theoretical','理论分摊')+' ('+currency+')',
+    t('wac.calc.alloc.rounding_adjustment','尾差调整')+' ('+currency+')',
+    t('wac.calc.alloc.allocated','SKU实际分摊额')+' ('+currency+')'
+  ],rows,footer,t('wac.calc.alloc.rounding_note','系统按4位小数分摊，并将尾差调整到权重最大的SKU；金额显示两位小数。'));
+}
+function wacCalcBuildDutySubTip(it,m,unitAmount){
+  const d=it.allocation_details&&it.allocation_details.duty;
+  const title=t('wac.calc.alloc.title_duty','关税分摊计算');
+  if(!d){
+    return wacCalcSubNotice(title,Number(it.customs_cost_local||0)>0
+      ?t('wac.calc.alloc.detail_unavailable','分摊明细暂不可用，请刷新WAC预览')
+      :t('wac.calc.alloc.no_duty','当前批次无关税分摊'));
+  }
+  const currency=String(m.local_currency||'');
+  let firstStage;
+  if(d.source_type==='ci_import_duty'){
+    firstStage=wacCalcSubTable(t('wac.calc.alloc.duty_stage_batch','第一步：CI关税按批次货值分摊'),[
+      t('wac.calc.alloc.ci_duty_local_total','CI关税折算本币总额')+' ('+currency+')',
+      t('wac.calc.alloc.batch_goods_value','当前批次商品货值'),
+      t('wac.calc.alloc.ci_goods_value_total','CI商品货值合计'),
+      t('wac.calc.alloc.batch_ratio','批次货值占比'),
+      t('wac.calc.alloc.batch_duty_total','本批次关税金额')+' ('+currency+')'
+    ],[[
+      wacCalcFmtMoney(d.ci_duty_local_amount),
+      wacCalcFmtMoney(d.batch_goods_value),
+      wacCalcFmtMoney(d.ci_goods_amount_total),
+      wacCalcFmtPercent(d.batch_goods_ratio),
+      wacCalcFmtMoney(d.batch_duty_local_amount)
+    ]]);
+  }else{
+    firstStage=wacCalcSubTable(t('wac.calc.alloc.duty_stage_legacy','历史批次关税折算'),[
+      t('wac.calc.alloc.legacy_duty_total','历史批次关税原币金额'),
+      t('wac.calc.alloc.duty_currency','关税币种'),
+      t('wac.calc.alloc.fx_rate','汇率'),
+      t('wac.calc.alloc.duty_local_total','折算本币金额')+' ('+currency+')'
+    ],[[
+      wacCalcFmtMoney(d.source_business_amount),
+      String(d.source_currency||'—'),
+      wacCalcFmtMoney(d.legacy_fx_rate),
+      wacCalcFmtMoney(d.source_local_amount)
+    ]]);
+  }
+  const secondStage=wacCalcSubTable(t('wac.calc.alloc.duty_stage_sku','第二步：按SKU实际关税税率权重分摊'),[
+    t('wac.calc.alloc.sku_customs_weight','当前SKU关税权重'),
+    t('wac.calc.alloc.batch_weight_total','关税权重合计'),
+    t('wac.calc.alloc.ratio','SKU分摊比例'),
+    t('wac.calc.alloc.theoretical','理论分摊')+' ('+currency+')',
+    t('wac.calc.alloc.rounding_adjustment','尾差调整')+' ('+currency+')',
+    t('wac.calc.alloc.allocated','SKU实际分摊金额')+' ('+currency+')'
+  ],[[
+    wacCalcFmtMoney(d.weight),
+    wacCalcFmtMoney(d.total_weight),
+    wacCalcFmtPercent(d.ratio),
+    wacCalcFmtMoney(d.theoretical_amount),
+    wacCalcFmtMoney(d.rounding_adjustment),
+    wacCalcFmtMoney(d.allocated_amount)
+  ]],t('wac.calc.alloc.duty_weight_formula','SKU关税权重 = 当前SKU商品货值 × 实际关税税率')+
+    '：'+wacCalcFmtMoney(d.sku_goods_value)+' × '+wacCalcFmtPercent(d.customs_rate));
+  const qty=Number(it.batch_qty)||0;
+  const footer=t('wac.calc.alloc.unit_formula_duty','单位关税 = SKU关税分摊额 ÷ 本批次数量')+
+    '：'+wacCalcFmtMoney(d.allocated_amount)+' ÷ '+wacCalcFmtQty(qty)+' = '+wacCalcFmtMoney(unitAmount)+' '+currency;
+  return '<div class="wac-calc-subtip">'+
+    '<div class="wac-calc-subtip-title">'+esc(title)+'</div>'+
+    firstStage+secondStage+
+    '<div class="wac-calc-subtip-footer">'+esc(footer)+'</div>'+
+    '<div class="wac-calc-subtip-note">'+esc(t('wac.calc.alloc.rounding_note','系统按4位小数分摊，并将尾差调整到权重最大的SKU；金额显示两位小数。'))+'</div></div>';
+}
+function wacCalcBuildFeeSubTip(it,m,kind,unitAmount){
+  const isInspection=kind==='inspection';
+  const details=it.allocation_details&&Array.isArray(it.allocation_details[kind])?it.allocation_details[kind]:[];
+  const title=isInspection?t('wac.calc.alloc.title_inspection','商检分摊计算'):t('wac.calc.alloc.title_other','其他费用分摊计算');
+  const currentAmount=isInspection?Number(it.inspection_cost_local||0):Number(it.other_cost_local||0);
+  if(!details.length){
+    const emptyKey=isInspection?'wac.calc.alloc.no_inspection':'wac.calc.alloc.no_other';
+    return wacCalcSubNotice(title,currentAmount>0
+      ?t('wac.calc.alloc.detail_unavailable','分摊明细暂不可用，请刷新WAC预览')
+      :t(emptyKey,isInspection?'当前批次无商检费用分摊':'当前批次无已配置并计入WAC的其他费用分摊'));
+  }
+  const currency=String(m.local_currency||'');
+  const rows=details.map(function(d){
+    const basisLabel=d.weight_basis==='batch_qty'
+      ?t('wac.calc.alloc.batch_qty_basis','批次数量')
+      :t('wac.calc.alloc.ci_goods_value_basis','CI商品货值');
+    const category=d.policy_key==='inspection_fee/inspection'
+      ?t('wac.calc.alloc.inspection_category','商检费'):String(d.policy_key||'—');
+    return [
+      category,
+      wacCalcFmtMoney(d.fee_total_local)+' '+currency,
+      basisLabel,
+      wacCalcFmtBasis(d.weight),
+      wacCalcFmtBasis(d.total_weight),
+      wacCalcFmtPercent(d.ratio),
+      wacCalcFmtMoney(d.theoretical_amount),
+      wacCalcFmtMoney(d.rounding_adjustment),
+      wacCalcFmtMoney(d.allocated_amount)+' '+currency
+    ];
+  });
+  const qty=Number(it.batch_qty)||0;
+  const footer=(isInspection
+    ?t('wac.calc.alloc.unit_formula_inspection','单位商检 = SKU商检分摊额合计 ÷ 本批次数量')
+    :t('wac.calc.alloc.unit_formula_other','单位其他费用 = SKU其他费用分摊额合计 ÷ 本批次数量'))+
+    '：'+wacCalcFmtMoney(currentAmount)+' ÷ '+wacCalcFmtQty(qty)+' = '+wacCalcFmtMoney(unitAmount)+' '+currency;
+  return wacCalcSubTable(title,[
+    t('wac.calc.alloc.fee_category','费用项目'),
+    t('wac.calc.alloc.fee_total','费用总额')+' ('+currency+')',
+    t('wac.calc.alloc.weight_basis','分摊依据'),
+    t('wac.calc.alloc.sku_basis','当前SKU基数'),
+    t('wac.calc.alloc.total_basis','基数合计'),
+    t('wac.calc.alloc.ratio','分摊比例'),
+    t('wac.calc.alloc.theoretical','理论分摊')+' ('+currency+')',
+    t('wac.calc.alloc.rounding_adjustment','尾差调整')+' ('+currency+')',
+    t('wac.calc.alloc.allocated','SKU实际分摊额')+' ('+currency+')'
+  ],rows,footer,t('wac.calc.alloc.rounding_note','系统按4位小数分摊，并将尾差调整到权重最大的SKU；金额显示两位小数。'));
 }
 function wacCalcBuildTips(it,m,oldQty,oldWac,oldValue,newWac){
   const qty=Number(it.batch_qty)||0;
@@ -16295,7 +16476,12 @@ function wacCalcBuildTips(it,m,oldQty,oldWac,oldValue,newWac){
     ],[
       wacCalcFmtMoney(fobLocalUnit),wacCalcFmtMoney(freightUnit),wacCalcFmtMoney(dutyUnit),wacCalcFmtMoney(inspectionUnit),wacCalcFmtMoney(otherUnit),
       t('wac.calc.formula_unit_landed','FOB本币单价 + 各项单位费用分摊'),wacCalcFmtMoney(it.unit_landing_cost)
-    ]),
+    ],{
+      1:wacCalcBuildFreightSubTip(it,m,freightUnit),
+      2:wacCalcBuildDutySubTip(it,m,dutyUnit),
+      3:wacCalcBuildFeeSubTip(it,m,'inspection',inspectionUnit),
+      4:wacCalcBuildFeeSubTip(it,m,'other',otherUnit)
+    }),
     batchTotal:wacCalcTable(t('wac.calc.title_batch_total','本批次总成本'),[
       t('wac.calc.product_cost_total','SKU采购总成本'),t('wac.calc.freight_alloc_total','运费分摊总额'),t('wac.calc.duty_alloc_total','关税分摊总额'),
       t('wac.calc.inspection_alloc_total','商检分摊总额'),t('wac.calc.other_alloc_total','其他费用分摊总额'),t('wac.calc.formula','计算公式'),t('wac.calc.result','计算结果')
@@ -16322,9 +16508,14 @@ function wacCalcBuildTips(it,m,oldQty,oldWac,oldValue,newWac){
 function showWacCalcTooltip(target){
   const html=target&&target.getAttribute('data-wac-calc');
   if(!html)return;
+  window.__wacCalcActiveTarget=target;
+  window.__wacCalcActiveSubTarget=null;
   let tooltip=document.getElementById('wac-calc-tooltip');
   if(!tooltip){tooltip=document.createElement('div');tooltip.id='wac-calc-tooltip';document.body.appendChild(tooltip);}
   tooltip.innerHTML=html;
+  tooltip.onmouseleave=hideWacCalcTooltip;
+  const oldSub=document.getElementById('wac-calc-subtooltip');
+  if(oldSub)oldSub.classList.remove('visible');
   tooltip.style.left='12px';tooltip.style.top='12px';tooltip.classList.add('visible');
   const rect=target.getBoundingClientRect();
   const vw=document.documentElement.clientWidth||window.innerWidth;
@@ -16335,9 +16526,47 @@ function showWacCalcTooltip(target){
   if(top+height>vh-12)top=Math.max(12,rect.top-height-8);
   tooltip.style.left=left+'px';tooltip.style.top=top+'px';
 }
-function hideWacCalcTooltip(){
+function hideWacCalcTooltip(event){
   const tooltip=document.getElementById('wac-calc-tooltip');
+  const related=event&&event.relatedTarget;
+  const active=window.__wacCalcActiveTarget;
+  if(related&&tooltip&&tooltip.contains(related))return;
+  if(related&&active&&(related===active||(active.contains&&active.contains(related))))return;
   if(tooltip)tooltip.classList.remove('visible');
+  const sub=document.getElementById('wac-calc-subtooltip');
+  if(sub)sub.classList.remove('visible');
+  window.__wacCalcActiveTarget=null;
+  window.__wacCalcActiveSubTarget=null;
+}
+function showWacCalcSubTooltip(target){
+  const html=target&&target.getAttribute('data-wac-subcalc');
+  const parent=document.getElementById('wac-calc-tooltip');
+  if(!html||!parent||!parent.classList.contains('visible'))return;
+  window.__wacCalcActiveSubTarget=target;
+  let sub=document.getElementById('wac-calc-subtooltip');
+  if(!sub){sub=document.createElement('div');sub.id='wac-calc-subtooltip';parent.appendChild(sub);}
+  sub.innerHTML=html;
+  sub.onmouseleave=hideWacCalcSubTooltip;
+  sub.style.left='12px';sub.style.top='12px';sub.classList.add('visible');
+  const targetRect=target.getBoundingClientRect();
+  const parentRect=parent.getBoundingClientRect();
+  const vw=document.documentElement.clientWidth||window.innerWidth;
+  const vh=window.innerHeight||document.documentElement.clientHeight;
+  const width=sub.offsetWidth,height=sub.offsetHeight;
+  let left=parentRect.right+8;
+  if(left+width>vw-12)left=parentRect.left-width-8;
+  if(left<12)left=Math.max(12,Math.min(targetRect.right+8,vw-width-12));
+  let top=Math.max(12,Math.min(targetRect.top-8,vh-height-12));
+  sub.style.left=left+'px';sub.style.top=top+'px';
+}
+function hideWacCalcSubTooltip(event){
+  const sub=document.getElementById('wac-calc-subtooltip');
+  const related=event&&event.relatedTarget;
+  const active=window.__wacCalcActiveSubTarget;
+  if(related&&sub&&sub.contains(related))return;
+  if(related&&active&&(related===active||(active.contains&&active.contains(related))))return;
+  if(sub)sub.classList.remove('visible');
+  window.__wacCalcActiveSubTarget=null;
 }
 
 // WAC确认弹窗：展示PL明细与成本计算详情。

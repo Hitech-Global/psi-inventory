@@ -30,7 +30,7 @@ process.env.DB_DRIVER = 'sqlite';
 process.env.DB_PATH = ':memory:';
 
 const { query, queryOne, run, transaction, initDatabase } = require('./db');
-const { computeWacCostFacts, allocateByWeight, resolveExactFxRate, transportBasisForMode } = require('./wac-calculator');
+const { computeWacCostFacts, allocateByWeight, buildWacAllocationTrace, resolveExactFxRate, transportBasisForMode } = require('./wac-calculator');
 
 // ── Schema setup ──
 function createTestSchema() {
@@ -505,6 +505,33 @@ describe('allocateByWeight', () => {
     const weights = new Map([['A', 0], ['B', 0]]);
     const result = allocateByWeight(['A', 'B'], weights, 100);
     assert.equal(result, null);
+  });
+});
+
+describe('buildWacAllocationTrace', () => {
+  test('explains the exact proportional allocation, four-decimal rounding and max-weight remainder', () => {
+    const skuCodes = ['A', 'B', 'C'];
+    const weights = new Map([['A', 1], ['B', 1], ['C', 1]]);
+    const totalAmount = 10;
+    const allocations = allocateByWeight(skuCodes, weights, totalAmount);
+    const trace = buildWacAllocationTrace(skuCodes, weights, totalAmount, allocations);
+
+    assert.equal(trace.size, 3);
+    for (const sku of skuCodes) {
+      assert.equal(trace.get(sku).allocated_amount, allocations.get(sku));
+      assert.equal(trace.get(sku).total_weight, 3);
+      assert.equal(trace.get(sku).ratio, 1 / 3);
+    }
+    const traceTotal = [...trace.values()].reduce((sum, row) => sum + row.allocated_amount, 0);
+    assert.equal(Math.round(traceTotal * 10000) / 10000, 10);
+    assert.equal([...trace.values()].filter(row => row.remainder_anchor).length, 1);
+    const anchor = [...trace.values()].find(row => row.remainder_anchor);
+    assert.ok(Math.abs(anchor.rounding_adjustment) > 0);
+  });
+
+  test('returns an empty trace when the original allocator has no allocation', () => {
+    const weights = new Map([['A', 0], ['B', 0]]);
+    assert.equal(buildWacAllocationTrace(['A', 'B'], weights, 100, null).size, 0);
   });
 });
 

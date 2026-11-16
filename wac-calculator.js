@@ -153,6 +153,44 @@ function allocateByWeight(skuCodes, weightMap, totalAmount) {
   return new Map(rawAlloc.map(r => [r.sku, r.final]));
 }
 
+
+function buildWacAllocationTrace(skuCodes, weightMap, totalAmount, allocationMap) {
+  if (!allocationMap || !Array.isArray(skuCodes) || skuCodes.length === 0) return new Map();
+  const totalWeight = skuCodes.reduce((sum, sku) => sum + (Number(weightMap.get(sku)) || 0), 0);
+  if (!(totalWeight > 0)) return new Map();
+
+  let anchorSku = null;
+  let anchorTheoretical = -Infinity;
+  for (const sku of skuCodes) {
+    const weight = Number(weightMap.get(sku)) || 0;
+    const theoretical = Number(totalAmount || 0) * (weight / totalWeight);
+    if (theoretical > anchorTheoretical) {
+      anchorTheoretical = theoretical;
+      anchorSku = sku;
+    }
+  }
+
+  const trace = new Map();
+  for (const sku of skuCodes) {
+    const weight = Number(weightMap.get(sku)) || 0;
+    const ratio = weight / totalWeight;
+    const theoretical = Number(totalAmount || 0) * ratio;
+    const rounded = Math.round(theoretical * 10000) / 10000;
+    const allocated = Number(allocationMap.get(sku)) || 0;
+    trace.set(sku, {
+      weight,
+      total_weight: totalWeight,
+      ratio,
+      theoretical_amount: theoretical,
+      rounded_amount: rounded,
+      rounding_adjustment: Math.round((allocated - rounded) * 10000) / 10000,
+      allocated_amount: allocated,
+      remainder_anchor: sku === anchorSku
+    });
+  }
+  return trace;
+}
+
 // Main shared calculator
 function computeWacCostFacts(logisticsBatchId) {
   const blockers = [];
@@ -485,6 +523,7 @@ function computeWacCostFacts(logisticsBatchId) {
   // The logistics batch is the source of truth: sea → CBM, air → gross weight (KG).
   // CI.transport_basis is legacy/manual data and must not block or override this rule.
   let freightAllocations = null;
+  const freightAllocationDetailsBySku = new Map();
   const transportBasis = transportBasisForMode(batch.transport_mode);
   if (freightLocalAmount > 0) {
     if (!transportBasis) {
@@ -522,6 +561,18 @@ function computeWacCostFacts(logisticsBatchId) {
             detail: { transport_mode: batch.transport_mode, basis: transportBasis }
           });
         }
+        if (freightAllocations) {
+          const traceMap = buildWacAllocationTrace(skuCodes, weightMap, freightLocalAmount, freightAllocations);
+          for (const [sku, trace] of traceMap) {
+            freightAllocationDetailsBySku.set(sku, [{
+              source_type: 'batch_freight',
+              source_label: '本批次运费',
+              basis: transportBasis,
+              total_amount: freightLocalAmount,
+              ...trace
+            }]);
+          }
+        }
       }
     }
   }
@@ -547,6 +598,18 @@ function computeWacCostFacts(logisticsBatchId) {
     }
     const distributed=allocateByWeight([...batchSkuMap.keys()],w,part.amount_minor/100);
     if(!distributed){blockers.push({code:'SHARED_FREIGHT_BASIS_ZERO',message:part.bill_no+' 缺少对应PL计费数据'});continue;}
+    const sharedTraceMap=buildWacAllocationTrace([...batchSkuMap.keys()],w,part.amount_minor/100,distributed);
+    for(const [sku,trace] of sharedTraceMap){
+      const current=freightAllocationDetailsBySku.get(sku)||[];
+      current.push({
+        source_type:'shared_freight',
+        source_label:part.bill_no||'合并运费',
+        basis:part.basis,
+        total_amount:part.amount_minor/100,
+        ...trace
+      });
+      freightAllocationDetailsBySku.set(sku,current);
+    }
     if(!freightAllocations)freightAllocations=new Map();
     for(const [sku,amt] of distributed)freightAllocations.set(sku,(freightAllocations.get(sku)||0)+amt);
     freightLocalAmount+=part.amount_minor/100;
@@ -651,6 +714,9 @@ function computeWacCostFacts(logisticsBatchId) {
 
   // ── 10. Duty ──
   let dutyAllocations = null;
+  const dutyAllocationDetailsBySku = new Map();
+  let dutyCiLocalAmount = 0;
+  let dutyLegacyFxRate = null;
   // New source of truth: CI Import Duty + its paid cost item/payment FX snapshot.
   // Legacy batch.customs_duty remains supported only when no CI-level duty exists.
   const legacyDutyBusinessAmount = Number(batch.customs_duty) || 0;
@@ -749,6 +815,8 @@ function computeWacCostFacts(logisticsBatchId) {
       }
     }
 
+    dutyCiLocalAmount = dutyConversion ? Number(dutyConversion.amount || 0) : 0;
+
     // CI-level duty is split across partial/multiple logistics batches by the
     // current batch's CI goods value. Unshipped CI value stays for later batches.
     const currentBatchSkuCodes = [...batchSkuMap.keys()];
@@ -811,6 +879,29 @@ function computeWacCostFacts(logisticsBatchId) {
             message: '当前物流批次SKU的实际关税税率权重合计为0，无法分摊关税'
           });
         }
+        if (dutyAllocations) {
+          const traceMap = buildWacAllocationTrace(currentBatchSkuCodes, batchCustomsWeightMap, dutyLocalAmount, dutyAllocations);
+          for (const [sku, trace] of traceMap) {
+            const ciEntry = ciSkuMap.get(sku);
+            const batchEntry = batchSkuMap.get(sku);
+            const skuGoodsValue = (Number(batchEntry && batchEntry.batch_qty) || 0) *
+              (Number(ciEntry && ciEntry.weighted_purchase_unit_price) || 0);
+            dutyAllocationDetailsBySku.set(sku, {
+              source_type: 'ci_import_duty',
+              source_currency: dutyCurrency,
+              ci_duty_business_amount: ciDutyBusinessTotal,
+              ci_duty_local_amount: dutyCiLocalAmount,
+              ci_goods_amount_total,
+              batch_goods_value: dutyBatchGoodsValue,
+              batch_goods_ratio: dutyBatchGoodsRatio,
+              batch_duty_local_amount: dutyLocalAmount,
+              sku_goods_value: skuGoodsValue,
+              customs_rate: ciEntry ? ciEntry.customs_rate : null,
+              qty: batchEntry ? Number(batchEntry.batch_qty) || 0 : 0,
+              ...trace
+            });
+          }
+        }
       }
     }
   } else if (legacyDutyBusinessAmount > 0) {
@@ -820,6 +911,7 @@ function computeWacCostFacts(logisticsBatchId) {
     if (dutyCurrency !== localCurrency) {
       const dutyFxRate = resolveExactFxRate(dutyCurrency, localCurrency, arrivalDate, fxCache);
       if (dutyFxRate) {
+        dutyLegacyFxRate = dutyFxRate.rate;
         dutyLocalAmount = legacyDutyBusinessAmount * dutyFxRate.rate;
       } else {
         blockers.push({
@@ -828,8 +920,10 @@ function computeWacCostFacts(logisticsBatchId) {
         });
       }
     } else {
+      dutyLegacyFxRate = 1;
       dutyLocalAmount = legacyDutyBusinessAmount;
     }
+    dutyCiLocalAmount = dutyLocalAmount;
 
     const skuCodes = [...ciSkuMap.keys()];
     const missingCustomsRates = skuCodes.filter(sku => {
@@ -854,6 +948,24 @@ function computeWacCostFacts(logisticsBatchId) {
       if (!dutyAllocations) {
         blockers.push({ code: 'CUSTOMS_WEIGHT_ZERO', message: '全部SKU的关税权重合计为0，无法分摊关税' });
       }
+      if (dutyAllocations) {
+        const traceMap = buildWacAllocationTrace(skuCodes, customsWeightMap, dutyLocalAmount, dutyAllocations);
+        for (const [sku, trace] of traceMap) {
+          const ciEntry = ciSkuMap.get(sku);
+          dutyAllocationDetailsBySku.set(sku, {
+            source_type: 'legacy_batch_duty',
+            source_currency: dutyCurrency,
+            source_business_amount: legacyDutyBusinessAmount,
+            source_local_amount: dutyLocalAmount,
+            legacy_fx_rate: dutyLegacyFxRate,
+            ci_goods_amount_total,
+            sku_goods_value: ciEntry ? ciEntry.goods_amount : 0,
+            customs_rate: ciEntry ? ciEntry.customs_rate : null,
+            qty: Number(batchSkuMap.get(sku)?.batch_qty) || 0,
+            ...trace
+          });
+        }
+      }
     }
   } else if (Number(ci.has_customs_duty) === 1) {
     blockers.push({
@@ -877,6 +989,8 @@ function computeWacCostFacts(logisticsBatchId) {
 
   const inspectionAllocations = new Map();
   const otherAllocations = new Map();
+  const inspectionAllocationDetailsBySku = new Map();
+  const otherAllocationDetailsBySku = new Map();
   let inspectionLocalTotal = 0;
   let otherLocalTotal = 0;
 
@@ -932,17 +1046,20 @@ function computeWacCostFacts(logisticsBatchId) {
 
     const skuCodes = [...ciSkuMap.keys()];
     let allocMap = null;
+    let allocationWeightMap = null;
     if (allocPolicy === 'BY_PRODUCT_COST') {
       const weightMap = new Map();
       for (const sku of skuCodes) {
         weightMap.set(sku, ciSkuMap.get(sku).goods_amount);
       }
+      allocationWeightMap = weightMap;
       allocMap = allocateByWeight(skuCodes, weightMap, localTotal);
     } else if (allocPolicy === 'BY_QTY') {
       const weightMap = new Map();
       for (const sku of skuCodes) {
         weightMap.set(sku, batchSkuMap.get(sku)?.batch_qty || 0);
       }
+      allocationWeightMap = weightMap;
       allocMap = allocateByWeight(skuCodes, weightMap, localTotal);
     } else {
       blockers.push({ code: 'COST_ALLOCATION_POLICY_UNKNOWN', message: `成本项 ${policyKey} 的分摊策略 ${allocPolicy} 未实现` });
@@ -952,6 +1069,21 @@ function computeWacCostFacts(logisticsBatchId) {
     if (!allocMap) {
       blockers.push({ code: 'COST_ALLOCATION_ZERO', message: `成本项 ${policyKey} 分摊权重合计为0` });
       continue;
+    }
+    
+    const traceMap = buildWacAllocationTrace(skuCodes, allocationWeightMap, localTotal, allocMap);
+    const isInspectionPolicy = policyKey.startsWith('inspection_fee');
+    const detailTarget = isInspectionPolicy ? inspectionAllocationDetailsBySku : otherAllocationDetailsBySku;
+    for (const [sku, trace] of traceMap) {
+      const current = detailTarget.get(sku) || [];
+      current.push({
+        policy_key: policyKey,
+        allocation_policy: allocPolicy,
+        weight_basis: allocPolicy === 'BY_PRODUCT_COST' ? 'ci_goods_amount' : 'batch_qty',
+        fee_total_local: localTotal,
+        ...trace
+      });
+      detailTarget.set(sku, current);
     }
 
     if (policyKey.startsWith('inspection_fee')) {
@@ -1177,6 +1309,12 @@ function computeWacCostFacts(logisticsBatchId) {
       customs_cost_local: Math.round(dutyAllocated * 10000) / 10000,
       inspection_cost_local: Math.round(inspectionAllocated * 10000) / 10000,
       other_cost_local: Math.round(otherAllocated * 10000) / 10000,
+      allocation_details: {
+        freight: freightAllocationDetailsBySku.get(skuCode) || [],
+        duty: dutyAllocationDetailsBySku.get(skuCode) || null,
+        inspection: inspectionAllocationDetailsBySku.get(skuCode) || [],
+        other: otherAllocationDetailsBySku.get(skuCode) || []
+      },
       total_landing_cost_local: Math.round(totalLandingCostLocal * 10000) / 10000,
       unit_landing_cost: Math.round(unitLandingCost * 10000) / 10000,
       // Pending batches have no old_qty until the user uploads it. Confirmed batches
@@ -1222,6 +1360,9 @@ function computeWacCostFacts(logisticsBatchId) {
     freight_payment_breakdown: freightPaymentBreakdown,
     shared_freight_breakdown: sharedFreightBreakdown,
     duty_business_amount: dutyBusinessAmount,
+    duty_ci_business_total: Math.round(ciDutyBusinessTotal * 10000) / 10000,
+    duty_ci_local_amount: Math.round(dutyCiLocalAmount * 10000) / 10000,
+    duty_legacy_fx_rate: dutyLegacyFxRate !== null ? dutyLegacyFxRate : null,
     duty_currency: dutyCurrency,
     duty_local_amount: Math.round(dutyLocalAmount * 10000) / 10000,
     duty_payment_date: dutyPaymentDate,
@@ -1239,4 +1380,4 @@ function computeWacCostFacts(logisticsBatchId) {
   return { blockers, items, meta };
 }
 
-module.exports = { transportBasisForMode, computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };
+module.exports = { transportBasisForMode, computeWacCostFacts, resolveExactFxRate, allocateByWeight, buildWacAllocationTrace, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };
