@@ -666,15 +666,22 @@ test('the Shopee repeated-product order 261116ETEKUBYK aggregates five qty-3 lin
   assert.equal(repeatedImport.result.updated, 0);
   assert.equal(repeatedImport.result.skipped, 1);
   assert.equal(repeatedImport.records[0].quantity, 50);
+
+  const staleStatusExisting = [{ ...existing[0], original_order_status: '待发货' }];
+  const statusSync = SalesImport.classifySalesRows(rows, staleStatusExisting);
+  assert.equal(statusSync.result.inserted, 0);
+  assert.equal(statusSync.result.updated, 1);
+  assert.equal(statusSync.records[0].quantity, 50, 'status refresh must not add the imported 50 again');
+  assert.equal(statusSync.records[0].original_order_status, '待打单');
 });
 
 test('different timestamps are status snapshots and only the latest snapshot quantity is retained', () => {
   const parsed = BigSeller.parseBigSellerWorkbook(workbook([
     ['2026-11-06 10:00', 'ORDER-SNAPSHOT-QTY', '', '平台处理中', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
-    ['2026-11-06 10:05', 'ORDER-SNAPSHOT-QTY', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+    ['2026-11-06 10:05', 'ORDER-SNAPSHOT-QTY', '', '已完成', 'Redragon Warehouse', 'M724', '5', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
   ]), 'orders.xlsx', fakeXlsx());
   assert.equal(parsed.records.length, 1);
-  assert.equal(parsed.records[0].quantity, 2);
+  assert.equal(parsed.records[0].quantity, 5);
   assert.equal(parsed.records[0].original_order_status, '已完成');
   assert.equal(parsed.stats.snapshotDuplicateRows, 1);
   assert.equal(parsed.stats.aggregatedLineRows, 0);
