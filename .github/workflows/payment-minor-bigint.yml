@@ -1,0 +1,24 @@
+name: Payment minor-unit BIGINT hotfix
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/payment-minor-bigint-hotfix.cjs'
+      - 'test/payment-minor-bigint-hotfix.test.cjs'
+      - 'package.json'
+      - '.github/workflows/payment-minor-bigint.yml'
+
+jobs:
+  payment-minor-bigint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check hotfix script syntax
+        run: node --check scripts/payment-minor-bigint-hotfix.cjs
+      - name: Check hotfix test syntax
+        run: node --check test/payment-minor-bigint-hotfix.test.cjs
+      - name: Test idempotent BIGINT migration patch
+        run: node test/payment-minor-bigint-hotfix.test.cjs
