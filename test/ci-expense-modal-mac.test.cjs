@@ -37,6 +37,8 @@ assert.ok(routeStart >= 0 && routeEnd > routeStart, 'CI cost-summary route must 
 const route = server.slice(routeStart, routeEnd);
 assert.match(route, /goods_currency/);
 assert.match(route, /customs_duty_currency/);
+assert.match(route, /findDutyCountry\(dutyCountryKey\)/);
+assert.match(route, /dutyCountryRaw !== dutyCountryKey \? findDutyCountry\(dutyCountryRaw\) : null/);
 assert.match(route, /manualFreightDisplayTotals/);
 assert.match(route, /settledConversion/);
 assert.match(route, /manual_freight_display_totals/);

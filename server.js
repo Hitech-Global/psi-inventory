@@ -19299,9 +19299,13 @@ app.get('/api/commercial-invoices/:id/cost-summary', requireApiPermission('ci_vi
     // 商品金额使用CI原币；关税使用目的国主数据中的本币，禁止把不同币种直接相加。
     const dutyCountryRaw = String(ci.country || '').trim();
     const dutyCountryKey = COUNTRY_ALIAS_MAP[dutyCountryRaw] || dutyCountryRaw;
-    const dutyCountry = dutyCountryKey
-      ? queryOne("SELECT default_currency FROM countries WHERE status = 'active' AND (name = ? OR code = ?) LIMIT 1", [dutyCountryKey, dutyCountryKey])
+    const findDutyCountry = countryName => countryName
+      ? queryOne("SELECT default_currency FROM countries WHERE status = 'active' AND (name = ? OR code = ?) LIMIT 1", [countryName, countryName])
       : null;
+    // Alias normalization is only a lookup aid. Some country masters retain the original legal name
+    // (e.g. CI stores "印度尼西亚" while the alias points to "印尼"), so retry the raw CI value.
+    const dutyCountry = findDutyCountry(dutyCountryKey) ||
+      (dutyCountryRaw !== dutyCountryKey ? findDutyCountry(dutyCountryRaw) : null);
     const customsDutyCurrency = String(dutyCountry && dutyCountry.default_currency || '').trim().toUpperCase();
 
     // 按类别汇总
