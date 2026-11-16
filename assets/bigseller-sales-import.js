@@ -214,14 +214,13 @@
     var rawRows = countDataRows(rows);
     var fileCountry = inferFileCountry(rows, c.store);
     var parsedRows = [];
-    var exactSeen = Object.create(null);
     var stats = {
       sourceRows: rawRows,
       includedRows: 0,
       excludedMarkerRows: 0,
       excludedUnpaidRows: 0,
       excludedNoAmountRows: 0,
-      exactDuplicateRows: 0,
+      aggregatedLineRows: 0,
       snapshotDuplicateRows: 0,
       conflictGroups: 0,
       excludedConflictRows: 0,
@@ -261,15 +260,6 @@
         stats.excludedNoAmountRows++;
         continue;
       }
-
-      // Only exact source-row duplicates are removed automatically. Rows that
-      // share an order item key but disagree on quantity/package are quarantined.
-      var rawSignature = JSON.stringify(row.map(text));
-      if (exactSeen[rawSignature]) {
-        stats.exactDuplicateRows++;
-        continue;
-      }
-      exactSeen[rawSignature] = true;
 
       var orderDateRaw = row[c.orderDate];
       var orderDate = normalizeOrderDate(orderDateRaw);
@@ -337,6 +327,26 @@
       grouped[key].push(record);
     });
 
+    function addConflict(group, reason) {
+      stats.conflictGroups++;
+      stats.excludedConflictRows += group.length;
+      stats.conflictDetails.push({
+        order_no: group[0].order_no,
+        sku_code: group[0].sku_code,
+        channel: group[0].shop_platform,
+        reason: reason,
+        records: group.map(function (record) {
+          return {
+            source_row: record._rowNum,
+            order_date: record._rawOrderDate,
+            quantity: record.quantity,
+            package_no: record._packageNo,
+            status: record.original_order_status
+          };
+        })
+      });
+    }
+
     var records = [];
     groupOrder.forEach(function (entry) {
       var group = entry.records;
@@ -345,77 +355,67 @@
         return;
       }
 
-      var quantities = Object.create(null);
+      // A single order/SKU may have several genuine BigSeller detail rows.
+      // Keep package changes blocked because PSI stores one business line per
+      // order + SKU + channel and cannot safely represent multiple packages.
       var packages = Object.create(null);
-      group.forEach(function (record) {
-        quantities[String(record.quantity)] = true;
-        packages[String(record._packageNo)] = true;
-      });
-      var quantityConflict = Object.keys(quantities).length > 1;
-      var packageConflict = Object.keys(packages).length > 1;
-      if (quantityConflict || packageConflict) {
-        var reason = quantityConflict && packageConflict ? '数量和包裹号不同'
-          : (quantityConflict ? '数量不同' : '包裹号不同');
-        stats.conflictGroups++;
-        stats.excludedConflictRows += group.length;
-        stats.conflictDetails.push({
-          order_no: group[0].order_no,
-          sku_code: group[0].sku_code,
-          channel: group[0].shop_platform,
-          reason: reason,
-          records: group.map(function (record) {
-            return {
-              source_row: record._rowNum,
-              order_date: record._rawOrderDate,
-              quantity: record.quantity,
-              package_no: record._packageNo,
-              status: record.original_order_status
-            };
-          })
-        });
+      group.forEach(function (record) { packages[String(record._packageNo)] = true; });
+      if (Object.keys(packages).length > 1) {
+        addConflict(group, '包裹号不同');
         return;
       }
 
-      // Same order item, same quantity and package: keep one sales line.
-      // Preserve the earliest source date, but use the latest unambiguous
-      // status snapshot so an in-file status change is not lost.
+      // BigSeller exports status snapshots at different timestamps. Only the
+      // latest snapshot contributes quantity; rows sharing that same timestamp
+      // are distinct order detail lines and must be summed, even when their
+      // cells are otherwise identical.
       var timedRows = group.filter(function (record) { return record._sourceTimestamp != null; });
-      var latestTimestamp = null;
       var latestRows = group;
       if (timedRows.length) {
-        latestTimestamp = timedRows.reduce(function (latest, record) {
+        var latestTimestamp = timedRows.reduce(function (latest, record) {
           return latest == null || record._sourceTimestamp > latest ? record._sourceTimestamp : latest;
         }, null);
         latestRows = timedRows.filter(function (record) { return record._sourceTimestamp === latestTimestamp; });
       }
+
       var latestStatuses = Object.create(null);
       latestRows.forEach(function (record) { latestStatuses[record.original_order_status] = true; });
       if (Object.keys(latestStatuses).length > 1) {
-        stats.conflictGroups++;
-        stats.excludedConflictRows += group.length;
-        stats.conflictDetails.push({
-          order_no: group[0].order_no,
-          sku_code: group[0].sku_code,
-          channel: group[0].shop_platform,
-          reason: '相同时间存在不同订单状态',
-          records: group.map(function (record) {
-            return {
-              source_row: record._rowNum,
-              order_date: record._rawOrderDate,
-              quantity: record.quantity,
-              package_no: record._packageNo,
-              status: record.original_order_status
-            };
-          })
-        });
+        addConflict(group, '相同时间存在不同订单状态');
         return;
       }
 
+      var invalidQuantity = latestRows.some(function (record) {
+        return !Number.isSafeInteger(Number(record.quantity)) || Number(record.quantity) <= 0;
+      });
+      if (invalidQuantity) {
+        addConflict(group, '数量无法确认');
+        return;
+      }
+
+      var totalQuantity = latestRows.reduce(function (total, record) {
+        return total + Number(record.quantity);
+      }, 0);
+      if (!Number.isSafeInteger(totalQuantity) || totalQuantity <= 0) {
+        addConflict(group, '合计数量超出安全范围');
+        return;
+      }
+
+      // Keep one PSI row for the business key. Sum same-snapshot detail rows;
+      // discard older snapshots instead of adding them a second time.
       var kept = group[0];
       var latest = latestRows[latestRows.length - 1];
+      kept.quantity = totalQuantity;
       kept.original_order_status = latest.original_order_status;
       kept.is_valid_order = latest.is_valid_order;
-      stats.snapshotDuplicateRows += group.length - 1;
+      kept._errors = latestRows.reduce(function (all, record) {
+        (record._errors || []).forEach(function (reason) {
+          if (all.indexOf(reason) < 0) all.push(reason);
+        });
+        return all;
+      }, []);
+      stats.aggregatedLineRows += latestRows.length - 1;
+      stats.snapshotDuplicateRows += group.length - latestRows.length;
       records.push(kept);
     });
 
@@ -502,9 +502,8 @@
       '</div>' +
       '<div style="color:#666">订单标记排除：' + Number(stats.excludedMarkerRows || 0).toLocaleString('en-US') +
       ' 条；未付款排除：' + Number(stats.excludedUnpaidRows || 0).toLocaleString('en-US') +
-      ' 条；无金额重复记录排除：' + Number(stats.excludedNoAmountRows || 0).toLocaleString('en-US') +
-      ' 条；完全重复去重：' + Number(stats.exactDuplicateRows || 0).toLocaleString('en-US') +
-      ' 条；同订单商品快照合并：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
+      ' 条；同订单同包裹商品行合计：' + Number(stats.aggregatedLineRows || 0).toLocaleString('en-US') +
+      ' 行；较早状态快照排除：' + Number(stats.snapshotDuplicateRows || 0).toLocaleString('en-US') +
       ' 条；校验失败：' + Number(stats.validationErrorRows || 0).toLocaleString('en-US') + ' 条。</div>' +
       (conflictGroups ? '<div style="color:#b45309;margin-top:5px">冲突订单：' + conflictGroups +
         ' 组，共 ' + Number(stats.excludedConflictRows || 0) + ' 条已暂不导入。请下载异常明细人工核对。</div>' +
