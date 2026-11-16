@@ -38,7 +38,7 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
   assert.equal(model.rows[0][6], '2026-11-02');
   assert.deepEqual(Array.from(model.dates), ['2026-11-09','2026-08-12']);
   const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-09'));
-  assert.ok(latestDateHeader.includes('1 RMB = 5.009638 IDR'));
+  assert.ok(latestDateHeader.includes('1 RMB = 5.01 IDR'));
   assert.ok(!latestDateHeader.includes('汇率日'));
   assert.equal(model.rows[0][6], '2026-11-02');
 });
@@ -63,7 +63,7 @@ test('matrix date axis collapses inbound dates sharing one actual freight FX dat
   const model = vm.runInNewContext(fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
   assert.deepEqual(Array.from(model.dates), ['2026-09-13']);
   assert.equal(model.rows[0][6], '2026-09-15');
-  assert.match(model.headers[7], /1 RMB = 4.9 THB/);
+  assert.match(model.headers[7], /1 RMB = 4\.90 THB/);
   assert.doesNotMatch(model.headers[7], /汇率日/);
   assert.equal(model.rows[0][7], '110.00 THB');
 });
