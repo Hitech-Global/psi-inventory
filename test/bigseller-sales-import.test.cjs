@@ -436,26 +436,27 @@ test('same order with multiple SKUs stays as separate sales lines', () => {
   assert.equal(parsed.stats.conflictGroups, 0);
 });
 
-test('exact duplicate order-item rows are deduplicated without adding quantity', () => {
+test('repeated BigSeller detail rows with identical cells are summed as separate product lines', () => {
   const row = ['2026-11-06 10:00', 'ORDER-DUP', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'];
   const parsed = BigSeller.parseBigSellerWorkbook(workbook([row, row]), 'orders.xlsx', fakeXlsx());
   assert.equal(parsed.records.length, 1);
-  assert.equal(parsed.records[0].quantity, 2);
-  assert.equal(parsed.stats.exactDuplicateRows, 1);
+  assert.equal(parsed.records[0].quantity, 4);
+  assert.equal(parsed.stats.aggregatedLineRows, 1);
+  assert.equal(parsed.stats.snapshotDuplicateRows, 0);
   assert.equal(parsed.stats.includedRows, 1);
 });
 
-test('quantity or package conflicts quarantine the entire same order-item group', () => {
+test('different package numbers for the same order item remain blocked for manual review', () => {
   const parsed = BigSeller.parseBigSellerWorkbook(workbook([
     ['2026-11-06 10:00', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
-    ['2026-11-06 10:01', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '3', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
-    ['2026-11-06 10:02', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'K617', '1', 'PKG-2', 'Shopee', 'Redragon Indonesia OS']
+    ['2026-11-06 10:00', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'M724', '3', 'PKG-2', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:00', 'ORDER-CONFLICT', '', '已完成', 'Redragon Warehouse', 'K617', '1', 'PKG-3', 'Shopee', 'Redragon Indonesia OS']
   ]), 'orders.xlsx', fakeXlsx());
   assert.equal(parsed.records.length, 1);
   assert.equal(parsed.records[0].sku_code, 'K617');
   assert.equal(parsed.stats.conflictGroups, 1);
   assert.equal(parsed.stats.excludedConflictRows, 2);
-  assert.equal(parsed.stats.conflictDetails[0].reason, '数量不同');
+  assert.equal(parsed.stats.conflictDetails[0].reason, '包裹号不同');
 });
 
 test('same order item status snapshots keep one quantity and use latest status', () => {
@@ -620,4 +621,68 @@ test('BigSeller rows with at least one monetary value are retained', () => {
   assert.equal(parsed.stats.excludedNoAmountRows, 0);
   assert.equal(parsed.records.length, 1);
   assert.equal(parsed.stats.includedRows, 1);
+});
+
+
+test('the Shopee repeated-product order 261116ETEKUBYK aggregates five qty-3 lines plus qty-35 to 50', () => {
+  const orderRows = Array.from({ length: 5 }, () => [
+    '2026-11-16 13:24', '261116ETEKUBYK', '', '待打单', 'Netac Warehouse',
+    'NT03UA31N-008G-20PK', '3', 'BSTE64297655', 'Shopee', 'Netac Indonesia'
+  ]);
+  orderRows.push([
+    '2026-11-16 13:24', '261116ETEKUBYK', '', '待打单', 'Netac Warehouse',
+    'NT03UA31N-008G-20PK', '35', 'BSTE64297655', 'Shopee', 'Netac Indonesia'
+  ]);
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook(orderRows), 'orders.xlsx', fakeXlsx());
+
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].order_no, '261116ETEKUBYK');
+  assert.equal(parsed.records[0].sku_code, 'NT03UA31N-008G-20PK');
+  assert.equal(parsed.records[0].quantity, 50);
+  assert.equal(parsed.records[0].original_order_status, '待打单');
+  assert.equal(parsed.stats.aggregatedLineRows, 5);
+  assert.equal(parsed.stats.snapshotDuplicateRows, 0);
+  assert.equal(parsed.stats.conflictGroups, 0);
+
+  const SalesImport = require('../sales-import-service');
+  const rows = SalesImport.normalizeSalesRows(parsed.records);
+  const existing = [{
+    id: 'sale-261116ETEKUBYK',
+    source_system: 'BigSeller',
+    order_no: '261116ETEKUBYK',
+    order_detail_id: '',
+    order_date: '2026-11-16',
+    shop_platform: '线上渠道',
+    brand: 'Netac',
+    sku_code: 'NT03UA31N-008G-20PK',
+    quantity: 50,
+    is_valid_order: 1,
+    original_order_status: '待打单',
+    remark: '包裹号=BSTE64297655',
+    country: '印度尼西亚'
+  }];
+  const repeatedImport = SalesImport.classifySalesRows(rows, existing);
+  assert.equal(repeatedImport.result.inserted, 0);
+  assert.equal(repeatedImport.result.updated, 0);
+  assert.equal(repeatedImport.result.skipped, 1);
+  assert.equal(repeatedImport.records[0].quantity, 50);
+
+  const staleStatusExisting = [{ ...existing[0], original_order_status: '待发货' }];
+  const statusSync = SalesImport.classifySalesRows(rows, staleStatusExisting);
+  assert.equal(statusSync.result.inserted, 0);
+  assert.equal(statusSync.result.updated, 1);
+  assert.equal(statusSync.records[0].quantity, 50, 'status refresh must not add the imported 50 again');
+  assert.equal(statusSync.records[0].original_order_status, '待打单');
+});
+
+test('different timestamps are status snapshots and only the latest snapshot quantity is retained', () => {
+  const parsed = BigSeller.parseBigSellerWorkbook(workbook([
+    ['2026-11-06 10:00', 'ORDER-SNAPSHOT-QTY', '', '平台处理中', 'Redragon Warehouse', 'M724', '2', 'PKG-1', 'Shopee', 'Redragon Indonesia OS'],
+    ['2026-11-06 10:05', 'ORDER-SNAPSHOT-QTY', '', '已完成', 'Redragon Warehouse', 'M724', '5', 'PKG-1', 'Shopee', 'Redragon Indonesia OS']
+  ]), 'orders.xlsx', fakeXlsx());
+  assert.equal(parsed.records.length, 1);
+  assert.equal(parsed.records[0].quantity, 5);
+  assert.equal(parsed.records[0].original_order_status, '已完成');
+  assert.equal(parsed.stats.snapshotDuplicateRows, 1);
+  assert.equal(parsed.stats.aggregatedLineRows, 0);
 });
