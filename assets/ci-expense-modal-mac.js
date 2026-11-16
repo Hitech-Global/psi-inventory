@@ -34,6 +34,7 @@
     'ci.cost.payee': ['Payee', 'Penerima'],
     'ci.cost.currency_note': ['Amounts are shown separately by currency. No cross-currency grand total is calculated.', 'Jumlah ditampilkan terpisah berdasarkan mata uang. Tidak ada total gabungan lintas mata uang.'],
     'ci.cost.freight_fx_note': ['Paid freight is displayed in RMB using the exchange-rate snapshot from the actual payment date. Unpaid freight remains in its original currency.', 'Ongkos angkut yang telah dibayar ditampilkan dalam RMB menggunakan snapshot kurs pada tanggal pembayaran aktual. Ongkos yang belum dibayar tetap dalam mata uang asal.'],
+    'ci.cost.detail_fx_note': ['Expense details show each document in its original currency. The warehouse-cost summary converts paid freight to RMB using the actual payment-date rate.', 'Rincian biaya menampilkan mata uang asli setiap dokumen. Ringkasan biaya gudang mengonversi ongkos angkut yang telah dibayar ke RMB menggunakan kurs pada tanggal pembayaran aktual.'],
     'ci.cost.pending_fx': ['Paid freight: exchange-rate evidence is missing', 'Ongkos angkut dibayar: bukti kurs belum tersedia'],
     'ci.cost.freight_unavailable': ['Freight currency details are temporarily unavailable. Unverified amounts are not added to the summary.', 'Rincian mata uang ongkos angkut sementara tidak tersedia. Jumlah yang belum terverifikasi tidak ditambahkan ke ringkasan.'],
     'ci.cost.currency_unknown': ['Currency unconfirmed', 'Mata uang belum dikonfirmasi'],
@@ -85,8 +86,7 @@
   function currencyLines(totals, pendingFx, unavailable) {
     var codes = Object.keys(totals || {}).sort();
     var lines = codes.map(function (code) {
-      return '<div class="ci-cost-currency-line"><span class="ci-cost-currency-code">' + esc(code) +
-        '</span><strong>' + esc(money(totals[code], code)) + '</strong></div>';
+      return '<div class="ci-cost-currency-line"><strong>' + esc(money(totals[code], code)) + '</strong></div>';
     }).join('');
     if (pendingFx) {
       lines += '<div class="ci-cost-inline-warning">' + esc(tr('ci.cost.pending_fx', '已付款运费待补充汇率证据')) + '</div>';
@@ -162,12 +162,19 @@
         esc(tr('ci.cost.empty', '暂无费用记录')) + '</td></tr>';
     }
     return items.map(function (item) {
-      var category = global.PAY_CATEGORIES && global.PAY_CATEGORIES[item.cost_category]
-        ? global.PAY_CATEGORIES[item.cost_category] : item.cost_category;
+      var category = item.cost_category;
+      if (item.cost_category === 'warehouse_arrival') category = tr('cost.stat_warehouse_fee', '到仓费用');
+      else if (item.cost_category === 'customs_duty') category = tr('cost.stat_duty', '关税');
+      else if (item.cost_category === 'inspection_fee') category = tr('cost.stat_inspection_fee', '商检费用');
+      else if (global.PAY_CATEGORIES && global.PAY_CATEGORIES[item.cost_category]) category = global.PAY_CATEGORIES[item.cost_category];
+      var subcategory = item.cost_subcategory || '—';
+      if (subcategory === 'freight') subcategory = tr('logistics.col.freight', '运费');
+      else if (subcategory === 'duty') subcategory = tr('cost.stat_duty', '关税');
+      else if (subcategory === 'inspection') subcategory = tr('cost.stat_inspection_fee', '商检费用');
       var currency = String(item.currency || goodsCurrency || '').trim().toUpperCase();
       return '<tr>' +
         '<td>' + esc(category || '—') + '</td>' +
-        '<td>' + esc(item.cost_subcategory || '—') + '</td>' +
+        '<td>' + esc(subcategory) + '</td>' +
         '<td class="cell-id">' + esc(item.request_no || '—') + '</td>' +
         '<td>' + esc(money(item.payable_amount, currency)) + '</td>' +
         '<td>' + esc(money(item.paid_amount, currency)) + '</td>' +
@@ -323,7 +330,7 @@
         '<th>' + esc(tr('ci.cost.payment_request', '付款申请号')) + '</th><th>' + esc(tr('ci.cost.payable_amount', '应付金额')) + '</th>' +
         '<th>' + esc(tr('ci.cost.paid_amount', '已付金额')) + '</th><th>' + esc(tr('ci.cost.include_in_landing', '计入落地成本')) + '</th>' +
         '<th>' + esc(tr('ci.cost.payee', '付款对象')) + '</th></tr></thead><tbody>' + renderExpenseRows(items, goodsCurrency) +
-        '</tbody></table></div><div class="ci-cost-note">' + esc(tr('ci.cost.currency_note', '金额按币种分别显示，不进行跨币种直接相加。')) + '</div>' +
+        '</tbody></table></div><div class="ci-cost-note">' + esc(tr('ci.cost.detail_fx_note', '费用明细按单据原币显示；到仓费用汇总中的已付运费按实际付款日锁定汇率折算为RMB。')) + '</div>' +
         '</section>' +
         '<div class="ci-cost-footer-note">' + esc(tr('ci.cost.currency_note', '金额按币种分别显示，不进行跨币种直接相加。')) + '</div>' +
         '</div>';
