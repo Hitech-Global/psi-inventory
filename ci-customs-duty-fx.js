@@ -97,11 +97,11 @@ function resolveCiCustomsDutyCost({ ciCurrency, dutyCurrency, dutyAmount, paymen
     const convertedAmount = Number(log[snapshotPrefix + '_amount']);
 
     if (original !== sourceCurrency) fail('关税实际付款记录的原币种与关税费用币种不一致');
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate) || rateDate !== paidDate) {
-      fail('关税付款记录缺少实际付款日锁定的目标币种汇率');
-    }
     if (snapshotCurrency !== targetCurrency) {
       fail('关税付款记录没有锁定 ' + targetCurrency + ' 汇率快照');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paidDate) || rateDate !== paidDate) {
+      fail('关税付款记录缺少实际付款日锁定的目标币种汇率');
     }
     if (!Number.isFinite(rate) || rate <= 0 || !Number.isFinite(convertedAmount) || convertedAmount < 0) {
       fail('关税付款记录的锁定汇率或折算金额无效');
