@@ -24,8 +24,8 @@ function fail(message) {
  * The cost is deliberately blocked when payment, reversal, deduction, rounding,
  * currency, or FX evidence is ambiguous. Never fall back to today's exchange rate.
  */
-function resolveCiCustomsDutyCost({ ciCurrency, dutyCurrency, dutyAmount, payment, paymentFacts }) {
-  const targetCurrency = normalizeCurrency(ciCurrency || 'RMB');
+function resolveCiCustomsDutyCost({ ciCurrency, targetCurrency: requestedTargetCurrency, dutyCurrency, dutyAmount, payment, paymentFacts }) {
+  const targetCurrency = normalizeCurrency(requestedTargetCurrency || ciCurrency || 'RMB');
   const sourceCurrency = normalizeCurrency(dutyCurrency || (payment && payment.currency));
   const sourceAmount = money(dutyAmount);
 
