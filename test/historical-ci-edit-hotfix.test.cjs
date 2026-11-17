@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  SERVER_MARKER, INDEX_MARKER, DETAIL_ITEMS_OLD, DETAIL_ITEMS_NEW,
+  SERVER_MARKER, INDEX_MARKER, DETAIL_ITEMS_OLD, DETAIL_ITEMS_NEW, DETAIL_PERMISSION_OLD, DETAIL_PERMISSION_NEW,
   patchServerSource, patchIndexSource, ROUTE
 } = require('../scripts/historical-ci-edit-hotfix.cjs');
 
@@ -18,10 +18,11 @@ assert.ok(ROUTE.includes('ciCanViewAmounts(req)'), 'amount editing must respect 
 assert.ok(ROUTE.includes('lifecycle_status'), 'settled payable items must be protected');
 new Function(ROUTE);
 
-const serverStub = DETAIL_ITEMS_OLD + "\napp.post('/api/historical-commercial-invoices/:id/attachment', function () {});\n";
+const serverStub = DETAIL_ITEMS_OLD + "\n" + DETAIL_PERMISSION_OLD + "\napp.post('/api/historical-commercial-invoices/:id/attachment', function () {});\n";
 const patchedServer = patchServerSource(serverStub);
 assert.ok(patchedServer.includes(DETAIL_ITEMS_NEW), 'detail API must return item id and PI linkage for safe editing');
 assert.ok(patchedServer.includes(SERVER_MARKER), 'server route patch marker must be present');
+assert.ok(patchedServer.includes(DETAIL_PERMISSION_NEW), 'detail API must expose financial edit lock flags');
 assert.equal(patchServerSource(patchedServer), patchedServer, 'server patch must be idempotent');
 new Function(patchedServer);
 
@@ -35,7 +36,8 @@ new Function(asset);
 for (const token of [
   '编辑整张记录', 'saveHistoricalCIEdit', 'hci-edit-freight',
   'hci-edit-duty-idr', 'hci-edit-paid', 'hci-edit-item',
-  'onHistoricalCIEditSupplierChange', 'paymentStatus.indexOf'
+  'onHistoricalCIEditSupplierChange', 'paymentStatus.indexOf',
+  'h.edit_identity_locked', 'h.edit_gross_locked', 'h.edit_historical_paid_locked'
 ]) assert.ok(asset.includes(token), 'editor UI missing: ' + token);
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
