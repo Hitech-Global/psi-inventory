@@ -1726,7 +1726,7 @@ const CI_HEADER_AMOUNT_FIELDS = [
   'import_duty_currency','import_duty_rmb_conversion'
 ];
 const CI_ITEM_AMOUNT_FIELDS = ['unit_price','discount','net_unit_price','ci_amount','actual_customs_rate'];
-const HCI_AMOUNT_FIELDS = ['gross_goods_amount','historical_paid_amount','subsequent_paid_amount','deduction_amount','rounding_amount','unpaid_amount'];
+const HCI_AMOUNT_FIELDS = ['gross_goods_amount','historical_paid_amount','subsequent_paid_amount','deduction_amount','rounding_amount','unpaid_amount','freight_amount','customs_duty_idr','customs_duty_rmb'];
 const LOGISTICS_CI_AMOUNT_FIELDS = ['international_freight','local_charges','customs_service_fee','delivery_fee','total_freight','customs_duty','vat_gst','other_fees','cargo_value','freight_value_ratio'];
 
 function ciCanViewAmounts(req) {
