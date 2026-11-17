@@ -16563,13 +16563,14 @@ app.post('/api/historical-commercial-invoices/batch-import',
       const id=req.params.id, d=req.body||{};
       const hci=queryOne('SELECT * FROM historical_commercial_invoices WHERE id = ?', [id]);
       if(!hci)return res.status(404).json({error:'历史 CI 不存在'});
-      const amountFields=['gross_goods_amount','freight_amount','customs_duty_idr','customs_duty_rmb'];
+      const amountFields=['gross_goods_amount','freight_amount','freight_currency','customs_duty_idr','customs_duty_rmb'];
       if(!ciCanViewAmounts(req) && amountFields.some(k=>Object.prototype.hasOwnProperty.call(d,k)))return res.status(403).json({error:'没有金额查看/编辑权限'});
       const linkedItems=query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [id]).rows;
       const settlementCount=hci.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [hci.payment_request_id]).rows.length : 0;
       const editGoodsAllowed=linkedItems.length===0 && settlementCount===0;
       const nextNo=String(d.historical_ci_no===undefined?hci.historical_ci_no:d.historical_ci_no||'').trim();
       const supplierName=String(d.supplier_name===undefined?hci.supplier_name:d.supplier_name||'').trim();
+      if(d.supplier_name!==undefined && String(d.supplier_name||'').trim()!==String(hci.supplier_name||'').trim())return res.status(409).json({error:'供应商需要通过供应商主数据重新关联，当前编辑窗口不支持更换供应商'});
       const brandName=String(d.brand_name===undefined?hci.brand_name:d.brand_name||'').trim();
       const country=String(d.country===undefined?hci.country:d.country||'').trim();
       if(!nextNo||!supplierName||!brandName||!country)return res.status(400).json({error:'CI 编号、供应商、品牌和国家不能为空'});
@@ -16607,10 +16608,13 @@ app.post('/api/historical-commercial-invoices/batch-import',
         if(hci.payment_request_id){
           run('UPDATE payment_requests SET source_no=?,supplier_name=?,payee_name_snapshot=?,payee_key=?,currency=?,payment_terms=?,payable_date=?,expense_country=?,updated_at=datetime(\'now\') WHERE id=?',
             [nextNo,supplierName,supplierName,'supplier:'+(supplierId||supplierName),currency,terms,dueDate||null,country,hci.payment_request_id]);
+          run("UPDATE payable_items SET source_no=?,payee_key=?,payee_name_snapshot=?,currency=?,payable_date=? WHERE source_type='historical_ci' AND source_id=? AND lifecycle_status='active'",
+            [nextNo,'supplier:'+(supplierId||supplierName),supplierName,currency,dueDate||null,id]);
+          run('UPDATE historical_commercial_invoice_items SET hci_no=? WHERE hci_id=?',[nextNo,id]);
           if(goodsChanged){
             run('UPDATE payment_requests SET payable_amount=?,unpaid_amount=? WHERE id=?',[gross,gross,hci.payment_request_id]);
-            run("UPDATE payable_items SET source_no=?,payee_key=?,payee_name_snapshot=?,currency=?,payable_amount_minor=?,payable_date=? WHERE source_type='historical_ci' AND source_id=? AND lifecycle_status='active'",
-              [nextNo,'supplier:'+(supplierId||supplierName),supplierName,currency,Math.round(gross*100),dueDate||null,id]);
+            run("UPDATE payable_items SET payable_amount_minor=? WHERE source_type='historical_ci' AND source_id=? AND lifecycle_status='active'",
+              [Math.round(gross*100),id]);
             run('UPDATE payment_request_items SET requested_amount_minor=? WHERE payment_request_id=?',[Math.round(gross*100),hci.payment_request_id]);
           }
         }
