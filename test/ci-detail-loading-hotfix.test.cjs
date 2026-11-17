@@ -31,5 +31,5 @@ assert.match(htmlOnce, /CI-DETAIL-LOADING-STYLE-V1/);
 assert.match(htmlOnce, /ciDetailSpin/);
 assert.match(htmlOnce, /prefers-reduced-motion/);
 assert.match(htmlOnce, /ci-detail-error-card/);
-assert.match(htmlOnce, /app\.js\?v=20261117-1/, 'app.js URL must be cache-busted for the patched frontend');
+assert.match(htmlOnce, /app\.js\?v=20261117-2/, 'app.js URL must be cache-busted for the patched frontend');
 console.log('ci-detail-loading hotfix: PASS');
