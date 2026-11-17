@@ -144,7 +144,9 @@
       var amountAllowed = !!h.amount_view_allowed;
       global._hciEditAmountAllowed = amountAllowed;
       global._hciEditSupplierName = h.supplier_name || '';
-      var identityLocked = hasLinked || hasSettlements;
+      var identityLocked = hasLinked || hasSettlements || !!h.edit_identity_locked;
+      var grossLocked = !!h.edit_gross_locked;
+      var historicalPaidLocked = !!h.edit_historical_paid_locked;
       var supplierHtml = supplierSelect(suppliers, h.supplier_id || '', identityLocked);
       var countryHtml = '<select id="hci-edit-country" class="form-control" onchange="onHistoricalCIEditWarehouseChange()"' + (identityLocked ? ' disabled' : '') + '>' +
         countries.map(function (c) { return opt(c.code, (c.name || c.code) + (c.flag ? ' ' + c.flag : ''), String(c.code) === String(h.country || '')); }).join('') + '</select>';
@@ -174,12 +176,12 @@
 
       if (amountAllowed) {
         body += '<div class="hci-edit-title">' + ui('金额与费用', 'Amounts and costs', 'Nominal dan biaya') + '</div><div class="form-grid">' +
-          field(tr('field.gross_amount', 'CI 货款总金额'), '<input id="hci-edit-gross" type="number" min="0" step="0.01" value="' + esc(h.gross_goods_amount == null ? '' : h.gross_goods_amount) + '">') +
+          field(tr('field.gross_amount', 'CI 货款总金额'), '<input id="hci-edit-gross" type="number" min="0" step="0.01" value="' + esc(h.gross_goods_amount == null ? '' : h.gross_goods_amount) + '"' + (grossLocked ? ' readonly' : '') + '>') +
           field(tr('hci.freight_amount', '总运费'), '<input id="hci-edit-freight" type="number" min="0" step="0.01" value="' + esc(h.freight_amount == null ? '' : h.freight_amount) + '">') +
           field(ui('运费币种', 'Freight currency', 'Mata uang ongkir'), freightCurrencyHtml) +
           field(tr('hci.customs_duty_idr', '关税（IDR）'), '<input id="hci-edit-duty-idr" type="number" min="0" step="0.01" value="' + esc(h.customs_duty_idr == null ? '' : h.customs_duty_idr) + '">') +
           field(tr('hci.customs_duty_rmb', '关税（RMB）'), '<input id="hci-edit-duty-rmb" type="number" min="0" step="0.01" value="' + esc(h.customs_duty_rmb == null ? '' : h.customs_duty_rmb) + '">') +
-          field(tr('field.historical_paid', '导入前历史已付款'), '<input id="hci-edit-paid" type="number" min="0" step="0.01" value="' + esc(h.historical_paid_amount == null ? '0' : h.historical_paid_amount) + '">') +
+          field(tr('field.historical_paid', '导入前历史已付款'), '<input id="hci-edit-paid" type="number" min="0" step="0.01" value="' + esc(h.historical_paid_amount == null ? '0' : h.historical_paid_amount) + '"' + (historicalPaidLocked ? ' readonly' : '') + '>') +
           field(ui('历史付款日期', 'Historical payment date', 'Tanggal pembayaran historis'), '<input id="hci-edit-paid-date" type="date" value="' + esc(dateVal(h.historical_paid_date)) + '">') + '</div>';
       }
 
