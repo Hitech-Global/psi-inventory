@@ -111,4 +111,3 @@ module.exports = {
   sanitizeOrderRaw, sanitizeReturnRaw, sanitizeItemRaw,
   sanitizeShopOrderReturnSnapshot
 };
-
