@@ -164,7 +164,7 @@
       '.ci-date-filter-trigger:focus-visible{outline:2px solid rgba(0,122,255,.35);outline-offset:1px;}',
       '.ci-date-filter-value{overflow:hidden;text-overflow:ellipsis;}',
       '.ci-date-filter-icon{display:block;flex:0 0 14px;width:14px;height:14px;color:var(--text-secondary,#86868b);}',
-      '.ci-date-filter-input{position:absolute!important;inset:0!important;width:100%!important;height:30px!important;margin:0!important;padding:0!important;border:0!important;border-radius:6px!important;background:transparent!important;opacity:0!important;cursor:pointer!important;z-index:2!important;}'
+      '.ci-date-filter-input{position:absolute!important;left:0!important;bottom:0!important;width:1px!important;height:1px!important;margin:0!important;padding:0!important;border:0!important;opacity:0!important;pointer-events:none!important;z-index:-1!important;}'
     ].join('\n');
     doc.head.appendChild(style);
   }
@@ -189,7 +189,7 @@
     group.innerHTML =
       '<label for="ci-date-filter-input">' + translate('field.ci_date', 'CI日期') + '</label>' +
       '<div class="ci-date-filter-control">' +
-        '<button class="ci-date-filter-trigger" id="ci-date-filter-trigger" type="button" tabindex="-1" aria-hidden="true">' +
+        '<button class="ci-date-filter-trigger" id="ci-date-filter-trigger" type="button" aria-label="' + translate('field.ci_date', 'CI日期') + '" title="选择日期；按 Backspace 或 Delete 清除">' +
           '<span class="ci-date-filter-value" id="ci-date-filter-value">' + translate('common.all', '全部') + '</span>' +
           '<svg class="ci-date-filter-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
             '<rect x="2.5" y="3.5" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
@@ -204,6 +204,7 @@
     else form.appendChild(group);
 
     var input = group.querySelector('#ci-date-filter-input');
+    var trigger = group.querySelector('#ci-date-filter-trigger');
     var value = group.querySelector('#ci-date-filter-value');
     function syncLabel() {
       if (value) value.textContent = input && input.value ? input.value : translate('common.all', '全部');
@@ -211,6 +212,29 @@
     function onDateChanged() {
       syncLabel();
       renderLatest();
+    }
+    function openDatePicker() {
+      if (!input) return;
+      try {
+        if (typeof input.showPicker === 'function') {
+          input.showPicker();
+          return;
+        }
+      } catch (error) {}
+      try {
+        input.focus();
+        input.click();
+      } catch (error) {}
+    }
+    if (trigger) {
+      trigger.addEventListener('click', openDatePicker);
+      trigger.addEventListener('keydown', function (event) {
+        if ((event.key === 'Backspace' || event.key === 'Delete') && input && input.value) {
+          event.preventDefault();
+          input.value = '';
+          onDateChanged();
+        }
+      });
     }
     if (input) {
       input.addEventListener('change', onDateChanged);

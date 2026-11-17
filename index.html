@@ -1028,6 +1028,37 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
 #wac-calc-subtooltip .wac-calc-subtip-footer{font-size:12px;font-weight:600;margin-top:8px;color:#1f2329}
 #wac-calc-subtooltip .wac-calc-subtip-note,#wac-calc-subtooltip .wac-calc-subtip-empty{font-size:11px;color:#68707c;margin-top:6px}
 
+
+/* CI-DETAIL-LOADING-STYLE-V1 */
+/* CI detail loading: macOS-style neutral surface, visible progress and subtle skeleton. */
+.modal-overlay.ci-mode .modal-ci-create:has(.ci-detail-loading){background:#f5f5f7;border:1px solid rgba(0,0,0,.08);border-radius:18px;box-shadow:0 18px 48px rgba(0,0,0,.14);color:#1d1d1f}
+.modal-overlay.ci-mode .modal-ci-create:has(.ci-detail-loading) .modal-header{padding:14px 20px;background:rgba(255,255,255,.96);border-bottom:.5px solid #d2d2d7;min-height:52px}
+.modal-overlay.ci-mode .modal-ci-create:has(.ci-detail-loading) .modal-title{font-size:19px;font-weight:650;letter-spacing:-.2px;color:#1d1d1f}
+.modal-overlay.ci-mode .modal-ci-create:has(.ci-detail-loading) .modal-body{padding:18px 20px 22px;background:#f5f5f7}
+.modal-overlay.ci-mode .modal-ci-create:has(.ci-detail-loading) .modal-footer{padding:11px 20px;background:rgba(255,255,255,.97);border-top:.5px solid #d2d2d7}
+.ci-detail-loading{min-height:340px;color:#1d1d1f}
+.ci-detail-loading-banner{display:flex;align-items:center;gap:10px;margin-bottom:13px;padding:12px 14px;background:#fff;border:1px solid #e5e5ea;border-radius:12px;color:#6e6e73;font-size:13px;font-weight:550}
+.ci-detail-spinner{display:inline-block;flex:0 0 16px;width:16px;height:16px;border:2px solid #d9d9de;border-top-color:#007aff;border-radius:50%;animation:ciDetailSpin .8s linear infinite}
+.ci-loading-card{margin-bottom:12px;padding:16px;background:#fff;border:1px solid #e5e5ea;border-radius:14px}
+.ci-skeleton-title{width:104px;height:14px;margin-bottom:15px;border-radius:6px;background:#ececf0}
+.ci-skeleton-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:11px}
+.ci-skeleton-field,.ci-skeleton-line{background:linear-gradient(90deg,#eeeef1 25%,#f8f8fa 42%,#eeeef1 65%);background-size:300% 100%;animation:ciDetailShimmer 1.35s ease-in-out infinite}
+.ci-skeleton-field{height:48px;border-radius:9px}
+.ci-skeleton-line{width:72%;height:11px;margin-top:10px;border-radius:6px}
+.ci-skeleton-line-wide{width:92%;margin-top:0}
+.ci-skeleton-line-short{width:48%}
+.ci-detail-error-state{display:flex;align-items:center;justify-content:center;min-height:340px}
+.ci-detail-error-card{width:min(440px,100%);padding:28px 24px;text-align:center;background:#fff;border:1px solid #e5e5ea;border-radius:16px;box-shadow:0 8px 24px rgba(0,0,0,.04)}
+.ci-detail-error-icon{display:flex;align-items:center;justify-content:center;width:34px;height:34px;margin:0 auto 12px;border-radius:50%;background:#fff1f0;color:#d93025;font-size:19px;font-weight:700}
+.ci-detail-error-title{color:#1d1d1f;font-size:16px;font-weight:650}
+.ci-detail-error-message{margin-top:8px;color:#6e6e73;font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.ci-detail-error-actions{display:flex;justify-content:center;gap:8px;margin-top:18px}
+.ci-detail-error-actions .btn{min-height:34px;padding:6px 14px;border-radius:9px;font-size:13px}
+@keyframes ciDetailSpin{to{transform:rotate(360deg)}}
+@keyframes ciDetailShimmer{to{background-position:-150% 0}}
+@media(max-width:760px){.ci-skeleton-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ci-detail-loading-banner{font-size:12px}}
+@media(prefers-reduced-motion:reduce){.ci-detail-spinner,.ci-skeleton-field,.ci-skeleton-line{animation:none}.ci-skeleton-field,.ci-skeleton-line{background:#eeeef1}}
+
 </style>
 </head>
 <body>
@@ -1109,7 +1140,7 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
 <script src="app-perf.js?v=20261117-3"></script>
 <script src="assets/finance-payment-calendar.js"></script>
 <script src="assets/pi-multi-po-ui.js"></script>
-<script src="app.js?v=20261117-3"></script>
+<script src="app.js?v=20261117-4"></script>
 <script src="assets/pl-import-parser.js?v=20261107-1"></script>
 <script src="assets/bigseller-sales-import.js?v=20261116-6"></script>
 <script src="assets/zhisu-sales-import.js?v=20261110-1"></script>
@@ -1122,7 +1153,7 @@ body:has(.sidebar.collapsed) .drawer-overlay{left:var(--sidebar-collapsed-width)
 <script src="wac-notification-ui.js"></script>
 <script src="assets/ci-wac-integration.js?v=20261116-6"></script>
 <script src="assets/ci-summary-compact.js?v=20261107-4"></script>
-<script src="assets/ci-single-date-filter.js?v=20261117-2"></script>
+<script src="assets/ci-single-date-filter.js?v=20261117-3"></script>
 <script src="assets/ci-attachment-actions.js?v=20261113-1"></script>
 <script src="assets/wac-blocked-import-controls.js?v=20261113-2"></script>
 <script src="assets/ci-expense-modal-mac.js?v=20261116-4"></script>

@@ -38,7 +38,7 @@ function makeContext() {
 }
 
 test('CI list gets one compact single-date control without changing existing layout rules', () => {
-  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261117-2/);
+  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261117-3/);
   assert.match(script, /type="date"/);
   assert.match(script, /ci-date-filter-group/);
   assert.match(script, /translate\('common\.all', '全部'\)/);
@@ -46,6 +46,13 @@ test('CI list gets one compact single-date control without changing existing lay
   assert.match(script, /height:30px/);
   assert.doesNotMatch(script, /ci-date-start|ci-date-end|date-range/);
   assert.doesNotMatch(script, /\.filter-form\s*\{|\.filter-group\s*\{/);
+
+  assert.match(script, /function openDatePicker\(\)/, 'date picker must have an explicit open handler');
+  assert.match(script, /trigger\.addEventListener\('click', openDatePicker\)/, 'clicking the visible control must open the picker');
+  assert.match(script, /input\.showPicker\(\)/, 'use the browser native date picker from the click gesture');
+  assert.match(script, /pointer-events:none/, 'the invisible date input must not intercept the visible button');
+  assert.doesNotMatch(script, /tabindex="-1" aria-hidden="true"/, 'the visible date control must remain interactive and accessible');
+
 });
 
 test('single date filters operational and historical CI rows by CI date', () => {
