@@ -11,6 +11,7 @@
   var doc = global.document;
   var originalTableRenderer = global.renderUnifiedCITable;
   var originalSummaryRenderer = global.renderPurchaseAmountSummary;
+  var originalRenderCI = global.renderCI;
   var latestRows = null;
   var amountPermission = null;
   var lastServerSummary = null;
@@ -101,6 +102,17 @@
     if (table) table.innerHTML = html;
   }
 
+  if (typeof originalRenderCI === 'function') {
+    global.renderCI = function () {
+      // Reset the cached CI rows before the page rebuilds; loadCI may render synchronously from cache.
+      latestRows = null;
+      amountPermission = null;
+      lastServerSummary = null;
+      currentForm = null;
+      return originalRenderCI.apply(this, arguments);
+    };
+  }
+
   if (typeof originalTableRenderer === 'function') {
     global.renderUnifiedCITable = function (operationalData, historicalData) {
       latestRows = {
@@ -167,9 +179,6 @@
     }
     if (form !== currentForm) {
       currentForm = form;
-      latestRows = null;
-      amountPermission = null;
-      lastServerSummary = null;
     }
     if (form.querySelector('#ci-date-filter-group')) return;
 
