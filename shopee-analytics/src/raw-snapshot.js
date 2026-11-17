@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { sanitizeBuyerPii, sanitizeShopOrderReturnSnapshot } = require('./buyer-pii-sanitizer');
 
 function fingerprintRequest(request) {
   return crypto.createHash('sha256').update(JSON.stringify(request || {})).digest('hex');
@@ -23,9 +24,9 @@ async function recordSnapshot({
     shopId,
     eventDateFrom,
     eventDateTo,
-    requestFingerprint: fingerprintRequest(requestJson),
-    requestJson,
-    responseJson,
+    requestFingerprint: fingerprintRequest(sanitizeBuyerPii(requestJson)),
+    requestJson: sanitizeBuyerPii(requestJson),
+    responseJson: sanitizeShopOrderReturnSnapshot(endpointKey, responseJson),
   });
 }
 

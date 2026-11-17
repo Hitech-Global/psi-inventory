@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeReturnRaw, sanitizeItemRaw } = require('./buyer-pii-sanitizer');
+
 class ShopeeReturnRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
@@ -30,7 +32,7 @@ class ShopeeReturnRepository {
           shopId, returnRecord.returnSn, returnRecord.orderSn, returnRecord.status,
           returnRecord.reason, returnRecord.currency, returnRecord.refundAmount,
           returnRecord.createTime, returnRecord.updateTime,
-          JSON.stringify(returnRecord.raw || {}),
+          JSON.stringify(sanitizeReturnRaw(returnRecord.raw || {})),
         ],
       );
       await client.query('DELETE FROM shopee_return_items WHERE shop_id=$1 AND return_sn=$2', [shopId, returnRecord.returnSn]);
@@ -47,7 +49,7 @@ class ShopeeReturnRepository {
           [
             shopId, returnRecord.returnSn, item.itemId, item.modelId || 0,
             item.quantity, item.itemPrice, item.refundAmount,
-            JSON.stringify(item.raw || {}),
+            JSON.stringify(sanitizeItemRaw(item.raw || {})),
           ],
         );
       }
