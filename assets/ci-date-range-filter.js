@@ -87,7 +87,23 @@
     renderSummaryFromLatest();
     return { operational: latestOperational, historical: latestHistorical };
   }
+  function addStyles() {
+    if (el('ci-date-range-filter-styles')) return;
+    var style = document.createElement('style');
+    style.id = 'ci-date-range-filter-styles';
+    style.textContent =
+      '.ci-date-range-group{min-width:250px;max-width:340px}' +
+      '.ci-date-range-fields{display:flex;align-items:center;gap:6px;min-width:0}' +
+      '.ci-date-range-fields input{height:36px;min-width:0;width:132px;padding:5px 8px;border:1px solid #d2d2d7;border-radius:9px;background:#fff;color:#1d1d1f;font:inherit;font-size:12px;box-shadow:none}' +
+      '.ci-date-range-fields input:focus{outline:none;border-color:#0071e3;box-shadow:0 0 0 3px rgba(0,113,227,.12)}' +
+      '.ci-date-range-separator{color:#86868b;font-size:12px;flex:0 0 auto}' +
+      '.ci-date-range-fields .btn{height:34px;min-height:34px;padding:5px 10px;border-radius:9px;font-size:12px}' +
+      '.ci-date-error{display:block;min-height:15px;color:#d70015;font-size:11px;margin-top:2px}' +
+      '@media(max-width:900px){.ci-date-range-group{min-width:220px}.ci-date-range-fields input{width:112px}}';
+    document.head.appendChild(style);
+  }
   function mount() {
+    addStyles();
     var form = document.querySelector('.content-inner .filter-form');
     if (!form || !el('ci-source-mode') || el('ci-date-range')) return;
     var actions = form.querySelector('.filter-actions');
