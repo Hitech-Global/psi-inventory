@@ -1283,6 +1283,8 @@ async function initDatabase() {
       brand_id TEXT DEFAULT '',
       brand_name TEXT NOT NULL,
       country TEXT NOT NULL,
+      target_warehouse TEXT NOT NULL DEFAULT '',
+      clearance_type TEXT NOT NULL DEFAULT '',
       ci_date TEXT NOT NULL,
       currency TEXT NOT NULL,
       gross_goods_amount NUMERIC(18,4) NOT NULL,
@@ -1319,6 +1321,10 @@ async function initDatabase() {
   await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS freight_currency TEXT DEFAULT ''");
   await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS customs_duty_idr NUMERIC(18,4) DEFAULT NULL");
   await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS customs_duty_rmb NUMERIC(18,4) DEFAULT NULL");
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS target_warehouse TEXT NOT NULL DEFAULT ''");
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''");
+  await exec("CREATE INDEX IF NOT EXISTS ix_hci_target_warehouse ON historical_commercial_invoices(target_warehouse)");
+  await exec("CREATE INDEX IF NOT EXISTS ix_hci_clearance_type ON historical_commercial_invoices(clearance_type)");
   // 零货值仅允许 RMA CI；普通历史 CI 仍须大于 0。
   await exec("ALTER TABLE historical_commercial_invoices DROP CONSTRAINT IF EXISTS historical_commercial_invoices_gross_goods_amount_check");
   await exec("ALTER TABLE historical_commercial_invoices DROP CONSTRAINT IF EXISTS hci_allow_rma_zero_amount_check");
