@@ -12490,7 +12490,7 @@ function renderUnifiedCITable(operationalData,historicalData){
     tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
     var opCountry=cell(srcTable,sourceRow,['国家','Country']);opCountry.textContent=unifiedCICountryLabel(c.country);tr.appendChild(opCountry);
     tr.appendChild(cell(srcTable,sourceRow,['仓库','目标仓库','Warehouse']));
-    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
+    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance','Customs Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['出货日期','CI日期','Ship Date','Shipment Date']));
     var amountCell=cell(srcTable,sourceRow,['CI金额','CI Amount','Goods Amount']);
     amountCell.textContent=fmtMoney(c.goods_amount,c.currency);
@@ -12518,7 +12518,7 @@ function renderUnifiedCITable(operationalData,historicalData){
     tr.appendChild(cell(srcTable,sourceRow,['品牌','Brand']));
     var histCountry=cell(srcTable,sourceRow,['国家','Country']);histCountry.textContent=unifiedCICountryLabel(h.country);tr.appendChild(histCountry);
     tr.appendChild(textCell(h.target_warehouse||'—'));
-    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));
+    tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance','Customs Clearance']));
     tr.appendChild(cell(srcTable,sourceRow,['日期','CI日期','CI Date']));
     var histAmountCell=cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']);
     histAmountCell.textContent=fmtMoney(h.gross_goods_amount,h.currency);
