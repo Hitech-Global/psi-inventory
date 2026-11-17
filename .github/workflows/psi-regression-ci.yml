@@ -43,6 +43,8 @@ on:
       - 'wac-notification-ui.js'
       - 'test/global-import-progress-regression.test.cjs'
       - 'assets/ci-summary-compact.js'
+      - 'assets/ci-single-date-filter.js'
+      - 'test/ci-single-date-filter.test.cjs'
       - 'assets/ci-expense-modal-mac.js'
       - 'test/ci-expense-modal-mac.test.cjs'
       - 'assets/ci-attachment-actions.js'
@@ -171,6 +173,8 @@ jobs:
           node --check shared-logistics-fee-server.js
           node --check test/shared-logistics-fee-fx-precision.test.cjs
           node --check assets/ci-summary-compact.js
+          node --check assets/ci-single-date-filter.js
+          node --check test/ci-single-date-filter.test.cjs
           node --check assets/ci-expense-modal-mac.js
           node --check test/ci-expense-modal-mac.test.cjs
           node --check assets/ci-attachment-actions.js
@@ -261,6 +265,8 @@ jobs:
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test compact CI procurement summary layout
         run: node test/ci-summary-compact.test.cjs
+      - name: Test compact CI single-date filter and synced procurement totals
+        run: node --test test/ci-single-date-filter.test.cjs
       - name: Test Mac-style CI expense modal and currency handling
         run: node test/ci-expense-modal-mac.test.cjs
       - name: Test CI shared freight summary and detail display
