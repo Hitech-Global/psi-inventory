@@ -10,6 +10,8 @@ assert.ok(perf.includes("querySelectorAll('tr.clickable-detail-row')"));
 assert.ok(perf.includes("updateHistoricalCIClearance"));
 assert.ok(perf.includes("'/api/historical-commercial-invoices/'"));
 assert.ok(perf.includes("h.clearance_type"));
+assert.ok(perf.includes("text==='国家'||text==='Country'"),'historical clearance column must work in Chinese and English source tables');
+assert.ok(perf.includes("label('ci.clearance_type','清关方式')"),'historical clearance selector label must follow the current language');
 new Function(perf);
 
 const server=[
