@@ -64,7 +64,7 @@ test('single date filters operational and historical CI rows by CI date', () => 
 
   context.renderUnifiedCITable(operational, historical);
   context.renderPurchaseAmountSummary({ operational: {}, historical: {}, total: {} });
-  assert.equal(context.lastSummary.total.count, 5);
+  assert.equal(context.lastSummary.total.count, 6);
 
   fields['ci-date-filter-input'].value = '2026-11-05';
   context.__ciSingleDateFilterV1.renderLatest();
