@@ -63,7 +63,8 @@
     var hist = latestHistorical.slice();
     var opScope = amountScope(op, 'goods_amount');
     var histScope = amountScope(hist, 'gross_goods_amount');
-    var all = op.concat(hist);
+    var all = op.map(function (row) { return { currency: row.currency, amount: row.goods_amount }; })
+      .concat(hist.map(function (row) { return { currency: row.currency, amount: row.gross_goods_amount }; }));
     return {
       operational: opScope,
       historical: histScope,
