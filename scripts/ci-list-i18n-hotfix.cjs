@@ -90,8 +90,9 @@ function patchI18nSource(src) {
   I18N.dict.zh["ci.type.historical"]="历史CI"; I18N.dict.en["ci.type.historical"]="Historical CI"; I18N.dict.id["ci.type.historical"]="CI Historis";
   I18N.dict.zh["ci.clearance.filter"]="清关方式"; I18N.dict.en["ci.clearance.filter"]="Clearance Method"; I18N.dict.id["ci.clearance.filter"]="Metode Kepabeanan";
   I18N.dict.zh["ci.clearance.formal"]="正清"; I18N.dict.en["ci.clearance.formal"]="Formal Customs Clearance"; I18N.dict.id["ci.clearance.formal"]="Jalur Bea Cukai Resmi";
-  I18N.dict.zh["ci.clearance.non_formal"]="非正清"; I18N.dict.en["ci.clearance.non_formal"]="Informal Customs Clearance"; I18N.dict.id["ci.clearance.non_formal"]="Jalur Bea Cukai Nonresmi";
+  I18N.dict.zh["ci.clearance.non_formal"]="非正清"; I18N.dict.en["ci.clearance.non_formal"]="Non-formal Customs Clearance"; I18N.dict.id["ci.clearance.non_formal"]="Jalur Bea Cukai Non-formal";
   I18N.dict.zh["ci.clearance.unset"]="未设置"; I18N.dict.en["ci.clearance.unset"]="Not Set"; I18N.dict.id["ci.clearance.unset"]="Belum Diatur";
+  I18N.dict.zh["ci.clearance.updated"]="历史 CI 清关方式已更新"; I18N.dict.en["ci.clearance.updated"]="Historical CI clearance method updated"; I18N.dict.id["ci.clearance.updated"]="Metode kepabeanan CI historis diperbarui";
   I18N.dict.zh["ci.no"]="CI号"; I18N.dict.en["ci.no"]="CI No."; I18N.dict.id["ci.no"]="No. CI";
   I18N.dict.zh["ci.col.type"]="CI类型"; I18N.dict.en["ci.col.type"]="CI Type"; I18N.dict.id["ci.col.type"]="Tipe CI";
   I18N.dict.zh["ci.clearance_type"]="清关方式"; I18N.dict.en["ci.clearance_type"]="Clearance Method"; I18N.dict.id["ci.clearance_type"]="Metode Kepabeanan";
