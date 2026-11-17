@@ -78,3 +78,32 @@ test('allowlists strip buyer data from order and return API snapshots', () => {
   assert.equal(JSON.stringify(ret).includes('123456'), false);
   assert.equal(sanitizeOrderRaw({ order_sn: 'A', buyer_username: 'secret' }).buyer_username, undefined);
 });
+
+test('Shopee client strips PII before returning order/return API payloads', async () => {
+  const { ShopeeClient } = require('../src/shopee-client');
+  const response = {
+    error: '',
+    response: { return: [{
+      return_sn: 'RETURN-2', refund_amount: 17,
+      user: { email: 'private@example.com', username: 'buyer-secret' },
+      return_pickup_address: { name: 'Buyer', phone: '1234567890' },
+      item: [{ item_id: 1, name: 'Keyboard', amount: 1 }]
+    }] }
+  };
+  const client = new ShopeeClient({
+    partnerId: 123, partnerKey: 'test-key',
+    fetchImpl: async () => ({
+      ok: true, status: 200, text: async () => JSON.stringify(response),
+      headers: { get: () => null },
+    })
+  });
+  const result = await client.shopRequest({
+    path: '/api/v2/returns/get_return_list', shopId: 1,
+    accessToken: 'test-token',
+  });
+  assert.equal(result.response.return[0].refund_amount, 17);
+  assert.equal(result.response.return[0].item[0].name, 'Keyboard');
+  assert.equal(JSON.stringify(result).includes('buyer-secret'), false);
+  assert.equal(JSON.stringify(result).includes('private@example.com'), false);
+  assert.equal(JSON.stringify(result).includes('1234567890'), false);
+});
