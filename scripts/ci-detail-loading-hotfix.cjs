@@ -7,6 +7,7 @@ const APP_JS = path.join(__dirname, '..', 'app.js');
 const INDEX_HTML = path.join(__dirname, '..', 'index.html');
 const APP_MARKER = '// CI-DETAIL-LOADING-STATE-V1';
 const CSS_MARKER = '/* CI-DETAIL-LOADING-STYLE-V1 */';
+const APP_CACHE_VERSION = '20261117-1';
 const VIEW_CI_ANCHOR = "async function viewCI(id, backPay, backMode){\n  try{const ci=await api('/api/commercial-invoices/'+id);";
 const NEXT_SECTION_MARKER = '// ==================== CI/PL × 物流合并 PHASE A（前端）====================';
 const CATCH_ANCHOR = "  }catch(e){showToast(e.message,'danger')}";
@@ -22,14 +23,14 @@ async function viewCI(id, backPay, backMode){
   window.__ciDetailRequestSeq=__ciRequestId;
   window.__ciDetailRetry={id:id,backPay:backPay||null,backMode:backMode||null};
   const __ciLang=typeof getLang==='function'?getLang():'zh';
-  const __ciLoadingText=__ciLang==='en'?'Loading CI details…':'正在加载 CI 详情…';
+  const __ciLoadingText=__ciLang==='en'?'Loading CI details…':__ciLang==='id'?'Memuat detail CI…':'正在加载 CI 详情…';
   const __ciLoadingBody='<div class="ci-detail-loading" data-request-id="'+__ciRequestId+'" role="status" aria-live="polite" aria-busy="true">'
     +'<div class="ci-detail-loading-banner"><span class="ci-detail-spinner" aria-hidden="true"></span><span>'+__ciLoadingText+'</span></div>'
     +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-grid">'+new Array(8).fill('<div class="ci-skeleton-field"></div>').join('')+'</div></div>'
     +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-line ci-skeleton-line-wide"></div><div class="ci-skeleton-line"></div><div class="ci-skeleton-line ci-skeleton-line-short"></div></div>'
     +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-grid">'+new Array(4).fill('<div class="ci-skeleton-field"></div>').join('')+'</div></div></div>';
-  openModal(__ciLang==='en'?'CI/PL Details':'CI/PL详情',__ciLoadingBody,
-    '<button class="btn btn-secondary" onclick="closeModal()">'+(__ciLang==='en'?'Close':'关闭')+'</button>','modal-ci-create');
+  openModal(__ciLang==='en'?'CI/PL Details':__ciLang==='id'?'Detail CI/PL':'CI/PL详情',__ciLoadingBody,
+    '<button class="btn btn-secondary" onclick="closeModal()">'+(__ciLang==='en'?'Close':__ciLang==='id'?'Tutup':'关闭')+'</button>','modal-ci-create');
   try{const ci=await api('/api/commercial-invoices/'+id);
     const __ciLoadingNode=document.querySelector('#modal-content .ci-detail-loading[data-request-id="'+__ciRequestId+'"]');
     const __ciLoadingOverlay=document.getElementById('modal-overlay');
@@ -43,16 +44,16 @@ function appCatchPatch() {
     const __ciLoadingOverlay=document.getElementById('modal-overlay');
     if(__ciLoadingNode&&__ciLoadingOverlay&&__ciLoadingOverlay.classList.contains('show')){
       const __ciErrorLang=typeof getLang==='function'?getLang():'zh';
-      const __ciErrorTitle=__ciErrorLang==='en'?'Unable to load CI details':'CI 详情加载失败';
-      const __ciErrorText=esc(e&&e.message?e.message:(__ciErrorLang==='en'?'Please try again.':'请稍后重试。'));
+      const __ciErrorTitle=__ciErrorLang==='en'?'Unable to load CI details':__ciErrorLang==='id'?'Gagal memuat detail CI':'CI 详情加载失败';
+      const __ciErrorText=esc(e&&e.message?e.message:(__ciErrorLang==='en'?'Please try again.':__ciErrorLang==='id'?'Silakan coba lagi.':'请稍后重试。'));
       __ciLoadingNode.className='ci-detail-loading ci-detail-error-state';
       __ciLoadingNode.setAttribute('role','alert');
       __ciLoadingNode.setAttribute('aria-busy','false');
       __ciLoadingNode.innerHTML='<div class="ci-detail-error-card"><div class="ci-detail-error-icon">!</div>'
         +'<div class="ci-detail-error-title">'+__ciErrorTitle+'</div>'
         +'<div class="ci-detail-error-message">'+__ciErrorText+'</div>'
-        +'<div class="ci-detail-error-actions"><button class="btn btn-primary" onclick="retryCIDetail()">'+(__ciErrorLang==='en'?'Try again':'重试')+'</button>'
-        +'<button class="btn btn-secondary" onclick="closeModal()">'+(__ciErrorLang==='en'?'Close':'关闭')+'</button></div></div>';
+        +'<div class="ci-detail-error-actions"><button class="btn btn-primary" onclick="retryCIDetail()">'+(__ciErrorLang==='en'?'Try again':__ciErrorLang==='id'?'Coba lagi':'重试')+'</button>'
+        +'<button class="btn btn-secondary" onclick="closeModal()">'+(__ciErrorLang==='en'?'Close':__ciErrorLang==='id'?'Tutup':'关闭')+'</button></div></div>';
     }else if(__ciLoadingOverlay&&__ciLoadingOverlay.classList.contains('show')){
       showToast(e&&e.message?e.message:String(e),'danger');
     }
@@ -107,11 +108,17 @@ function cssPatch() {
 }
 
 function patchIndexSource(src) {
-  if (src.includes(CSS_MARKER)) return src;
-  const close = '</style>';
-  const pos = src.lastIndexOf(close);
-  if (pos < 0) throw new Error('[CI-DETAIL-LOADING] index style anchor missing');
-  return src.slice(0, pos) + cssPatch() + '\n' + src.slice(pos);
+  let out = src;
+  if (!out.includes(CSS_MARKER)) {
+    const close = '</style>';
+    const pos = out.lastIndexOf(close);
+    if (pos < 0) throw new Error('[CI-DETAIL-LOADING] index style anchor missing');
+    out = out.slice(0, pos) + cssPatch() + '\n' + out.slice(pos);
+  }
+  const appScriptPattern = /<script src=(['"])app\.js\?v=[^'"]+\1><\/script>/;
+  if (!appScriptPattern.test(out)) throw new Error('[CI-DETAIL-LOADING] app.js cache version anchor missing');
+  out = out.replace(appScriptPattern, '<script src="app.js?v=' + APP_CACHE_VERSION + '"></script>');
+  return out;
 }
 
 function apply() {
