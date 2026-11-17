@@ -15753,6 +15753,14 @@ function resolvePayableDate({ dueDate, creditDays, baseDate }) {
   return '';
 }
 
+function historicalCIWarehouseForCountry(country) {
+  const key = String(country || '').trim().toUpperCase();
+  if (['ID', 'IND', 'INDONESIA', '印度尼西亚', '印尼'].includes(key)) return 'Bekasi Warehouse';
+  if (['MY', 'MYS', 'MALAYSIA', '马来西亚'].includes(key)) return '至速仓';
+  if (['TH', 'THA', 'THAILAND', '泰国'].includes(key)) return '至速仓';
+  return '';
+}
+
 function normalizeHistoricalCI(body) {
   const historicalCiNo = String(historicalCIField(body, 'historical_ci_no', '历史CI编号', 'CI编号') || '').trim();
   if (!historicalCiNo) throw new SettlementError(400, '历史 CI 编号不能为空');
@@ -15775,6 +15783,9 @@ function normalizeHistoricalCI(body) {
 
   const country = String(historicalCIField(body, 'country', '国家') || '').trim();
   if (!country) throw new SettlementError(400, '采购归属国家不能为空');
+  const targetWarehouse = historicalCIWarehouseForCountry(country) || String(historicalCIField(body, 'target_warehouse', '仓库') || '').trim();
+  const clearanceType = String(historicalCIField(body, 'clearance_type', '清关方式') || '').trim();
+  if (clearanceType && !['formal', 'non_formal'].includes(clearanceType)) throw new SettlementError(400, '清关方式只能为正清或非正清');
   const ciDate = historicalCIDate(historicalCIField(body, 'ci_date', 'CI日期'), '历史 CI 日期', true);
   const historicalPaidDate = historicalCIDate(historicalCIField(body, 'historical_paid_date', '历史付款日期'), '历史已付款日期', false);
   const dueDate = historicalCIDate(historicalCIField(body, 'due_date', '到期日'), '到期日', false);
@@ -15803,6 +15814,8 @@ function normalizeHistoricalCI(body) {
     brand_id: brandId,
     brand_name: brandName || brandId,
     country,
+    target_warehouse: targetWarehouse,
+    clearance_type: clearanceType,
     ci_date: ciDate,
     actual_ship_date: actualShipDate,
     currency,
@@ -15875,13 +15888,13 @@ async function createHistoricalCI(body, req) {
     const hciBalanceAmount = hciBalanceMinor / 100;
     run(`INSERT INTO historical_commercial_invoices
          (id, historical_ci_no, supplier_id, supplier_name, supplier_identity, brand_id, brand_name,
-          country, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
+          country, target_warehouse, clearance_type, ci_date, actual_ship_date, payment_term_id, credit_days, currency, gross_goods_amount, historical_paid_amount, historical_paid_date,
           payment_terms, due_date, source_note, source_mode, idempotency_key, payload_hash,
           created_by, created_by_name)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'historical', ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'historical', ?, ?, ?, ?)`,
       [historicalId, normalized.historical_ci_no, normalized.supplier_id, normalized.supplier_name,
         normalized.supplier_identity, normalized.brand_id, normalized.brand_name, normalized.country,
-        normalized.ci_date, normalized.actual_ship_date, normalized.payment_term_id, normalized.credit_days, normalized.currency, normalized.gross_goods_amount, normalized.historical_paid_amount,
+        normalized.target_warehouse, normalized.clearance_type, normalized.ci_date, normalized.actual_ship_date, normalized.payment_term_id, normalized.credit_days, normalized.currency, normalized.gross_goods_amount, normalized.historical_paid_amount,
         normalized.historical_paid_date, normalized.payment_terms, normalized.due_date, normalized.source_note,
         normalized.idempotency_key, normalized.payload_hash, operator.id, operator.name]);
 
@@ -16400,6 +16413,9 @@ app.get('/api/historical-commercial-invoices', requireApiPermission('ci_view'), 
     }
     if (req.query.country) { const al = countryAliases(req.query.country); sql += ' AND h.country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
     if (req.query.brand) { sql += ' AND h.brand_name = ?'; params.push(req.query.brand); }
+    if (req.query.warehouse) { sql += ' AND h.target_warehouse = ?'; params.push(req.query.warehouse); }
+    if (req.query.clearance_type === 'unset') { sql += " AND COALESCE(h.clearance_type, '') = ''"; }
+    else if (req.query.clearance_type) { sql += ' AND h.clearance_type = ?'; params.push(req.query.clearance_type); }
     sql += ' ORDER BY h.ci_date DESC, h.created_at DESC';
     const rows = query(sql, params).rows;
     // CI/PL PERF-01：列表响应剥离 base64 附件大字段（historical.attachment 为 dataUrl 数组 JSON，
@@ -16461,6 +16477,7 @@ app.get('/api/ci-filter-options', requireApiPermission('ci_view'), asyncHandler(
     let sql = `SELECT DISTINCT ${dim} FROM historical_commercial_invoices WHERE 1=1`;
     const p = [];
     if (country && dim !== 'country') { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => p.push(a)); }
+    if (warehouse && dim !== 'target_warehouse') { sql += ' AND target_warehouse = ?'; p.push(warehouse); }
     if (brand && dim !== 'brand_name') { sql += ' AND brand_name = ?'; p.push(brand); }
     return query(sql, p).rows.map(r => r[dim]).filter(v => v != null && String(v) !== '');
   };
@@ -16474,6 +16491,7 @@ app.get('/api/ci-filter-options', requireApiPermission('ci_view'), asyncHandler(
   }
   if (mode === 'historical' || mode === 'all') {
     distinctHist('country').forEach(v => countries.add(displayCountry(canonCountry(v))));
+    distinctHist('target_warehouse').forEach(v => warehouses.add(v));
     distinctHist('brand_name').forEach(v => brands.add(v));
   }
   const sortArr = a => Array.from(a).sort((x, y) => String(x).localeCompare(String(y)));
