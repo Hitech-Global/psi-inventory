@@ -13,6 +13,7 @@ on:
       - 'scripts/ci-historical-clearance-hotfix.cjs'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
+      - 'test/ci-historical-full-edit.test.cjs'
       - 'test/ci-unified-table.test.cjs'
       - 'test/ci-attachment-online-preview.test.cjs'
       - 'app.js'
@@ -276,6 +277,8 @@ jobs:
         run: node test/ci-edit-before-pl-hotfix.test.cjs && node test/ci-clearance-type.test.cjs && node test/ci-inline-clearance-hotfix.test.cjs
       - name: Test historical CI clearance setting
         run: node test/ci-historical-clearance-hotfix.test.cjs
+      - name: Test historical CI full edit safeguards
+        run: node test/ci-historical-full-edit.test.cjs
       - name: Test CI attachment online Excel preview
         run: node test/ci-attachment-online-preview.test.cjs
       - name: Test unified CI attachment menu and customs documents
