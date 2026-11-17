@@ -4452,6 +4452,13 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["field.due_date"] = "Due Date"; I18N.dict.id["field.due_date"] = "Tanggal Jatuh Tempo";
   I18N.dict.en["field.payment_terms"] = "Payment Terms"; I18N.dict.id["field.payment_terms"] = "Ketentuan Pembayaran";
   I18N.dict.en["field.target_warehouse"] = "Target Warehouse"; I18N.dict.id["field.target_warehouse"] = "Gudang Tujuan";
+  I18N.dict.en['ci.clearance_type'] = 'Customs Clearance'; I18N.dict.id['ci.clearance_type'] = 'Metode Kepabeanan';
+  I18N.dict.en['ci.clearance.formal'] = 'Formal'; I18N.dict.id['ci.clearance.formal'] = 'Resmi';
+  I18N.dict.en['ci.clearance.non_formal'] = 'Non-formal'; I18N.dict.id['ci.clearance.non_formal'] = 'Non-formal';
+  I18N.dict.en['ci.clearance.unset'] = 'Not Set'; I18N.dict.id['ci.clearance.unset'] = 'Belum Diatur';
+  I18N.dict.en['hci.freight_amount'] = 'Total Freight'; I18N.dict.id['hci.freight_amount'] = 'Total Ongkos Kirim';
+  I18N.dict.en['hci.customs_duty_idr'] = 'Customs Duty (IDR)'; I18N.dict.id['hci.customs_duty_idr'] = 'Bea Masuk (IDR)';
+  I18N.dict.en['hci.customs_duty_rmb'] = 'Customs Duty (RMB)'; I18N.dict.id['hci.customs_duty_rmb'] = 'Bea Masuk (RMB)';
   I18N.dict.en["ci.warehouse_auto"] = "Auto-filled after PI selection"; I18N.dict.id["ci.warehouse_auto"] = "Diisi otomatis setelah pilih PI";
   I18N.dict.en["ci.warehouse_conflict"] = "Multiple PI warehouses differ, please confirm"; I18N.dict.id["ci.warehouse_conflict"] = "Beberapa gudang PI berbeda, harap konfirmasi";
 
