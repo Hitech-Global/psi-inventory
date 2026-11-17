@@ -61,11 +61,6 @@ CREATE TABLE IF NOT EXISTS shopee_video_item (
 
 -- 主播与店铺的对应：视频与直播的令牌是按主播（user_id）管的，
 -- 而我们要看的是店铺，所以要记住谁是谁。
-ALTER TABLE shopee_shop_profiles
-  ADD COLUMN IF NOT EXISTS video_user_id BIGINT;
-ALTER TABLE shopee_shop_profiles
-  ADD COLUMN IF NOT EXISTS livestream_user_id BIGINT;
-
 -- 每一场直播一行。
 --
 -- 一场直播不是一天，所以按它开始的那天记。当天的合计是从这些场次
@@ -232,6 +227,12 @@ CREATE TABLE IF NOT EXISTS shopee_shop_profiles (
   note TEXT,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Video/livestream user association requires the profile table to exist first.
+ALTER TABLE shopee_shop_profiles
+  ADD COLUMN IF NOT EXISTS video_user_id BIGINT;
+ALTER TABLE shopee_shop_profiles
+  ADD COLUMN IF NOT EXISTS livestream_user_id BIGINT;
 
 -- A profile is also the canonical shop-scope registry.  Import-only shops may
 -- legitimately have no API-reported country, currency, or timezone yet; those
