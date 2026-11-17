@@ -18,7 +18,8 @@ function selectHtml(h){
 var v=h.clearance_type||'';
 function label(key,fallback){return typeof global.t==='function'?global.t(key,fallback):fallback;}
 var disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
-return '<select class="hci-clearance-inline" aria-label="设置历史CI清关方式" title="设置历史CI清关方式"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateHistoricalCIClearance(this,\\''+esc(h.id)+'\\')">'
+var clearanceLabel=label('ci.clearance_type','清关方式');
+return '<select class="hci-clearance-inline" aria-label="'+esc(clearanceLabel)+'" title="'+esc(clearanceLabel)+'"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateHistoricalCIClearance(this,\\''+esc(h.id)+'\\')">'
 +'<option value=""'+(!v?' selected':'')+'>'+label('ci.clearance.unset','未设置')+'</option>'
 +'<option value="formal"'+(v==='formal'?' selected':'')+'>'+label('ci.clearance.formal','正清')+'</option>'
 +'<option value="non_formal"'+(v==='non_formal'?' selected':'')+'>'+label('ci.clearance.non_formal','非正清')+'</option></select>';
@@ -55,9 +56,9 @@ var host=document.createElement('div');host.innerHTML=html;
 var table=host.querySelector('table.data-table');
 if(!table||!table.tHead||!table.tBodies.length)return html;
 var headers=Array.prototype.slice.call(table.tHead.rows[0].cells);
-var countryCol=headers.findIndex(function(c){return(c.textContent||'').trim()==='国家';});
+var countryCol=headers.findIndex(function(c){var text=(c.textContent||'').trim();return text==='国家'||text==='Country';});
 if(countryCol<0)return html;
-var header=table.tHead.rows[0].insertCell(countryCol+1);header.textContent='清关方式';
+var header=table.tHead.rows[0].insertCell(countryCol+1);header.textContent=label('ci.clearance_type','清关方式');
 var rows=Array.prototype.slice.call(table.tBodies[0].querySelectorAll('tr.clickable-detail-row'));
 if(rows.length!==data.length)return html;
 data.forEach(function(h,i){
