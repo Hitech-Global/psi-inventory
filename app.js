@@ -13188,24 +13188,26 @@ async function editHistoricalCI(id){
     const field=function(label,key,type,value,attrs){return '<div class="form-group"><label>'+label+'</label><input class="form-control" type="'+(type||'text')+'" id="hcie-'+key+'" value="'+esc(value==null?'':String(value))+'" '+(attrs||'')+'></div>';};
     const clearance=[['','未设置'],['formal','正清'],['non_formal','非正清']].map(function(o){return '<option value="'+o[0]+'"'+(String(h.clearance_type||'')===o[0]?' selected':'')+'>'+o[1]+'</option>';}).join('');
     const locked=!h.edit_goods_allowed;
+    const canViewAmounts=!!h.amount_view_allowed;
     const body='<div class="form-card" style="box-shadow:none;padding:0"><div style="font-size:12px;color:#6e6e73;margin-bottom:12px">可修改历史 CI 基础信息、日期、运费及关税。已发生的付款事实和关联 PI 的 SKU 出货快照会受到保护，不会因编辑而被覆盖。</div>'
-      +'<div class="form-grid">'+field('历史 CI 编号','no','text',h.historical_ci_no)+field('供应商','supplier','text',h.supplier_name)+'</div>'
+      +'<div class="form-grid">'+field('历史 CI 编号','no','text',h.historical_ci_no)+field('供应商（快照）','supplier','text',h.supplier_name,'readonly')+'</div>'
       +'<div class="form-grid">'+field('品牌','brand','text',h.brand_name)+field('国家','country','text',h.country)+'</div>'
       +'<div class="form-grid">'+field('仓库','warehouse','text',h.target_warehouse)+field('CI 日期','date','date',h.ci_date)+'</div>'
       +'<div class="form-grid">'+field('实际出货日期','ship-date','date',h.actual_ship_date)+field('币种','currency','text',h.currency,locked?'readonly':'')+'</div>'
       +'<div class="form-grid"><div class="form-group"><label>清关方式</label><select class="form-control" id="hcie-clearance">'+clearance+'</select></div>'+field('付款条件 / 账期','terms','text',h.payment_terms)+'</div>'
       +'<div class="form-grid">'+field('尾款到期日','due','date',h.due_date)+field('原始凭证或备注','note','text',h.source_note)+'</div>'
-      +'<div class="detail-section"><h3>货款及历史付款</h3><div class="form-grid">'+field('总货款','gross','number',h.gross_goods_amount,'step="0.01" min="0" '+(locked?'readonly':''))+field('导入前历史已付款（只读）','paid','number',h.historical_paid_amount,'step="0.01" readonly')+'</div>'
+      +(canViewAmounts?'<div class="detail-section"><h3>货款及历史付款</h3><div class="form-grid">'+field('总货款','gross','number',h.gross_goods_amount,'step="0.01" min="0" '+(locked?'readonly':''))+field('导入前历史已付款（只读）','paid','number',h.historical_paid_amount,'step="0.01" readonly')+'</div>'
       +(locked?'<div style="font-size:12px;color:#8e8e93">该记录已有 PI SKU 出货快照或付款流水，总货款与币种暂不可修改，避免影响 PI 出货及财务结算。</div>':'<div style="font-size:12px;color:#8e8e93">当前尚无 PI SKU 出货快照或付款流水，允许修改货款总额。</div>')+'</div>'
       +'<div class="detail-section"><h3>物流费用及关税</h3><div class="form-grid">'+field('总运费','freight','number',h.freight_amount,'step="0.01" min="0"')+field('运费币种','freight-currency','text',h.freight_currency||h.currency)+'</div>'
-      +'<div class="form-grid">'+field('关税（IDR）','duty-idr','number',h.customs_duty_idr,'step="0.01" min="0"')+field('关税（RMB）','duty-rmb','number',h.customs_duty_rmb,'step="0.01" min="0"')+'</div></div>'
+      +'<div class="form-grid">'+field('关税（IDR）','duty-idr','number',h.customs_duty_idr,'step="0.01" min="0"')+field('关税（RMB）','duty-rmb','number',h.customs_duty_rmb,'step="0.01" min="0"')+'</div></div>':'<div style="font-size:12px;color:#8e8e93">当前账号没有金额查看权限，金额字段不可见，也不会提交金额修改。</div>')
       +(h.items&&h.items.length?'<div class="detail-section"><h3>SKU 成交价格明细（只读）</h3><div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>金额</th></tr></thead><tbody>'+h.items.map(function(it){return '<tr><td>'+esc(it.sku_code)+'</td><td>'+Number(it.shipped_qty||0)+'</td><td>'+fmtMoney(it.unit_price,h.currency)+'</td><td>'+((Number(it.discount||0)*100).toFixed(1))+'%</td><td>'+fmtMoney(it.net_unit_price,h.currency)+'</td><td>'+fmtMoney(it.ci_amount,h.currency)+'</td></tr>';}).join('')+'</tbody></table></div><div style="font-size:12px;color:#8e8e93">SKU 明细与 PI 已出货数量关联，保留原始快照，不在普通编辑中改写。</div></div>':'')+'</div>';
     openModal('编辑历史 CI - '+esc(h.historical_ci_no),body,'<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="hcie-save" onclick="saveHistoricalCIEdit(\''+String(id).replace(/'/g,'')+'\')">保存修改</button>','modal-ci-create');
   }catch(e){showToast(e.message,'danger');}
 }
 async function saveHistoricalCIEdit(id){
   const get=function(key){const el=document.getElementById('hcie-'+key);return el?el.value:'';};
-  const body={historical_ci_no:get('no'),supplier_name:get('supplier'),brand_name:get('brand'),country:get('country'),target_warehouse:get('warehouse'),ci_date:get('date'),actual_ship_date:get('ship-date'),currency:get('currency'),clearance_type:get('clearance'),payment_terms:get('terms'),due_date:get('due'),source_note:get('note'),gross_goods_amount:get('gross'),freight_amount:get('freight'),freight_currency:get('freight-currency'),customs_duty_idr:get('duty-idr'),customs_duty_rmb:get('duty-rmb')};
+  const body={historical_ci_no:get('no'),brand_name:get('brand'),country:get('country'),target_warehouse:get('warehouse'),ci_date:get('date'),actual_ship_date:get('ship-date'),clearance_type:get('clearance'),payment_terms:get('terms'),due_date:get('due'),source_note:get('note')};
+  if(document.getElementById('hcie-gross'))Object.assign(body,{gross_goods_amount:get('gross'),currency:get('currency'),freight_amount:get('freight'),freight_currency:get('freight-currency'),customs_duty_idr:get('duty-idr'),customs_duty_rmb:get('duty-rmb')});
   const btn=document.getElementById('hcie-save');if(btn){btn.disabled=true;btn.textContent='保存中…';}
   try{await api('/api/historical-commercial-invoices/'+encodeURIComponent(id),'PUT',body);showToast('历史 CI 已更新','success');closeModal();loadCI();}
   catch(e){showToast(e.message,'danger');if(btn){btn.disabled=false;btn.textContent='保存修改';}}
