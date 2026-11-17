@@ -21,7 +21,7 @@ assert.match(once, /function retryCIDetail\(\)/, 'failed requests must expose a 
 assert.match(once, /Unable to load CI details/, 'error state must be explicit');
 new Function('window','document','getLang','openModal','api','showToast','esc',once);
 
-const html = '<!doctype html><html><head><style>.base{color:#111}</style></head><body></body></html>';
+const html = '<!doctype html><html><head><style>.base{color:#111}</style><script src="app.js?v=old"></script></head><body></body></html>';
 const htmlOnce = patchIndexSource(html);
 const htmlTwice = patchIndexSource(htmlOnce);
 assert.equal(htmlTwice, htmlOnce, 'CI loading CSS patch must be idempotent');
@@ -29,4 +29,5 @@ assert.match(htmlOnce, /CI-DETAIL-LOADING-STYLE-V1/);
 assert.match(htmlOnce, /ciDetailSpin/);
 assert.match(htmlOnce, /prefers-reduced-motion/);
 assert.match(htmlOnce, /ci-detail-error-card/);
+assert.match(htmlOnce, /app\\.js\\?v=20261117-1/, 'app.js URL must be cache-busted for the patched frontend');
 console.log('ci-detail-loading hotfix: PASS');
