@@ -135,7 +135,8 @@
       var currencies = (results[3] || []).filter(function (c) { return c.status === 'active' || String(c.code).toUpperCase() === String(h.currency || '').toUpperCase(); });
       var items = Array.isArray(h.items) ? h.items : [];
       var hasLinked = items.some(function (it) { return !!String(it.pi_id || '').trim(); });
-      var hasSettlements = Number(h.historical_paid_amount || 0) > 0 || Number(h.subsequent_paid_amount || 0) > 0 || Number(h.deduction_amount || 0) > 0 || Number(h.rounding_amount || 0) > 0;
+      var paymentStatus = String(h.payment_status || '');
+      var hasSettlements = Number(h.historical_paid_amount || 0) > 0 || Number(h.subsequent_paid_amount || 0) > 0 || Number(h.deduction_amount || 0) > 0 || Number(h.rounding_amount || 0) > 0 || paymentStatus === 'paid' || paymentStatus.indexOf('partial') === 0;
       var amountAllowed = !!h.amount_view_allowed;
       global._hciEditAmountAllowed = amountAllowed;
       global._hciEditSupplierName = h.supplier_name || '';
