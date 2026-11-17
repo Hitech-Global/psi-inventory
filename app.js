@@ -12522,8 +12522,23 @@ function renderUnifiedCITable(operationalData,historicalData){
     var histAmountCell=cell(srcTable,sourceRow,['总货款','CI金额','Gross Amount','Total Amount']);
     histAmountCell.textContent=fmtMoney(h.gross_goods_amount,h.currency);
     tr.appendChild(histAmountCell);
-    tr.appendChild(textCell('—'));
-    tr.appendChild(textCell('—'));
+    var historicalFreightAmount = Number(h.freight_amount);
+    var historicalFreightCurrencyRaw = String(h.freight_currency || h.currency || '').trim().toUpperCase();
+    var historicalFreightCurrency = historicalFreightCurrencyRaw === 'CNY' ? 'RMB' : historicalFreightCurrencyRaw;
+    var historicalFreightValue = Number.isFinite(historicalFreightAmount) && historicalFreightAmount > 0
+      ? fmtMoney(historicalFreightAmount, historicalFreightCurrency)
+      : '—';
+    tr.appendChild(textCell(historicalFreightValue));
+    var historicalGoodsCurrencyRaw = String(h.currency || '').trim().toUpperCase();
+    var sameHistoricalFreightCurrency = historicalFreightCurrencyRaw === historicalGoodsCurrencyRaw ||
+      ((historicalFreightCurrencyRaw === 'CNY' || historicalFreightCurrencyRaw === 'RMB') &&
+       (historicalGoodsCurrencyRaw === 'CNY' || historicalGoodsCurrencyRaw === 'RMB'));
+    var historicalFreightRatio = sameHistoricalFreightCurrency &&
+      Number.isFinite(historicalFreightAmount) && historicalFreightAmount > 0 &&
+      Number(h.gross_goods_amount) > 0
+      ? (historicalFreightAmount / Number(h.gross_goods_amount) * 100).toFixed(2) + '%'
+      : '—';
+    tr.appendChild(textCell(historicalFreightRatio));
     tr.appendChild(moneyCell(Number(h.historical_paid_amount||0)+Number(h.subsequent_paid_amount||0)));
     tr.appendChild(moneyCell(h.unpaid_amount));
     tr.appendChild(cell(srcTable,sourceRow,['付款状态','Payment Status']));
