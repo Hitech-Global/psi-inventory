@@ -35,6 +35,25 @@ function normalizeShopProfile(shop) {
   };
 }
 
+function createShopSyncService(runtime, shopId) {
+  return new ShopeeSyncService({
+    shopId,
+    roleClients: runtime.roleClients,
+    rawRepository: runtime.rawRepository,
+    campaignRepository: runtime.campaignRepository,
+    productRepository: runtime.productRepository,
+    promotionRepository: runtime.promotionRepository,
+    orderRepository: runtime.orderRepository,
+    returnRepository: runtime.returnRepository,
+    shopBiRepository: runtime.shopBiRepository,
+    shopLivestreamRepository: runtime.shopLivestreamRepository,
+    shopHealthRepository: runtime.shopHealthRepository,
+    videoRepository: runtime.videoRepository,
+    livestreamRepository: runtime.livestreamRepository,
+    shopRepository: runtime.shopRepository,
+  });
+}
+
 async function runShopSyncCycle({
   runtime,
   shop,
@@ -53,18 +72,7 @@ async function runShopSyncCycle({
   const today = localIsoDate(now, profile.timezone);
   const yesterday = addDays(today, -1);
 
-  const service = new ShopeeSyncService({
-    shopId,
-    roleClients: runtime.roleClients,
-    rawRepository: runtime.rawRepository,
-    campaignRepository: runtime.campaignRepository,
-    productRepository: runtime.productRepository,
-    promotionRepository: runtime.promotionRepository,
-    orderRepository: runtime.orderRepository,
-    returnRepository: runtime.returnRepository,
-    shopBiRepository: runtime.shopBiRepository,
-    shopRepository: runtime.shopRepository,
-  });
+  const service = createShopSyncService(runtime, shopId);
 
   const summary = {
     mode,
@@ -323,4 +331,4 @@ async function runShopSyncCycle({
   return summary;
 }
 
-module.exports = { normalizeShopProfile, runShopSyncCycle };
+module.exports = { normalizeShopProfile, createShopSyncService, runShopSyncCycle };

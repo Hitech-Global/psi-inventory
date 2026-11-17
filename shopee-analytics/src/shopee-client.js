@@ -2,6 +2,14 @@
 
 const crypto = require('crypto');
 const { withRateLimitRetry } = require('./rate-limit-retry');
+const { sanitizeShopOrderReturnSnapshot } = require('./buyer-pii-sanitizer');
+
+const PII_RESPONSE_ENDPOINTS = Object.freeze({
+  '/api/v2/order/get_order_list': 'orders',
+  '/api/v2/order/get_order_detail': 'orderDetail',
+  '/api/v2/returns/get_return_list': 'returns',
+  '/api/v2/returns/get_return_detail': 'returnDetail',
+});
 
 function signShopRequest({ partnerId, partnerKey, path, timestamp, accessToken, shopId }) {
   if (!partnerId || !partnerKey || !path || !timestamp || !accessToken || !shopId) {
@@ -92,7 +100,8 @@ class ShopeeClient {
         if (/^\d+$/.test(String(retryAfter || ''))) err.retryAfterSeconds = Number(retryAfter);
         throw err;
       }
-      return payload;
+      const kind = PII_RESPONSE_ENDPOINTS[params.path];
+      return kind ? sanitizeShopOrderReturnSnapshot(kind, payload) : payload;
     }, { ...this.retryOptions, onRetry });
   }
 

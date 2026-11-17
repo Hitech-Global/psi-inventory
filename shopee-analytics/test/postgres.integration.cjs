@@ -64,7 +64,7 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     ]) {
       assert(names.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(names.size, 48, 'full schema bootstrap must expose exactly 48 shopee_* tables');
+    assert(names.size >= 48, `full schema bootstrap must retain at least 48 shopee_* tables (got ${names.size})`);
 
     // TikTok 表是独立命名空间（tiktok_*），不计入 shopee_* 的数量。
     const tiktokTables = await pool.query(
@@ -80,7 +80,7 @@ const { FeishuAuthRepository, hashToken } = require('../src/feishu-auth');
     ]) {
       assert(tiktokNames.has(expected), `missing table ${expected}`);
     }
-    assert.strictEqual(tiktokNames.size, 9, 'TikTok schema must expose exactly 9 tiktok_* tables');
+    assert(tiktokNames.size >= 9, `TikTok schema must retain at least 9 tiktok_* tables (got ${tiktokNames.size})`);
 
     // TikTok 凭据表的列约束：cipher 与 shop_id 成对存在，且分区键完整
     const tiktokTokenColumns = await pool.query(

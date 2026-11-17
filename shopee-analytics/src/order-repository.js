@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeOrderRaw, sanitizeItemRaw } = require('./buyer-pii-sanitizer');
+
 class ShopeeOrderRepository {
   constructor({ pool }) {
     if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function') {
@@ -26,7 +28,7 @@ class ShopeeOrderRepository {
           synced_at=now()`,
         [
           shopId, order.orderSn, order.orderStatus, order.createTime, order.updateTime,
-          order.currency, order.totalAmount, JSON.stringify(order.raw || {}),
+          order.currency, order.totalAmount, JSON.stringify(sanitizeOrderRaw(order.raw || {})),
         ],
       );
       await client.query('DELETE FROM shopee_order_items WHERE shop_id=$1 AND order_sn=$2', [shopId, order.orderSn]);
@@ -49,7 +51,7 @@ class ShopeeOrderRepository {
             shopId, order.orderSn, item.itemId, item.modelId || 0,
             item.itemSku, item.modelSku, item.quantity, item.originalPrice,
             item.discountedPrice, item.promotionType, item.promotionId,
-            JSON.stringify(item.raw || {}),
+            JSON.stringify(sanitizeItemRaw(item.raw || {})),
           ],
         );
       }
