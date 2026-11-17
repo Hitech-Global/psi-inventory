@@ -1,7 +1,24 @@
 'use strict';
 
 const assert = require('assert');
-const { normalizeShopProfile, runShopSyncCycle } = require('../src/shop-sync-runner');
+const { normalizeShopProfile, createShopSyncService, runShopSyncCycle } = require('../src/shop-sync-runner');
+
+// Regression: daily shop sync must actually persist Account Health and other ERP metrics.
+const healthRepo = { async upsertDaily() {} };
+const liveRepo = { async upsertDaily() {} };
+const videoRepo = { async upsertDaily() {} };
+const streamRepo = { async upsertDaily() {} };
+const wired = createShopSyncService({
+  shopHealthRepository: healthRepo,
+  shopLivestreamRepository: liveRepo,
+  videoRepository: videoRepo,
+  livestreamRepository: streamRepo,
+}, 123);
+assert.strictEqual(wired.shopHealthRepository, healthRepo);
+assert.strictEqual(wired.shopLivestreamRepository, liveRepo);
+assert.strictEqual(wired.videoRepository, videoRepo);
+assert.strictEqual(wired.livestreamRepository, streamRepo);
+
 
 const normalized = normalizeShopProfile({
   shopId: '123',
