@@ -56,8 +56,8 @@ test('date filter applies to operational and historical CI and summary uses the 
     { id: 'h2', ci_date: '2026-12-01', currency: 'RMB', gross_goods_amount: 700 }
   ];
   assert.equal(context.renderUnifiedCITable(operational, historical), 'table');
-  assert.deepEqual(context.rendered.op.map(x => x.id), ['o1', 'o3']);
-  assert.deepEqual(context.rendered.hist.map(x => x.id), ['h1']);
+  assert.deepEqual(Array.from(context.rendered.op, x => x.id), ['o1', 'o3']);
+  assert.deepEqual(Array.from(context.rendered.hist, x => x.id), ['h1']);
 
   context.renderPurchaseAmountSummary({ operational: {}, historical: {}, total: {} });
   assert.equal(context.summary.operational.count, 1);
