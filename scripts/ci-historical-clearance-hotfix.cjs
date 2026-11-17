@@ -16,11 +16,12 @@ if(!global||typeof global.addEventListener!=='function')return;
 function esc(v){return typeof global.esc==='function'?global.esc(v):String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
 function selectHtml(h){
 var v=h.clearance_type||'';
+function label(key,fallback){return typeof global.t==='function'?global.t(key,fallback):fallback;}
 var disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
 return '<select class="hci-clearance-inline" aria-label="设置历史CI清关方式" title="设置历史CI清关方式"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateHistoricalCIClearance(this,\\''+esc(h.id)+'\\')">'
-+'<option value=""'+(!v?' selected':'')+'>未设置</option>'
-+'<option value="formal"'+(v==='formal'?' selected':'')+'>正清</option>'
-+'<option value="non_formal"'+(v==='non_formal'?' selected':'')+'>灰清</option></select>';
++'<option value=""'+(!v?' selected':'')+'>'+label('ci.clearance.unset','未设置')+'</option>'
++'<option value="formal"'+(v==='formal'?' selected':'')+'>'+label('ci.clearance.formal','正清')+'</option>'
++'<option value="non_formal"'+(v==='non_formal'?' selected':'')+'>'+label('ci.clearance.non_formal','非正清')+'</option></select>';
 }
 function addStyle(){
 if(document.getElementById('hci-clearance-style'))return;
@@ -37,7 +38,7 @@ try{
 await global.api('/api/historical-commercial-invoices/'+encodeURIComponent(id),'PUT',{clearance_type:next});
 sel.setAttribute('data-saved-value',next);
 sel.disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
-if(typeof global.showToast==='function')global.showToast('历史CI清关方式已更新','success');
+if(typeof global.showToast==='function')global.showToast(label('ci.clearance.updated','历史 CI 清关方式已更新'),'success');
 }catch(e){
 sel.value=old;sel.disabled=false;
 if(typeof global.showToast==='function')global.showToast((e&&e.message)||'保存失败','danger');
@@ -101,7 +102,7 @@ const route=`  // HCI-CLEARANCE-SETTING-V1：只更新历史 CI 清关方式；�
       const hci = queryOne('SELECT id FROM historical_commercial_invoices WHERE id = ?', [req.params.id]);
       if (!hci) return res.status(404).json({ error: '历史 CI 不存在' });
       const value = req.body && req.body.clearance_type;
-      if (!['formal', 'non_formal', ''].includes(value)) return res.status(400).json({ error: '清关方式只能选择正清、灰清或未设置' });
+      if (!['formal', 'non_formal', ''].includes(value)) return res.status(400).json({ error: '清关方式只能选择正清、非正清或未设置' });
       run('UPDATE historical_commercial_invoices SET clearance_type = ?, updated_at = datetime(\\'now\\') WHERE id = ?', [value || null, hci.id]);
       res.json({ success: true, id: hci.id, clearance_type: value || null });
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
