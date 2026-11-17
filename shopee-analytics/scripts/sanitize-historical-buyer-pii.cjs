@@ -6,7 +6,7 @@
 const { createAnalyticsPool } = require('../src/pg');
 const {
   sanitizeOrderRaw, sanitizeReturnRaw, sanitizeItemRaw,
-  sanitizeShopOrderReturnSnapshot, sanitizeBuyerPii,
+  sanitizeShopOrderReturnSnapshot, sanitizeBuyerPii, sanitizeHealthEventRaw,
 } = require('../src/buyer-pii-sanitizer');
 
 const args = new Set(process.argv.slice(2));
@@ -20,6 +20,7 @@ const tables = [
   { table: 'shopee_order_items', keys: ['shop_id', 'order_sn', 'item_id', 'model_id'], json: 'raw_json', sanitize: sanitizeItemRaw },
   { table: 'shopee_returns', keys: ['shop_id', 'return_sn'], json: 'raw_json', sanitize: sanitizeReturnRaw },
   { table: 'shopee_return_items', keys: ['shop_id', 'return_sn', 'item_id', 'model_id'], json: 'raw_json', sanitize: sanitizeItemRaw },
+  { table: 'shopee_shop_health_events', keys: ['shop_id', 'event_date', 'event_kind', 'event_id'], json: 'raw_json', sanitize: sanitizeHealthEventRaw },
   { table: 'shopee_raw_api_snapshots', keys: ['id'], json: 'response_json',
     where: "endpoint_key IN ('orders','orderDetail','returns','returnDetail')",
     sanitize: (row, record) => sanitizeShopOrderReturnSnapshot(record.endpoint_key, row),

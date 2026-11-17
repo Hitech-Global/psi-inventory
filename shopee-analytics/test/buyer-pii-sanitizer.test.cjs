@@ -107,3 +107,11 @@ test('Shopee client strips PII before returning order/return API payloads', asyn
   assert.equal(JSON.stringify(result).includes('private@example.com'), false);
   assert.equal(JSON.stringify(result).includes('1234567890'), false);
 });
+
+test('Account Health source events never retain buyer contacts', () => {
+  const { sanitizeHealthEventRaw } = require('../src/buyer-pii-sanitizer');
+  const row = { order_sn: 'O-123', preparation_days: 2, buyer_username: 'secret',
+    contact: { phone: '555' }, text_reason: 'email private@example.com' };
+  const safe = sanitizeHealthEventRaw(row);
+  assert.deepEqual(safe, { order_sn: 'O-123', preparation_days: 2 });
+});

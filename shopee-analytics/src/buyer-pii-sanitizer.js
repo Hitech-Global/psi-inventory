@@ -70,6 +70,15 @@ function allowFields(value, allowed) {
   return output;
 }
 
+const HEALTH_EVENT_FIELDS = new Set([
+  'order_sn', 'item_id', 'id', 'penalty_id', 'penalty_type',
+  'penalty_name', 'penalty_amount', 'issue_type', 'item_name',
+  'severity', 'level', 'detailed_reason', 'detailed_reason_code',
+  'preparation_days', 'non_fulfillment_type', 'cancellation_type',
+  'shipping_channel', 'arrange_pick_up_time', 'actual_pick_up_time',
+]);
+function sanitizeHealthEventRaw(value) { return allowFields(value, HEALTH_EVENT_FIELDS); }
+
 function sanitizeOrderRaw(value) { return allowFields(value, ORDER_FIELDS); }
 function sanitizeReturnRaw(value) { return allowFields(value, RETURN_FIELDS); }
 function sanitizeItemRaw(value) { return allowFields(value, ITEM_FIELDS); }
@@ -109,5 +118,5 @@ function sanitizeShopOrderReturnSnapshot(endpointKey, payload) {
 module.exports = {
   sanitizeBuyerPii, normalizeKey,
   sanitizeOrderRaw, sanitizeReturnRaw, sanitizeItemRaw,
-  sanitizeShopOrderReturnSnapshot
+  sanitizeHealthEventRaw, sanitizeShopOrderReturnSnapshot
 };

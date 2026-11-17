@@ -1,5 +1,7 @@
 'use strict';
 
+const { sanitizeHealthEventRaw } = require('./buyer-pii-sanitizer');
+
 /**
  * A shop's score and fulfilment, as it stood on a given day.
  */
@@ -225,7 +227,7 @@ class ShopeeShopHealthRepository {
           event.title || null,
           event.detail || null,
           event.severity || null,
-          JSON.stringify(event.raw || {}),
+          JSON.stringify(sanitizeHealthEventRaw(event.raw || {})),
         ],
       );
     }
