@@ -164,7 +164,7 @@
       '.ci-date-filter-trigger:focus-visible{outline:2px solid rgba(0,122,255,.35);outline-offset:1px;}',
       '.ci-date-filter-value{overflow:hidden;text-overflow:ellipsis;}',
       '.ci-date-filter-icon{display:block;flex:0 0 14px;width:14px;height:14px;color:var(--text-secondary,#86868b);}',
-      '.ci-date-filter-input{position:absolute!important;inset:0!important;width:100%!important;height:30px!important;margin:0!important;padding:0!important;border:0!important;border-radius:6px!important;background:transparent!important;opacity:0!important;cursor:pointer!important;z-index:2!important;}'
+      '.ci-date-filter-input{position:absolute!important;inset:0!important;width:100%!important;height:30px!important;margin:0!important;padding:0!important;border:0!important;border-radius:6px!important;background:transparent!important;opacity:0!important;pointer-events:none!important;cursor:pointer!important;z-index:1!important;}'
     ].join('\n');
     doc.head.appendChild(style);
   }
@@ -189,14 +189,14 @@
     group.innerHTML =
       '<label for="ci-date-filter-input">' + translate('field.ci_date', 'CI日期') + '</label>' +
       '<div class="ci-date-filter-control">' +
-        '<button class="ci-date-filter-trigger" id="ci-date-filter-trigger" type="button" tabindex="-1" aria-hidden="true">' +
+        '<button class="ci-date-filter-trigger" id="ci-date-filter-trigger" type="button" aria-label="' + translate('field.ci_date', '选择CI日期') + '" aria-haspopup="dialog">' +
           '<span class="ci-date-filter-value" id="ci-date-filter-value">' + translate('common.all', '全部') + '</span>' +
           '<svg class="ci-date-filter-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true">' +
             '<rect x="2.5" y="3.5" width="11" height="10" rx="1.5" stroke="currentColor" stroke-width="1.2"/>' +
             '<path d="M5 2.5v3M11 2.5v3M2.5 6.5h11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>' +
           '</svg>' +
         '</button>' +
-        '<input class="ci-date-filter-input" id="ci-date-filter-input" type="date" aria-label="' + translate('field.ci_date', 'CI日期') + '" title="选择日期；按 Backspace 或 Delete 清除">' +
+        '<input class="ci-date-filter-input" id="ci-date-filter-input" type="date" tabindex="-1" aria-label="' + translate('field.ci_date', 'CI日期') + '" title="选择日期；按 Backspace 或 Delete 清除">' +
       '</div>';
 
     var actions = form.querySelector('.filter-actions');
@@ -212,6 +212,22 @@
       syncLabel();
       renderLatest();
     }
+    var trigger = group.querySelector('#ci-date-filter-trigger');
+    function openDatePicker() {
+      if (!input) return;
+      // Open the native date panel directly from the visible button's user gesture.
+      if (typeof input.showPicker === 'function') {
+        try {
+          input.showPicker();
+          return;
+        } catch (error) {
+          // Fall back for browsers that expose showPicker but reject this input context.
+        }
+      }
+      try { input.focus(); } catch (error) {}
+      try { input.click(); } catch (error) {}
+    }
+    if (trigger) trigger.addEventListener('click', openDatePicker);
     if (input) {
       input.addEventListener('change', onDateChanged);
       input.addEventListener('keydown', function (event) {
