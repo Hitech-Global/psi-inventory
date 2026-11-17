@@ -291,6 +291,11 @@ if (driver === 'pg') {
         // CI-CLEARANCE-TYPE-01：正清 / 非正清；空串保留旧CI未分类状态，不回填历史。
         "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''",
         "CREATE INDEX IF NOT EXISTS idx_ci_clearance_type ON commercial_invoices(clearance_type)",
+        // 历史 CI 也保存仓库与清关方式快照；旧记录由可信历史表回填，不影响运营 CI。
+        "ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS target_warehouse TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS ix_hci_target_warehouse ON historical_commercial_invoices(target_warehouse)",
+        "CREATE INDEX IF NOT EXISTS ix_hci_clearance_type ON historical_commercial_invoices(clearance_type)",
         // PI-MULTI-PO: 原子保存每个 PO 对 PI SKU 的占用数量；历史单 PO 保持旧关联列。
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_ids TEXT DEFAULT ''",
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_nos TEXT DEFAULT ''",
