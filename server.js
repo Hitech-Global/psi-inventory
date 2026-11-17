@@ -16563,6 +16563,8 @@ app.post('/api/historical-commercial-invoices/batch-import',
       const id=req.params.id, d=req.body||{};
       const hci=queryOne('SELECT * FROM historical_commercial_invoices WHERE id = ?', [id]);
       if(!hci)return res.status(404).json({error:'历史 CI 不存在'});
+      const amountFields=['gross_goods_amount','freight_amount','customs_duty_idr','customs_duty_rmb'];
+      if(!ciCanViewAmounts(req) && amountFields.some(k=>Object.prototype.hasOwnProperty.call(d,k)))return res.status(403).json({error:'没有金额查看/编辑权限'});
       const linkedItems=query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [id]).rows;
       const settlementCount=hci.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [hci.payment_request_id]).rows.length : 0;
       const editGoodsAllowed=linkedItems.length===0 && settlementCount===0;
