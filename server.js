@@ -16512,6 +16512,9 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
     ).rows;
     historical.payment_records = ciPaymentRecords(hciPayItems.map(i => i.id), { excludeLegacy: true });
     historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
+    const hciLinkedItems = query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [req.params.id]).rows;
+    const hciSettlementCount = historical.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [historical.payment_request_id]).rows.length : 0;
+    historical.edit_goods_allowed = hciLinkedItems.length === 0 && hciSettlementCount === 0;
     if (!ciCanViewAmounts(req)) ciRedactHistorical(historical, true);
     else historical.amount_view_allowed = true;
     res.json(historical);
@@ -16554,6 +16557,66 @@ app.post('/api/historical-commercial-invoices/batch-import',
     } catch (e) { res.status(e.status || 500).json({ error: e.status ? e.message : '历史 CI 批量导入失败' }); }
   }));
 
+  // HCI-FULL-EDIT-01：历史 CI 整单基础信息编辑；保护已发生付款和 PI SKU 出货事实。
+  app.put('/api/historical-commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
+    try {
+      const id=req.params.id, d=req.body||{};
+      const hci=queryOne('SELECT * FROM historical_commercial_invoices WHERE id = ?', [id]);
+      if(!hci)return res.status(404).json({error:'历史 CI 不存在'});
+      const linkedItems=query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [id]).rows;
+      const settlementCount=hci.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [hci.payment_request_id]).rows.length : 0;
+      const editGoodsAllowed=linkedItems.length===0 && settlementCount===0;
+      const nextNo=String(d.historical_ci_no===undefined?hci.historical_ci_no:d.historical_ci_no||'').trim();
+      const supplierName=String(d.supplier_name===undefined?hci.supplier_name:d.supplier_name||'').trim();
+      const brandName=String(d.brand_name===undefined?hci.brand_name:d.brand_name||'').trim();
+      const country=String(d.country===undefined?hci.country:d.country||'').trim();
+      if(!nextNo||!supplierName||!brandName||!country)return res.status(400).json({error:'CI 编号、供应商、品牌和国家不能为空'});
+      if(nextNo!==hci.historical_ci_no){
+        const dup=queryOne('SELECT id FROM historical_commercial_invoices WHERE historical_ci_no = ? COLLATE NOCASE AND id <> ?', [nextNo,id]);
+        if(dup)return res.status(409).json({error:'历史 CI 编号已存在'});
+      }
+      const currency=String(d.currency===undefined?hci.currency:d.currency||'').trim().toUpperCase();
+      if(!queryOne("SELECT code FROM currencies WHERE code = ? AND status = 'active'",[currency]))return res.status(400).json({error:'币种不存在或已停用'});
+      const ciDate=historicalCIDate(d.ci_date===undefined?hci.ci_date:d.ci_date,'CI 日期',true);
+      const shipDate=historicalCIDate(d.actual_ship_date===undefined?hci.actual_ship_date:d.actual_ship_date,'实际出货日期',true);
+      const dueDate=historicalCIDate(d.due_date===undefined?hci.due_date:d.due_date,'尾款到期日',false);
+      const clearance=String(d.clearance_type===undefined?(hci.clearance_type||''):d.clearance_type||'').trim();
+      if(clearance&&!['formal','non_formal'].includes(clearance))return res.status(400).json({error:'清关方式只能为正清或非正清'});
+      const gross=settlementMoney(d.gross_goods_amount===undefined?hci.gross_goods_amount:d.gross_goods_amount);
+      if(!(gross>0))return res.status(400).json({error:'总货款必须大于 0'});
+      const historicalPaid=Number(hci.historical_paid_amount||0);
+      if(d.historical_paid_amount!==undefined && Math.abs(Number(d.historical_paid_amount||0)-historicalPaid)>0.000001)return res.status(409).json({error:'导入前历史已付款属于原始付款事实，请通过付款记录更正，不可直接覆盖'});
+      const freight=settlementMoney(d.freight_amount===undefined?hci.freight_amount:(d.freight_amount||0));
+      const freightCurrency=String(d.freight_currency===undefined?(hci.freight_currency||currency):(d.freight_currency||currency)).trim().toUpperCase();
+      if(freight>0&&!queryOne("SELECT code FROM currencies WHERE code = ? AND status = 'active'",[freightCurrency]))return res.status(400).json({error:'运费币种不存在或已停用'});
+      const dutyIdr=settlementMoney(d.customs_duty_idr===undefined?hci.customs_duty_idr:(d.customs_duty_idr||0));
+      const dutyRmb=settlementMoney(d.customs_duty_rmb===undefined?hci.customs_duty_rmb:(d.customs_duty_rmb||0));
+      const goodsChanged=Math.abs(gross-Number(hci.gross_goods_amount||0))>0.000001;
+      const currencyChanged=currency!==String(hci.currency||'').toUpperCase();
+      if((goodsChanged||currencyChanged)&&!editGoodsAllowed)return res.status(409).json({error:'该记录已有 PI SKU 出货快照或付款流水，总货款和币种已锁定；其他基础信息、运费和关税仍可修改'});
+      const supplierId=String(d.supplier_id===undefined?(hci.supplier_id||''):d.supplier_id||'').trim();
+      const brandId=String(d.brand_id===undefined?(hci.brand_id||''):d.brand_id||'').trim();
+      const warehouse=historicalCIWarehouseForCountry(country)||String(d.target_warehouse===undefined?(hci.target_warehouse||''):d.target_warehouse||'').trim();
+      const terms=String(d.payment_terms===undefined?(hci.payment_terms||''):d.payment_terms||'').trim();
+      const note=String(d.source_note===undefined?(hci.source_note||''):d.source_note||'').trim();
+      transaction(()=>{
+        run('UPDATE historical_commercial_invoices SET historical_ci_no=?,supplier_id=?,supplier_name=?,supplier_identity=?,brand_id=?,brand_name=?,country=?,target_warehouse=?,clearance_type=?,ci_date=?,actual_ship_date=?,currency=?,gross_goods_amount=?,payment_terms=?,due_date=?,source_note=?,freight_amount=?,freight_currency=?,customs_duty_idr=?,customs_duty_rmb=?,updated_at=datetime(\'now\') WHERE id=?',
+          [nextNo,supplierId,supplierName,supplierName.toLowerCase(),brandId,brandName,country,warehouse,clearance||null,ciDate,shipDate,currency,gross,terms,dueDate,note,freight,freightCurrency,dutyIdr,dutyRmb,id]);
+        if(hci.payment_request_id){
+          run('UPDATE payment_requests SET source_no=?,supplier_name=?,payee_name_snapshot=?,payee_key=?,currency=?,payment_terms=?,payable_date=?,expense_country=?,updated_at=datetime(\'now\') WHERE id=?',
+            [nextNo,supplierName,supplierName,'supplier:'+(supplierId||supplierName),currency,terms,dueDate||null,country,hci.payment_request_id]);
+          if(goodsChanged){
+            run('UPDATE payment_requests SET payable_amount=?,unpaid_amount=? WHERE id=?',[gross,gross,hci.payment_request_id]);
+            run("UPDATE payable_items SET source_no=?,payee_key=?,payee_name_snapshot=?,currency=?,payable_amount_minor=?,payable_date=? WHERE source_type='historical_ci' AND source_id=? AND lifecycle_status='active'",
+              [nextNo,'supplier:'+(supplierId||supplierName),supplierName,currency,Math.round(gross*100),dueDate||null,id]);
+            run('UPDATE payment_request_items SET requested_amount_minor=? WHERE payment_request_id=?',[Math.round(gross*100),hci.payment_request_id]);
+          }
+        }
+      });
+      const updated=queryOne('SELECT * FROM historical_commercial_invoices WHERE id=?',[id]);
+      res.json({success:true,id,historical_ci_no:updated.historical_ci_no});
+    }catch(e){res.status(e.status||500).json({error:e.status?e.message:e.message||'历史 CI 更新失败'});}
+  }));
   // ==================== HCI-ATTACH-01 历史 CI 附件（复用 PI/CI 既有 dataUrl-in-DB 机制） ====================
   // 默认技术配置参数（非业务规则冻结，可后续配置调整）：单个附件 base64 解码后的技术安全大小上限。
   const HCI_ATTACH_MAX_BYTES = 10 * 1024 * 1024;
