@@ -1,5 +1,7 @@
 'use strict';
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { patchAppSource, patchIndexSource, APP_MARKER } = require('../scripts/ci-detail-loading-hotfix.cjs');
 
 const app = `async function viewCI(id, backPay, backMode){
@@ -31,5 +33,14 @@ assert.match(htmlOnce, /CI-DETAIL-LOADING-STYLE-V1/);
 assert.match(htmlOnce, /ciDetailSpin/);
 assert.match(htmlOnce, /prefers-reduced-motion/);
 assert.match(htmlOnce, /ci-detail-error-card/);
-assert.match(htmlOnce, /app\.js\?v=20261117-2/, 'app.js URL must be cache-busted for the patched frontend');
+assert.match(htmlOnce, /app\.js\?v=20261117-4/, 'app.js URL must be cache-busted for the patched frontend');
+
+const repoRoot = path.join(__dirname, '..');
+const liveApp = fs.readFileSync(path.join(repoRoot, 'app.js'), 'utf8');
+const liveIndex = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+assert.ok(liveApp.includes(APP_MARKER), 'the immediate loading state must be installed in the live CI detail handler');
+assert.match(liveApp, /window\.__ciDetailRetry=/, 'the live handler must retain a retry target');
+assert.ok(liveIndex.includes('CI-DETAIL-LOADING-STYLE-V1'), 'the live loading skeleton styles must be installed');
+assert.match(liveIndex, /app\.js\?v=20261117-4/, 'the live CI detail handler must be cache-busted');
+
 console.log('ci-detail-loading hotfix: PASS');

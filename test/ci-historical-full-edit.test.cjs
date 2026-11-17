@@ -18,4 +18,12 @@ assert.ok(server.includes('已有 PI SKU 出货快照或付款流水，总货款
 assert.ok(server.includes('导入前历史已付款属于原始付款事实'),'legacy paid facts cannot be overwritten');
 assert.ok(server.includes('UPDATE historical_commercial_invoice_items SET hci_no=?'),'CI number changes sync to SKU snapshots');
 assert.ok(server.includes('UPDATE payment_requests SET source_no=?'),'CI number changes sync to payment request');
+
+const historicalList = app.slice(
+  app.indexOf('function renderHistoricalCITable(data)'),
+  app.indexOf('\nfunction toggleHistoricalCIDetail')
+);
+assert.ok(historicalList.includes("hasPermission('ci_edit')?'<button class=\"action-btn\" onclick=\"event.stopPropagation();editHistoricalCI"), 'historical CI list must expose an edit action to users with ci_edit permission');
+assert.ok(app.includes("tr.appendChild(cell(srcTable,sourceRow,['操作','Actions']))"), 'the unified CI list must preserve the historical row action cell including edit');
+
 console.log('Historical CI full edit regression: PASS');
