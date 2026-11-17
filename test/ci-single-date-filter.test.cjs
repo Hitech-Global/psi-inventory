@@ -146,6 +146,8 @@ test('visible CI date control opens the native picker and date selection filters
     }
   };
   const actions = {};
+  const summaryTarget = { innerHTML: '' };
+  const tableTarget = { innerHTML: '' };
   const form = {
     inserted: null,
     querySelector(selector) {
@@ -166,6 +168,8 @@ test('visible CI date control opens the native picker and date selection filters
       getElementById(id) {
         if (id === 'ci-source-mode') return mode;
         if (id === 'ci-date-filter-input' && form.inserted) return input;
+        if (id === 'ci-purchase-summary') return summaryTarget;
+        if (id === 'ci-table') return tableTarget;
         if (id === 'ci-date-filter-style') return null;
         return null;
       },
