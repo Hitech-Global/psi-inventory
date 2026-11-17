@@ -1164,6 +1164,8 @@ function initDatabase() {
       brand_id TEXT DEFAULT '',
       brand_name TEXT NOT NULL,
       country TEXT NOT NULL,
+      target_warehouse TEXT NOT NULL DEFAULT '',
+      clearance_type TEXT NOT NULL DEFAULT '',
       ci_date TEXT NOT NULL,
       currency TEXT NOT NULL,
       gross_goods_amount REAL NOT NULL,
@@ -1197,6 +1199,8 @@ function initDatabase() {
   if (!hciLegacyCols.includes('freight_currency')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN freight_currency TEXT DEFAULT ''");
   if (!hciLegacyCols.includes('customs_duty_idr')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN customs_duty_idr REAL DEFAULT NULL");
   if (!hciLegacyCols.includes('customs_duty_rmb')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN customs_duty_rmb REAL DEFAULT NULL");
+  if (!hciLegacyCols.includes('target_warehouse')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN target_warehouse TEXT NOT NULL DEFAULT ''");
+  if (!hciLegacyCols.includes('clearance_type')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN clearance_type TEXT NOT NULL DEFAULT ''");
 
   // 历史 CI SKU 级明细（价格快照，创建后不可编辑）
   d.exec(`
