@@ -115,3 +115,16 @@ test('Account Health source events never retain buyer contacts', () => {
   const safe = sanitizeHealthEventRaw(row);
   assert.deepEqual(safe, { order_sn: 'O-123', preparation_days: 2 });
 });
+
+test('order pagination cursor and more flag survive PII filtering', () => {
+  const page = sanitizeShopOrderReturnSnapshot('orders', {
+    response: {
+      more: true, next_cursor: 'opaque-page-token',
+      order_list: [{ order_sn: 'ORD1', buyer_username: 'secret' }]
+    }
+  });
+  assert.equal(page.response.more, true);
+  assert.equal(page.response.next_cursor, 'opaque-page-token');
+  assert.equal(page.response.order_list[0].order_sn, 'ORD1');
+  assert.equal(page.response.order_list[0].buyer_username, undefined);
+});

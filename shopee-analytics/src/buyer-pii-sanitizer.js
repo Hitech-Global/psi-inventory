@@ -95,7 +95,7 @@ function sanitizeShopOrderReturnSnapshot(endpointKey, payload) {
     if (payload && typeof payload[key] === 'string') result[key] = payload[key];
   }
   const safeResponse = {};
-  for (const key of ['more', 'total_count', 'total']) {
+  for (const key of ['more', 'next_cursor', 'total_count', 'total']) {
     if (response && typeof response[key] !== 'object' && response[key] !== undefined) {
       safeResponse[key] = response[key];
     }
