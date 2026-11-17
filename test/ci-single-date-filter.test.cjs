@@ -45,9 +45,9 @@ test('CI list gets one compact single-date control without changing existing lay
   assert.match(script, /width:130px/);
   assert.match(script, /height:30px/);
   assert.match(script, /pointer-events:none/);
-  assert.match(script, /input\\.showPicker\\(\\)/);
-  assert.match(script, /trigger\\.addEventListener\\('click', openDatePicker\\)/);
-  assert.doesNotMatch(script, /aria-hidden=\\"true\\"/);
+  assert.ok(script.includes('input.showPicker()'));
+  assert.ok(script.includes("trigger.addEventListener('click', openDatePicker)"));
+  assert.equal(script.includes('aria-hidden="true"'), false);
   assert.doesNotMatch(script, /ci-date-start|ci-date-end|date-range/);
   assert.doesNotMatch(script, /\.filter-form\s*\{|\.filter-group\s*\{/);
 });
