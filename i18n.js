@@ -4456,6 +4456,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['ci.clearance.formal'] = 'Formal'; I18N.dict.id['ci.clearance.formal'] = 'Resmi';
   I18N.dict.en['ci.clearance.non_formal'] = 'Non-formal'; I18N.dict.id['ci.clearance.non_formal'] = 'Non-formal';
   I18N.dict.en['ci.clearance.unset'] = 'Not Set'; I18N.dict.id['ci.clearance.unset'] = 'Belum Diatur';
+  I18N.dict.zh['ci.clearance.updated'] = '历史 CI 清关方式已更新'; I18N.dict.en['ci.clearance.updated'] = 'Historical CI clearance method updated'; I18N.dict.id['ci.clearance.updated'] = 'Metode kepabeanan CI historis diperbarui';
   I18N.dict.en['hci.freight_amount'] = 'Total Freight'; I18N.dict.id['hci.freight_amount'] = 'Total Ongkos Kirim';
   I18N.dict.en['hci.customs_duty_idr'] = 'Customs Duty (IDR)'; I18N.dict.id['hci.customs_duty_idr'] = 'Bea Masuk (IDR)';
   I18N.dict.en['hci.customs_duty_rmb'] = 'Customs Duty (RMB)'; I18N.dict.id['hci.customs_duty_rmb'] = 'Bea Masuk (RMB)';
