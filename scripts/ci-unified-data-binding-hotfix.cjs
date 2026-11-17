@@ -45,7 +45,7 @@ function patchAppSource(src){
 "    var link=document.createElement('span');link.className='link-text';link.textContent=h.historical_ci_no||'—';link.onclick=function(event){event.stopPropagation();viewHistoricalCI(h.id);};noCell.appendChild(link);tr.appendChild(noCell);",
 "    var typeCell=document.createElement('td');typeCell.innerHTML=ciTypeBadge('historical');tr.appendChild(typeCell);",
 "    tr.appendChild(textCell(h.brand_name));tr.appendChild(textCell(unifiedCICountryLabel(h.country)));",
-"    tr.appendChild(textCell(h.target_warehouse||'—'));tr.appendChild(textCell(h.clearance_type?ciClearanceLabel(h.clearance_type):'—'));",
+"    tr.appendChild(textCell(h.target_warehouse||'—'));tr.appendChild(cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance']));",
 "    tr.appendChild(textCell(fmtDate(h.ci_date)));tr.appendChild(textCell(fmtMoney(h.gross_goods_amount,h.currency)));",
 "    var historicalFreightAmount=Number(h.freight_amount);",
 "    var historicalFreightCurrencyRaw=String(h.freight_currency||h.currency||'').trim().toUpperCase();",
