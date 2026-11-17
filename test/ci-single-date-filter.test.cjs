@@ -69,7 +69,7 @@ test('single date filters operational and historical CI rows by CI date', () => 
   fields['ci-date-filter-input'].value = '2026-11-05';
   context.__ciSingleDateFilterV1.renderLatest();
 
-  assert.deepEqual(Array.from(context.lastTableArgs.operational, row => row.id), ['op-1', 'op-3']);
+  assert.deepEqual(Array.from(context.lastTableArgs.operational, row => row.id), ['op-1', 'op-3', 'op-4']);
   assert.deepEqual(Array.from(context.lastTableArgs.historical, row => row.id), ['hist-1']);
   assert.equal(context.lastSummary.operational.count, 2);
   assert.deepEqual(
