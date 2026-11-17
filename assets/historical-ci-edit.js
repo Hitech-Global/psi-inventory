@@ -4,6 +4,10 @@
   global.__historicalCIEditInstalled = true;
 
   function tr(key, fallback) { return typeof global.t === 'function' ? global.t(key, fallback) : fallback; }
+  function ui(zh, en, id) {
+    var lang = typeof global.getLang === 'function' ? global.getLang() : 'zh';
+    return lang === 'en' ? en : (lang === 'id' ? (id || en) : zh);
+  }
   function esc(v) {
     if (typeof global.esc === 'function') return global.esc(v == null ? '' : String(v));
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -36,7 +40,7 @@
       list.unshift({ id: selected, name: global._hciEditSupplierName || selected });
     }
     return '<select id="hci-edit-supplier-id" class="form-control" onchange="onHistoricalCIEditSupplierChange()"' + (disabled ? ' disabled' : '') + '>' +
-      opt('', '手工供应商快照', !selected) +
+      opt('', ui('手工供应商快照', 'Manual supplier snapshot', 'Snapshot pemasok manual'), !selected) +
       list.map(function (s) { return '<option value="' + esc(s.id) + '" data-name="' + esc(s.name || '') + '"' + (String(s.id) === String(selected || '') ? ' selected' : '') + '>' + esc(s.name || s.id) + '</option>'; }).join('') +
       '</select>';
   }
@@ -53,7 +57,7 @@
         '<td class="hci-edit-net">' + money(net, currency) + '</td><td class="hci-edit-amount">' + money(line, currency) + '</td>'
       : '';
     return '<tr class="hci-edit-item" data-item-id="' + esc(it.id) + '" data-linked="' + (linked ? '1' : '0') + '" data-net-unit="' + esc(net) + '">' +
-      '<td><strong>' + esc(it.sku_code || '') + '</strong><div class="hci-edit-sub">' + (linked ? 'PI ' + esc(it.pi_no || '') : '手工明细') + '</div></td>' +
+      '<td><strong>' + esc(it.sku_code || '') + '</strong><div class="hci-edit-sub">' + (linked ? 'PI ' + esc(it.pi_no || '') : ui('手工明细', 'Manual item', 'Item manual')) + '</div></td>' +
       '<td><input data-hci-field="qty" type="number" min="0" step="1" value="' + esc(qty) + '" oninput="recalcHistoricalCIEditLine(this)"></td>' + amounts + '</tr>';
   }
   function injectStyle() {
@@ -153,47 +157,47 @@
         ? '<div class="hci-edit-items"><table><thead><tr><th>SKU / PI</th><th>' + tr('ci.col.ci_qty', '数量') + '</th>' +
           (amountAllowed ? '<th>' + tr('field.original_unit_price', '原单价') + '</th><th>' + tr('field.discount', '折扣 %') + '</th><th>' + tr('field.net_unit_price', '折后单价') + '</th><th>' + tr('ci.col.amount', '金额') + '</th>' : '') +
           '</tr></thead><tbody>' + items.map(function (it) { return itemRow(it, h.currency, amountAllowed); }).join('') + '</tbody></table></div>'
-        : '<div class="hci-edit-footnote">该历史 CI 没有 SKU 明细，货款总金额按 CI 原始金额单独维护。</div>';
+        : '<div class="hci-edit-footnote">' + ui('该历史 CI 没有 SKU 明细，货款总金额按 CI 原始金额单独维护。', 'This historical CI has no SKU lines. Maintain the goods total from the original CI.', 'CI historis ini tidak memiliki rincian SKU. Total barang mengikuti CI asli.') + '</div>';
 
       var body = '<div class="hci-edit-form">' +
-        '<div class="hci-edit-note">整单编辑会同步更新历史 CI 主记录、对应应付信息及关联 PI 的出货数量。已发生的银行付款、抵扣和抹零流水不会被覆盖；PI 关联 SKU 的价格快照保持只读。SKU 明细金额不会自动覆盖 CI 货款总额，请按原始 CI 单据核对总金额。</div>' +
-        '<div class="hci-edit-title">基本信息</div><div class="form-grid">' +
+        '<div class="hci-edit-note">' + ui('整单编辑会同步更新历史 CI 主记录、对应应付信息及关联 PI 的出货数量。已发生的银行付款、抵扣和抹零流水不会被覆盖；PI 关联 SKU 的价格快照保持只读。SKU 明细金额不会自动覆盖 CI 货款总额，请按原始 CI 单据核对总金额。', 'Saving updates the historical CI, its payable details and linked PI shipped quantities. Recorded bank payments, deductions and rounding are preserved. Prices on PI-linked SKU snapshots remain read-only. SKU line totals do not overwrite the CI goods total; verify it against the original CI.', 'Penyimpanan memperbarui CI historis, rincian utang dan jumlah terkirim PI terkait. Pembayaran bank, potongan dan pembulatan yang sudah tercatat tetap dipertahankan. Harga SKU yang terkait PI hanya-baca. Total baris SKU tidak menimpa total barang CI; periksa berdasarkan CI asli.') + '</div>' +
+        '<div class="hci-edit-title">' + ui('基本信息', 'Basic information', 'Informasi dasar') + '</div><div class="form-grid">' +
         field(tr('field.historical_ci_no', '历史 CI 编号'), '<input id="hci-edit-no" type="text" value="' + esc(h.historical_ci_no || '') + '">') +
         field(tr('field.supplier_name', '供应商'), supplierHtml + '<input id="hci-edit-supplier-name" type="text" style="margin-top:7px" value="' + esc(h.supplier_name || '') + '"' + (identityLocked ? ' readonly' : '') + ' oninput="onHistoricalCIEditSupplierNameInput()">') +
         field(tr('field.brand', '品牌'), brandHtml) +
         field(tr('field.country', '国家'), countryHtml) +
         field(tr('field.target_warehouse', '目标仓库'), '<input id="hci-edit-warehouse" type="text" value="' + esc(warehouse) + '"' + (warehouseLocked ? ' readonly' : '') + '>') +
-        field(tr('ci.clearance_type', '清关方式'), '<select id="hci-edit-clearance">' + opt('', '未设置', !h.clearance_type) + opt('formal', '正清', h.clearance_type === 'formal') + opt('non_formal', '非正清', h.clearance_type === 'non_formal') + '</select>') +
+        field(ui('清关方式', 'Clearance type', 'Jenis bea cukai'), '<select id="hci-edit-clearance">' + opt('', ui('未设置', 'Not set', 'Belum diatur'), !h.clearance_type) + opt('formal', ui('正清', 'Formal', 'Formal'), h.clearance_type === 'formal') + opt('non_formal', ui('非正清', 'Informal', 'Informal'), h.clearance_type === 'non_formal') + '</select>') +
         field(tr('field.ci_date', 'CI 日期'), '<input id="hci-edit-date" type="date" value="' + esc(dateVal(h.ci_date)) + '">') +
         field(tr('field.actual_ship_date', '实际出货日期'), '<input id="hci-edit-ship-date" type="date" value="' + esc(dateVal(h.actual_ship_date)) + '">') +
         field(tr('field.currency', '币种'), currencyHtml) + '</div>';
 
       if (amountAllowed) {
-        body += '<div class="hci-edit-title">金额与费用</div><div class="form-grid">' +
+        body += '<div class="hci-edit-title">' + ui('金额与费用', 'Amounts and costs', 'Nominal dan biaya') + '</div><div class="form-grid">' +
           field(tr('field.gross_amount', 'CI 货款总金额'), '<input id="hci-edit-gross" type="number" min="0" step="0.01" value="' + esc(h.gross_goods_amount == null ? '' : h.gross_goods_amount) + '">') +
           field(tr('hci.freight_amount', '总运费'), '<input id="hci-edit-freight" type="number" min="0" step="0.01" value="' + esc(h.freight_amount == null ? '' : h.freight_amount) + '">') +
-          field('运费币种', freightCurrencyHtml) +
+          field(ui('运费币种', 'Freight currency', 'Mata uang ongkir'), freightCurrencyHtml) +
           field(tr('hci.customs_duty_idr', '关税（IDR）'), '<input id="hci-edit-duty-idr" type="number" min="0" step="0.01" value="' + esc(h.customs_duty_idr == null ? '' : h.customs_duty_idr) + '">') +
           field(tr('hci.customs_duty_rmb', '关税（RMB）'), '<input id="hci-edit-duty-rmb" type="number" min="0" step="0.01" value="' + esc(h.customs_duty_rmb == null ? '' : h.customs_duty_rmb) + '">') +
           field(tr('field.historical_paid', '导入前历史已付款'), '<input id="hci-edit-paid" type="number" min="0" step="0.01" value="' + esc(h.historical_paid_amount == null ? '0' : h.historical_paid_amount) + '">') +
-          field(tr('field.historical_paid_date', '历史付款日期'), '<input id="hci-edit-paid-date" type="date" value="' + esc(dateVal(h.historical_paid_date)) + '">') + '</div>';
+          field(ui('历史付款日期', 'Historical payment date', 'Tanggal pembayaran historis'), '<input id="hci-edit-paid-date" type="date" value="' + esc(dateVal(h.historical_paid_date)) + '">') + '</div>';
       }
 
-      body += '<div class="hci-edit-title">付款条件与备注</div><div class="form-grid">' +
+      body += '<div class="hci-edit-title">' + ui('付款条件与备注', 'Payment terms and notes', 'Syarat pembayaran dan catatan') + '</div><div class="form-grid">' +
         field(tr('field.payment_terms', '付款条件 / 账期'), '<input id="hci-edit-terms" type="text" value="' + esc(h.payment_terms || '') + '">') +
-        field('Credit 天数', '<input id="hci-edit-credit-days" type="number" min="0" step="1" value="' + esc(h.credit_days || 0) + '">') +
+        field(ui('Credit 天数', 'Credit days', 'Hari kredit'), '<input id="hci-edit-credit-days" type="number" min="0" step="1" value="' + esc(h.credit_days || 0) + '">') +
         field(tr('field.due_date', '尾款到期日'), '<input id="hci-edit-due" type="date" value="' + esc(dateVal(h.due_date)) + '">') +
         field(tr('field.source_note', '原始凭证或备注'), '<input id="hci-edit-note" type="text" value="' + esc(h.source_note || '') + '">', true) +
-        '</div><div class="hci-edit-title">SKU 明细</div>' + itemTable +
-        '<div class="hci-edit-footnote">PI 关联行可修改出货数量，价格来自 PI 快照且不可单独修改。无 PI 关联的历史明细，在具备金额查看权限时可修改单价和折扣。修改数量会同步 PI 的已出货 / 未出货数量。</div></div>';
+        '</div><div class="hci-edit-title">' + ui('SKU 明细', 'SKU details', 'Rincian SKU') + '</div>' + itemTable +
+        '<div class="hci-edit-footnote">' + ui('PI 关联行可修改出货数量，价格来自 PI 快照且不可单独修改。无 PI 关联的历史明细，在具备金额查看权限时可修改单价和折扣。修改数量会同步 PI 的已出货 / 未出货数量。', 'For PI-linked rows, you can edit shipped quantity; prices come from the PI snapshot and cannot be changed here. For unlinked historical rows, unit price and discount can be edited when you have amount-view permission. Quantity changes sync PI shipped and unshipped quantities.', 'Untuk baris terkait PI, jumlah terkirim dapat diubah; harga berasal dari snapshot PI dan tidak dapat diubah di sini. Untuk baris historis tanpa PI, harga satuan dan diskon dapat diedit jika memiliki izin melihat nominal. Perubahan jumlah akan menyinkronkan jumlah terkirim dan belum terkirim PI.') + '</div></div>';
 
       var jsId = JSON.stringify(String(id));
       var jsPay = JSON.stringify(backPay || '');
       var jsMode = JSON.stringify(backMode || 'view');
-      var footer = '<button class="btn btn-secondary" onclick="viewHistoricalCI(' + jsId + ',' + jsPay + ',' + jsMode + ')">取消</button>' +
-        '<button class="btn btn-primary" id="hci-edit-save" onclick="saveHistoricalCIEdit(' + jsId + ',' + jsPay + ',' + jsMode + ')">保存修改</button>';
+      var footer = '<button class="btn btn-secondary" onclick="viewHistoricalCI(' + jsId + ',' + jsPay + ',' + jsMode + ')">' + ui('取消', 'Cancel', 'Batal') + '</button>' +
+        '<button class="btn btn-primary" id="hci-edit-save" onclick="saveHistoricalCIEdit(' + jsId + ',' + jsPay + ',' + jsMode + ')">' + ui('保存修改', 'Save changes', 'Simpan perubahan') + '</button>';
       injectStyle();
-      global.openModal(tr('hci.edit_title', '编辑历史 CI') + ' - ' + esc(h.historical_ci_no || ''), body, footer, 'modal-ci-create');
+      global.openModal(ui('编辑历史 CI', 'Edit historical CI', 'Edit CI historis') + ' - ' + esc(h.historical_ci_no || ''), body, footer, 'modal-ci-create');
       global.onHistoricalCIEditWarehouseChange();
     } catch (e) {
       global.showToast(e.message || String(e), 'danger');
@@ -238,20 +242,20 @@
       return item;
     });
     if (!payload.historical_ci_no || !payload.supplier_name || !payload.brand_name || !payload.country || !payload.ci_date || !payload.currency) {
-      global.showToast('请填写历史 CI 编号、供应商、品牌、国家、CI 日期和币种', 'warning');
+      global.showToast(ui('请填写历史 CI 编号、供应商、品牌、国家、CI 日期和币种', 'Complete CI number, supplier, brand, country, CI date and currency.', 'Lengkapi nomor CI, pemasok, merek, negara, tanggal CI dan mata uang.'), 'warning');
       return;
     }
     try {
       btn.disabled = true;
-      btn.textContent = '保存中…';
+      btn.textContent = ui('保存中…', 'Saving…', 'Menyimpan…');
       await global.api('/api/historical-commercial-invoices/' + encodeURIComponent(id), 'PUT', payload);
-      global.showToast('历史 CI 已更新', 'success');
+      global.showToast(ui('历史 CI 已更新', 'Historical CI updated', 'CI historis diperbarui'), 'success');
       if (typeof global.loadCI === 'function') Promise.resolve(global.loadCI()).catch(function () {});
       await global.viewHistoricalCI(id, backPay || '', backMode || 'view');
     } catch (e) {
       global.showToast(e.message || String(e), 'danger');
       btn.disabled = false;
-      btn.textContent = '保存修改';
+      btn.textContent = ui('保存修改', 'Save changes', 'Simpan perubahan');
     }
   };
 
@@ -267,7 +271,7 @@
         var button = document.createElement('button');
         button.type = 'button';
         button.className = 'btn btn-secondary btn-sm hci-edit-entry';
-        button.textContent = tr('hci.edit_button', '编辑整张记录');
+        button.textContent = ui('编辑整张记录', 'Edit full record', 'Edit seluruh catatan');
         button.onclick = function () { global.editHistoricalCI(id, backPay || '', backMode || 'view'); };
         header.insertBefore(button, close);
       } catch (e) {}
