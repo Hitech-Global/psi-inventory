@@ -16,7 +16,7 @@ assert.ok(patched.includes("className='ci-list-logi-toggle'"));
 assert.ok(patched.includes('textCell(c.target_warehouse)'));
 assert.ok(patched.includes('textCell(ciClearanceLabel(c.clearance_type))'));
 assert.ok(patched.includes("textCell(h.target_warehouse||'—')"),'historical CI rows must show the country-mapped warehouse');
-assert.ok(patched.includes("textCell(h.clearance_type?ciClearanceLabel(h.clearance_type):'—')"),'historical CI rows must show formal/non-formal clearance');
+assert.ok(patched.includes("cell(srcTable,sourceRow,['清关方式','Clearance Type','Clearance'])"),'historical CI rows must preserve the editable clearance selector');
 assert.ok(patched.includes('Number(h.freight_amount)'),'historical CI rows must bind the source freight snapshot');
 assert.ok(patched.includes('historicalFreightCurrencyRaw===\'CNY\'?\'RMB\':historicalFreightCurrencyRaw'),'historical CNY freight must display as RMB');
 assert.ok(patched.includes('historicalFreightRatio'),'historical freight ratio must only be calculated when currencies match');
