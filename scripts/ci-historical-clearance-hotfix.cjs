@@ -14,9 +14,9 @@ return `\n\n${UI_MARKER}
 'use strict';
 if(!global||typeof global.addEventListener!=='function')return;
 function esc(v){return typeof global.esc==='function'?global.esc(v):String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
+function label(key,fallback){return typeof global.t==='function'?global.t(key,fallback):fallback;}
 function selectHtml(h){
 var v=h.clearance_type||'';
-function label(key,fallback){return typeof global.t==='function'?global.t(key,fallback):fallback;}
 var disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
 var clearanceLabel=label('ci.clearance_type','清关方式');
 return '<select class="hci-clearance-inline" aria-label="'+esc(clearanceLabel)+'" title="'+esc(clearanceLabel)+'"'+(disabled?' disabled':'')+' onclick="event.stopPropagation()" onchange="updateHistoricalCIClearance(this,\\''+esc(h.id)+'\\')">'
