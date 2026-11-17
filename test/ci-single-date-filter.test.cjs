@@ -44,6 +44,10 @@ test('CI list gets one compact single-date control without changing existing lay
   assert.match(script, /translate\('common\.all', '全部'\)/);
   assert.match(script, /width:130px/);
   assert.match(script, /height:30px/);
+  assert.match(script, /pointer-events:none/);
+  assert.match(script, /input\\.showPicker\\(\\)/);
+  assert.match(script, /trigger\\.addEventListener\\('click', openDatePicker\\)/);
+  assert.doesNotMatch(script, /aria-hidden=\\"true\\"/);
   assert.doesNotMatch(script, /ci-date-start|ci-date-end|date-range/);
   assert.doesNotMatch(script, /\.filter-form\s*\{|\.filter-group\s*\{/);
 });
@@ -111,6 +115,92 @@ test('clearing the single date restores all currently loaded CI rows and totals'
     Array.from(context.lastSummary.total.by_currency, item => [item.currency, item.amount]),
     [['RMB', 400], ['USD', 40]]
   );
+});
+
+
+
+test('visible CI date control opens the native picker and date selection filters rows', () => {
+  const listeners = {};
+  const input = {
+    value: '',
+    addEventListener(name, callback) { listeners['input:' + name] = callback; },
+    showPickerCalls: 0,
+    showPicker() { this.showPickerCalls++; },
+    focus() {},
+    click() {}
+  };
+  const trigger = {
+    addEventListener(name, callback) { listeners['trigger:' + name] = callback; },
+    click() { listeners['trigger:click'](); }
+  };
+  const value = { textContent: '' };
+  const group = {
+    className: '',
+    id: '',
+    innerHTML: '',
+    querySelector(selector) {
+      if (selector === '#ci-date-filter-input') return input;
+      if (selector === '#ci-date-filter-trigger') return trigger;
+      if (selector === '#ci-date-filter-value') return value;
+      return null;
+    }
+  };
+  const actions = {};
+  const form = {
+    inserted: null,
+    querySelector(selector) {
+      if (selector === '#ci-date-filter-group') return this.inserted;
+      if (selector === '.filter-actions') return actions;
+      return null;
+    },
+    insertBefore(node) { this.inserted = node; },
+    appendChild(node) { this.inserted = node; }
+  };
+  const mode = { closest() { return form; } };
+  let domReady;
+  const context = {
+    document: {
+      readyState: 'loading',
+      body: {},
+      head: { appendChild() {} },
+      getElementById(id) {
+        if (id === 'ci-source-mode') return mode;
+        if (id === 'ci-date-filter-input' && form.inserted) return input;
+        if (id === 'ci-date-filter-style') return null;
+        return null;
+      },
+      createElement(tag) { return tag === 'style' ? { id: '', textContent: '' } : group; },
+      addEventListener(name, callback) { if (name === 'DOMContentLoaded') domReady = callback; }
+    },
+    renderUnifiedCITable(operational, historical) {
+      context.lastRows = { operational, historical };
+      return 'table';
+    },
+    renderPurchaseAmountSummary(summary) {
+      context.lastSummary = summary;
+      return 'summary';
+    },
+    loadCI() {}
+  };
+  context.window = context;
+  vm.runInNewContext(script, context);
+  domReady();
+
+  const operational = [
+    { id: 'op-1', ci_date: '2026-11-05', currency: 'RMB', goods_amount: 100, ci_status: 'completed' },
+    { id: 'op-2', ci_date: '2026-11-06', currency: 'RMB', goods_amount: 300, ci_status: 'completed' }
+  ];
+  context.renderUnifiedCITable(operational, []);
+  context.renderPurchaseAmountSummary({ operational: {}, historical: {}, total: {} });
+
+  trigger.click();
+  assert.equal(input.showPickerCalls, 1, 'clicking the visible date control must open the native picker');
+
+  input.value = '2026-11-05';
+  listeners['input:change']();
+  assert.deepEqual(Array.from(context.lastRows.operational, row => row.id), ['op-1']);
+  assert.equal(context.lastSummary.total.count, 1);
+  assert.equal(value.textContent, '2026-11-05');
 });
 
 test('amount visibility permission is preserved', () => {
