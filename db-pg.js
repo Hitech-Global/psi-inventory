@@ -1301,14 +1301,28 @@ async function initDatabase() {
       actual_ship_date TEXT NOT NULL DEFAULT '',
       payment_term_id TEXT NOT NULL DEFAULT '',
       credit_days INTEGER NOT NULL DEFAULT 0,
+      freight_amount NUMERIC(18,4) DEFAULT NULL,
+      freight_currency TEXT DEFAULT '',
+      customs_duty_idr NUMERIC(18,4) DEFAULT NULL,
+      customs_duty_rmb NUMERIC(18,4) DEFAULT NULL,
       created_at TEXT DEFAULT NOW(),
       updated_at TEXT DEFAULT NOW(),
       CHECK (source_mode = 'historical'),
-      CHECK (gross_goods_amount > 0),
+      CHECK (gross_goods_amount >= 0),
       CHECK (historical_paid_amount >= 0),
       CHECK (historical_paid_amount <= gross_goods_amount)
     )
   `);
+
+  // 历史 CI 原表费用快照：只保存原始总运费与 PPN+PPH 双币金额，不参与 WAC/分摊。
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS freight_amount NUMERIC(18,4) DEFAULT NULL");
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS freight_currency TEXT DEFAULT ''");
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS customs_duty_idr NUMERIC(18,4) DEFAULT NULL");
+  await exec("ALTER TABLE historical_commercial_invoices ADD COLUMN IF NOT EXISTS customs_duty_rmb NUMERIC(18,4) DEFAULT NULL");
+  // 零货值仅允许 RMA CI；普通历史 CI 仍须大于 0。
+  await exec("ALTER TABLE historical_commercial_invoices DROP CONSTRAINT IF EXISTS historical_commercial_invoices_gross_goods_amount_check");
+  await exec("ALTER TABLE historical_commercial_invoices DROP CONSTRAINT IF EXISTS hci_allow_rma_zero_amount_check");
+  await exec("ALTER TABLE historical_commercial_invoices ADD CONSTRAINT hci_allow_rma_zero_amount_check CHECK (gross_goods_amount > 0 OR historical_ci_no ILIKE 'HWQDRMA%')");
 
   // 历史 CI SKU 级明细（价格快照，创建后不可编辑）
   await exec(`
