@@ -38,7 +38,7 @@ function makeContext() {
 }
 
 test('CI list gets one compact single-date control without changing existing layout rules', () => {
-  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261117-2/);
+  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261117-3/);
   assert.match(script, /type="date"/);
   assert.match(script, /ci-date-filter-group/);
   assert.match(script, /translate\('common\.all', '全部'\)/);
