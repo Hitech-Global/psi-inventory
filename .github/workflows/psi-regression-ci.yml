@@ -43,6 +43,8 @@ on:
       - 'wac-notification-ui.js'
       - 'test/global-import-progress-regression.test.cjs'
       - 'assets/ci-summary-compact.js'
+      - 'assets/ci-date-range-filter.js'
+      - 'test/ci-date-range-filter.test.cjs'
       - 'assets/ci-expense-modal-mac.js'
       - 'test/ci-expense-modal-mac.test.cjs'
       - 'assets/ci-attachment-actions.js'
@@ -367,3 +369,5 @@ jobs:
         run: node test/ci-logistics-quotation-permissions.test.cjs
       - name: Test CI amount permission and shared freight display
         run: node test/ci-amount-permission.test.cjs
+      - name: Test CI date range filter and filtered procurement summary
+        run: node --test test/ci-date-range-filter.test.cjs
