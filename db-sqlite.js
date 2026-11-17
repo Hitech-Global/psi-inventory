@@ -1178,14 +1178,25 @@ function initDatabase() {
       payment_request_id TEXT DEFAULT '',
       created_by TEXT DEFAULT '',
       created_by_name TEXT DEFAULT '',
+      freight_amount REAL DEFAULT NULL,
+      freight_currency TEXT DEFAULT '',
+      customs_duty_idr REAL DEFAULT NULL,
+      customs_duty_rmb REAL DEFAULT NULL,
       created_at TEXT DEFAULT (datetime('now')),
       updated_at TEXT DEFAULT (datetime('now')),
       CHECK (source_mode = 'historical'),
-      CHECK (gross_goods_amount > 0),
+      CHECK (gross_goods_amount > 0 OR historical_ci_no LIKE 'HWQDRMA%'),
       CHECK (historical_paid_amount >= 0),
       CHECK (historical_paid_amount <= gross_goods_amount)
     )
   `);
+
+  // 历史 CI 原表费用快照字段（只存原值，不参与 WAC/分摊）。
+  const hciLegacyCols = d.prepare("PRAGMA table_info(historical_commercial_invoices)").all().map(c => c.name);
+  if (!hciLegacyCols.includes('freight_amount')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN freight_amount REAL DEFAULT NULL");
+  if (!hciLegacyCols.includes('freight_currency')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN freight_currency TEXT DEFAULT ''");
+  if (!hciLegacyCols.includes('customs_duty_idr')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN customs_duty_idr REAL DEFAULT NULL");
+  if (!hciLegacyCols.includes('customs_duty_rmb')) d.exec("ALTER TABLE historical_commercial_invoices ADD COLUMN customs_duty_rmb REAL DEFAULT NULL");
 
   // 历史 CI SKU 级明细（价格快照，创建后不可编辑）
   d.exec(`
