@@ -14807,90 +14807,107 @@ function amountToMinor(amount) {
 function minorToAmount(minor) {
   return (Number(minor) || 0) / 100;
 }
+// Allocate a PR-level amount in integer cents using the largest-remainder method.
+// For deductions/rounding, callers weight by each payable item's real remaining balance
+ // after payments and prior settlement events, so each PR total is conserved exactly.
+function allocateMinorByWeights(totalMinor, rows, weightOf, fallbackWeightOf) {
+  const total = Math.max(0, Math.round(Number(totalMinor) || 0));
+  const list = Array.isArray(rows) ? rows : [];
+  const result = new Map(list.map(row => [row.id, 0]));
+  if (!total || !list.length) return result;
+  let weights = list.map(row => Math.max(0, Math.round(Number(weightOf(row)) || 0)));
+  let weightTotal = weights.reduce((sum, value) => sum + value, 0);
+  if (total > weightTotal && typeof fallbackWeightOf === 'function') {
+    weights = list.map(row => Math.max(0, Math.round(Number(fallbackWeightOf(row)) || 0)));
+    weightTotal = weights.reduce((sum, value) => sum + value, 0);
+  }
+  if (!weightTotal) return result;
+  if (total > weightTotal) { weights = list.map(() => 1); weightTotal = weights.length; }
+  const shares = list.map((row, index) => {
+    const exact = total * weights[index] / weightTotal;
+    const floor = Math.floor(exact);
+    return { id: row.id, amount: floor, remainder: exact - floor, index };
+  });
+  let remainder = total - shares.reduce((sum, item) => sum + item.amount, 0);
+  shares.slice().sort((a, b) => b.remainder - a.remainder || String(a.id).localeCompare(String(b.id)) || a.index - b.index)
+    .slice(0, remainder).forEach(item => { item.amount += 1; });
+  shares.forEach(item => result.set(item.id, item.amount));
+  return result;
+}
 
-// PAY-CORE 多次付款：payable_item 已结算金额（minor）
-// 业务模型：payable_item = 一笔应付事实，可被多次付款申请分次结清，不新增尾款对象。
-// 口径：① 付款取 payment_allocations（reconciled）——真实资金分摊事实；
-//       ② 抵扣/抹零为 PR 级事实，按本项 requested_amount_minor 在该 PR 内的占比分摊；
-//       ③ 仅统计非 cancelled/rejected 的付款申请。
-// 剩余可付 = payable_amount_minor - 已结算金额。
+// When one CI is being read, still load every payable item in each linked PR.
+// Otherwise the full PR-level rounding amount would be incorrectly assigned to the one CI queried.
 function payableItemsSettledMinor(itemIds) {
   const result = new Map();
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   if (!ids.length) return result;
   ids.forEach(id => result.set(id, 0));
-  const priRows = query(
+  const selectedPriRows = query(
     `SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor
-     FROM payment_request_items pri
-     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     FROM payment_request_items pri JOIN payment_requests pr ON pr.id = pri.payment_request_id
      WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
        AND pr.payment_status NOT IN ('cancelled','rejected')
        AND pr.approval_status NOT IN ('cancelled','rejected')`,
     ids
   ).rows || [];
-  if (!priRows.length) return result;
-  const priIds = priRows.map(r => r.id);
-  const prIds = [...new Set(priRows.map(r => r.payment_request_id))];
-  // ① 付款分摊
+  if (!selectedPriRows.length) return result;
+  const prIds = [...new Set(selectedPriRows.map(r => r.payment_request_id))];
+  const allPriRows = query(
+    `SELECT id, payable_item_id, payment_request_id, requested_amount_minor
+     FROM payment_request_items WHERE payment_request_id IN (${prIds.map(() => '?').join(',')}) ORDER BY id`,
+    prIds
+  ).rows || [];
+  const priIds = allPriRows.map(r => r.id);
   const paidByPri = new Map();
-  const allocRows = query(
+  query(
     `SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor
-     FROM payment_allocations
-     WHERE status = 'reconciled' AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
+     FROM payment_allocations WHERE status = 'reconciled'
+       AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
      GROUP BY payment_request_item_id`,
     priIds
-  ).rows || [];
-  allocRows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
-  // ② PR 级抵扣 + 抹零（applied 才计入，reversed 自动排除）
-  const drByPr = new Map();
-  const drRows = query(
-    `SELECT payment_request_id, SUM(amount) AS amt
-     FROM payment_settlement_logs
-     WHERE status = 'applied' AND event_type IN ('deduction','rounding')
+  ).rows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
+  const eventTotals = new Map();
+  query(
+    `SELECT payment_request_id, event_type, SUM(amount) AS amt
+     FROM payment_settlement_logs WHERE status = 'applied' AND event_type IN ('deduction','rounding')
        AND payment_request_id IN (${prIds.map(() => '?').join(',')})
-     GROUP BY payment_request_id`,
+     GROUP BY payment_request_id, event_type`,
     prIds
-  ).rows || [];
-  drRows.forEach(r => drByPr.set(r.payment_request_id, amountToMinor(r.amt)));
-  // ③ 各 PR 的 requested 总额（须取该 PR 全部明细，占比才正确）
-  const totalByPr = new Map();
-  const totRows = query(
-    `SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor
-     FROM payment_request_items
-     WHERE payment_request_id IN (${prIds.map(() => '?').join(',')})
-     GROUP BY payment_request_id`,
-    prIds
-  ).rows || [];
-  totRows.forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
-  for (const r of priRows) {
-    const paidMinor = paidByPri.get(r.id) || 0;
-    const drMinor = drByPr.get(r.payment_request_id) || 0;
-    const totalMinor = totalByPr.get(r.payment_request_id) || 0;
-    const share = totalMinor > 0 ? (Number(r.requested_amount_minor || 0) / totalMinor) : 0;
-    const settled = paidMinor + Math.round(drMinor * share);
-    result.set(r.payable_item_id, (result.get(r.payable_item_id) || 0) + settled);
+  ).rows.forEach(r => {
+    if (!eventTotals.has(r.payment_request_id)) eventTotals.set(r.payment_request_id, { deduction: 0, rounding: 0 });
+    eventTotals.get(r.payment_request_id)[r.event_type] = amountToMinor(r.amt);
+  });
+  const rowsByPr = new Map();
+  for (const row of allPriRows) {
+    if (!rowsByPr.has(row.payment_request_id)) rowsByPr.set(row.payment_request_id, []);
+    rowsByPr.get(row.payment_request_id).push(row);
+  }
+  for (const [prId, rows] of rowsByPr) {
+    const paid = new Map(rows.map(row => [row.id, paidByPri.get(row.id) || 0]));
+    const totals = eventTotals.get(prId) || { deduction: 0, rounding: 0 };
+    const requestedWeight = row => Number(row.requested_amount_minor || 0);
+    const deduction = allocateMinorByWeights(totals.deduction, rows,
+      row => Math.max(0, requestedWeight(row) - (paid.get(row.id) || 0)), requestedWeight);
+    const rounding = allocateMinorByWeights(totals.rounding, rows,
+      row => Math.max(0, requestedWeight(row) - (paid.get(row.id) || 0) - (deduction.get(row.id) || 0)), requestedWeight);
+    for (const row of rows) {
+      if (!result.has(row.payable_item_id)) continue;
+      const settled = (paid.get(row.id) || 0) + (deduction.get(row.id) || 0) + (rounding.get(row.id) || 0);
+      result.set(row.payable_item_id, (result.get(row.payable_item_id) || 0) + settled);
+    }
   }
   return result;
 }
 
-// PAY-CORE 多次付款：payable_item 结算拆分（minor）
-// 与 payableItemsSettledMinor 同源，但拆成三路，供应付费用列表按「已付款 / 抵扣 / 抹零」分别展示：
-//   paidMinor     = 真实付款（payment_allocations reconciled）+ 历史 legacy 付款（按本项占比分摊）
-//   deductionMinor= PR 级抵扣（applied，按本项在该 PR 内占比分摊）
-//   roundingMinor = PR 级抹零（applied，按本项占比分摊）
-// 剩余可付 = payable_amount_minor - paidMinor - deductionMinor - roundingMinor。
+// Single source of truth for paid/deduction/rounding per payable item.
+// PR-level deduction and rounding are allocated across all PR items based on their remaining cents.
 function payableItemsSettlementBreakdown(itemIds, opts) {
-  // CI/PAYMENT UNIFY：opts.excludeLegacy=true 时排除 is_legacy=1 导入期付款。
-  // 仅历史 CI 读取路径使用（导入历史已付已在 historical_paid_amount 展示，legacy 再计入会双算）；
-  // 默认财务应付视图会把未绑定有效付款申请的历史 CI 导入前已付款计入已付；HCI 汇总使用 excludeHistoricalOpening 单独展示。
   const excludeLegacy = !!(opts && opts.excludeLegacy);
   const excludeHistoricalOpening = !!(opts && opts.excludeHistoricalOpening);
   const result = new Map();
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   ids.forEach(id => result.set(id, { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 }));
   if (!ids.length) return result;
-  // 新历史 CI 不再创建 PAY-HCI 付款申请；其导入前已付款直接从 HCI 快照计入应付项已付金额。
-  // 旧记录仍有 payment_request_id，继续由 is_legacy settlement log 计算，避免重复计入。
   if (!excludeHistoricalOpening) {
     try {
       query("SELECT pi.id, h.historical_paid_amount FROM payable_items pi JOIN historical_commercial_invoices h ON h.id = pi.source_id WHERE pi.id IN (" + ids.map(() => '?').join(',') + ") AND pi.source_type = 'historical_ci' AND COALESCE(h.historical_paid_amount, 0) > 0 AND NOT EXISTS (SELECT 1 FROM payment_requests pr WHERE pr.id = h.payment_request_id AND pr.approval_status NOT IN ('cancelled','rejected') AND pr.payment_status NOT IN ('cancelled','rejected'))", ids).rows.forEach(r => {
@@ -14901,78 +14918,76 @@ function payableItemsSettlementBreakdown(itemIds, opts) {
       if (!/no such table|does not exist/i.test(String(e && e.message || e))) throw e;
     }
   }
-  const priRows = query(
+  const selectedPriRows = query(
     `SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor
-     FROM payment_request_items pri
-     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     FROM payment_request_items pri JOIN payment_requests pr ON pr.id = pri.payment_request_id
      WHERE pri.payable_item_id IN (${ids.map(() => '?').join(',')})
        AND pr.payment_status NOT IN ('cancelled','rejected')
        AND pr.approval_status NOT IN ('cancelled','rejected')`,
     ids
   ).rows || [];
-  if (!priRows.length) return result;
+  if (!selectedPriRows.length) return result;
+  const prIds = [...new Set(selectedPriRows.map(r => r.payment_request_id))];
+  const priRows = query(
+    `SELECT id, payable_item_id, payment_request_id, requested_amount_minor
+     FROM payment_request_items WHERE payment_request_id IN (${prIds.map(() => '?').join(',')}) ORDER BY id`,
+    prIds
+  ).rows || [];
   const priIds = priRows.map(r => r.id);
-  const prIds = [...new Set(priRows.map(r => r.payment_request_id))];
-  // 真实付款（新事务，reconciled）
   const paidByPri = new Map();
   query(
     `SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor
-     FROM payment_allocations
-     WHERE status = 'reconciled' AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
+     FROM payment_allocations WHERE status = 'reconciled'
+       AND payment_request_item_id IN (${priIds.map(() => '?').join(',')})
      GROUP BY payment_request_item_id`,
     priIds
   ).rows.forEach(r => paidByPri.set(r.payment_request_item_id, Number(r.paid_minor || 0)));
-  // 历史 legacy 付款（applied 的 payment 事件，is_legacy=1），PR 级，需按占比分摊到各 pri
-  const legacyPaidByPr = new Map();
+  const legacyByPr = new Map(), eventsByPr = new Map();
   if (!excludeLegacy) {
     query(
-      `SELECT payment_request_id, SUM(amount) AS amt
-       FROM payment_settlement_logs
+      `SELECT payment_request_id, SUM(amount) AS amt FROM payment_settlement_logs
        WHERE status = 'applied' AND event_type = 'payment' AND is_legacy = 1
          AND payment_request_id IN (${prIds.map(() => '?').join(',')})
        GROUP BY payment_request_id`,
       prIds
-    ).rows.forEach(r => legacyPaidByPr.set(r.payment_request_id, amountToMinor(r.amt)));
+    ).rows.forEach(r => legacyByPr.set(r.payment_request_id, amountToMinor(r.amt)));
   }
-  // PR 级抵扣 + 抹零（applied），按本项占比分摊
-  const dedByPr = new Map();
-  const rndByPr = new Map();
   query(
-    `SELECT payment_request_id, event_type, SUM(amount) AS amt
-     FROM payment_settlement_logs
+    `SELECT payment_request_id, event_type, SUM(amount) AS amt FROM payment_settlement_logs
      WHERE status = 'applied' AND event_type IN ('deduction','rounding')
        AND payment_request_id IN (${prIds.map(() => '?').join(',')})
      GROUP BY payment_request_id, event_type`,
     prIds
   ).rows.forEach(r => {
-    const m = amountToMinor(r.amt);
-    if (r.event_type === 'deduction') dedByPr.set(r.payment_request_id, m);
-    else rndByPr.set(r.payment_request_id, m);
+    if (!eventsByPr.has(r.payment_request_id)) eventsByPr.set(r.payment_request_id, { deduction: 0, rounding: 0 });
+    eventsByPr.get(r.payment_request_id)[r.event_type] = amountToMinor(r.amt);
   });
-  const totalByPr = new Map();
-  query(
-    `SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor
-     FROM payment_request_items
-     WHERE payment_request_id IN (${prIds.map(() => '?').join(',')})
-     GROUP BY payment_request_id`,
-    prIds
-  ).rows.forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
-  for (const r of priRows) {
-    const share = (totalByPr.get(r.payment_request_id) || 0) > 0
-      ? (Number(r.requested_amount_minor || 0) / totalByPr.get(r.payment_request_id)) : 0;
-    const legacyPaid = (legacyPaidByPr.get(r.payment_request_id) || 0) * share;
-    const paid = (paidByPri.get(r.id) || 0) + Math.round(legacyPaid);
-    const deduction = Math.round((dedByPr.get(r.payment_request_id) || 0) * share);
-    const rounding = Math.round((rndByPr.get(r.payment_request_id) || 0) * share);
-    const cur = result.get(r.payable_item_id);
-    cur.paidMinor += paid;
-    cur.deductionMinor += deduction;
-    cur.roundingMinor += rounding;
+  const rowsByPr = new Map();
+  for (const row of priRows) {
+    if (!rowsByPr.has(row.payment_request_id)) rowsByPr.set(row.payment_request_id, []);
+    rowsByPr.get(row.payment_request_id).push(row);
+  }
+  for (const [prId, rows] of rowsByPr) {
+    const paid = new Map(rows.map(row => [row.id, paidByPri.get(row.id) || 0]));
+    const requestedWeight = row => Number(row.requested_amount_minor || 0);
+    const legacy = allocateMinorByWeights(legacyByPr.get(prId) || 0, rows, requestedWeight, requestedWeight);
+    const paidAfterLegacy = new Map(rows.map(row => [row.id, (paid.get(row.id) || 0) + (legacy.get(row.id) || 0)]));
+    const totals = eventsByPr.get(prId) || { deduction: 0, rounding: 0 };
+    const deduction = allocateMinorByWeights(totals.deduction, rows,
+      row => Math.max(0, requestedWeight(row) - (paidAfterLegacy.get(row.id) || 0)), requestedWeight);
+    const rounding = allocateMinorByWeights(totals.rounding, rows,
+      row => Math.max(0, requestedWeight(row) - (paidAfterLegacy.get(row.id) || 0) - (deduction.get(row.id) || 0)), requestedWeight);
+    for (const row of rows) {
+      const current = result.get(row.payable_item_id);
+      if (!current) continue;
+      current.paidMinor += (paidAfterLegacy.get(row.id) || 0);
+      current.deductionMinor += (deduction.get(row.id) || 0);
+      current.roundingMinor += (rounding.get(row.id) || 0);
+    }
   }
   return result;
 }
 
-// 单项剩余可付金额（minor），不足 0 时归 0
 function payableItemRemainingMinor(item) {
   if (!item) return 0;
   const settled = payableItemsSettledMinor([item.id]).get(item.id) || 0;
@@ -16264,20 +16279,17 @@ function computeOperatingCIBalancePaymentFactsBulk(ciIds) {
 //   未结          = 应付 − 实付 − 抵扣 − 抹零
 // 付款账户 / 付款日期 / 交易明细：仅取 payment_allocations.transaction_id → payment_transactions 中归属本 CI 的交易，
 // 不显示同一 PR 下其他 CI 的交易信息。
+// CI payment detail uses the same all-items PR allocation as payableItemsSettlementBreakdown.
+// Keep transaction references scoped to the current CI while computing settlement cents across the PR.
 function ciPaymentRecords(payableItemIds, opts) {
-  // CI/PAYMENT UNIFY：opts.excludeLegacy=true 时排除 is_legacy=1 导入期付款（历史 CI 读取路径使用，
-  // 与 computeHistoricalCIPaymentFacts 一致；不传时行为同运营 CI 口径，含 legacy 付款）。
   const excludeLegacy = !!(opts && opts.excludeLegacy);
   const ids = [...new Set((Array.isArray(payableItemIds) ? payableItemIds : []).filter(Boolean))];
   if (!ids.length) return [];
   const ph = ids.map(() => '?').join(',');
-  // 1) 桥 + PR 概要（同 /api/payment-requests/by-payable-items 口径：排除 cancelled/rejected）。
-  //    PR 概要用 pr.*（驱动无关，避免 SQLite/PG 列名漂移；payee 显示字段两驱动同为 payee_name_snapshot）
   const rows = query(
     `SELECT pri.id AS pri_id, pri.payable_item_id AS payable_item_id,
             pri.payment_request_id AS pr_id, pri.requested_amount_minor AS requested_minor, pr.*
-     FROM payment_request_items pri
-     JOIN payment_requests pr ON pr.id = pri.payment_request_id
+     FROM payment_request_items pri JOIN payment_requests pr ON pr.id = pri.payment_request_id
      WHERE pri.payable_item_id IN (${ph})
        AND pr.payment_status NOT IN ('cancelled','rejected')
        AND pr.approval_status NOT IN ('cancelled','rejected')
@@ -16285,108 +16297,90 @@ function ciPaymentRecords(payableItemIds, opts) {
     ids
   ).rows;
   if (!rows.length) return [];
-  const prMap = new Map();   // PR 去重（一个 PR 可关联多个 payable item），保持 created_at DESC 首见顺序
-  const priByPR = new Map(); // 本 CI 在该 PR 内的 pri 明细（分摊分子 + 实付归属）
-  for (const r of rows) {
-    if (!prMap.has(r.pr_id)) prMap.set(r.pr_id, r);
-    if (!priByPR.has(r.pr_id)) priByPR.set(r.pr_id, []);
-    priByPR.get(r.pr_id).push(r);
+  const prMap = new Map(), priByPR = new Map();
+  for (const row of rows) {
+    if (!prMap.has(row.pr_id)) prMap.set(row.pr_id, row);
+    if (!priByPR.has(row.pr_id)) priByPR.set(row.pr_id, []);
+    priByPR.get(row.pr_id).push(row);
   }
   const prIds = [...prMap.keys()];
-  const priIds = rows.map(r => r.pri_id);
+  const priIds = rows.map(row => row.pri_id);
   const ph2 = prIds.map(() => '?').join(',');
   const ph3 = priIds.map(() => '?').join(',');
-  // 2) 实付：payment_allocations（reconciled）按 payment_request_item_id 精确归属本 CI；同时记录交易归属
-  const paidByPri = new Map();
   const txIdsByPri = new Map();
   query(
-    `SELECT payment_request_item_id, transaction_id, SUM(allocated_amount_minor) AS paid_minor
-     FROM payment_allocations
-     WHERE status = 'reconciled' AND payment_request_item_id IN (${ph3})
+    `SELECT payment_request_item_id, transaction_id
+     FROM payment_allocations WHERE status = 'reconciled'
+       AND payment_request_item_id IN (${ph3})
      GROUP BY payment_request_item_id, transaction_id`,
     priIds
-  ).rows.forEach(r => {
-    paidByPri.set(r.payment_request_item_id, (paidByPri.get(r.payment_request_item_id) || 0) + (Number(r.paid_minor) || 0));
-    if (!txIdsByPri.has(r.payment_request_item_id)) txIdsByPri.set(r.payment_request_item_id, new Set());
-    if (r.transaction_id) txIdsByPri.get(r.payment_request_item_id).add(r.transaction_id);
+  ).rows.forEach(row => {
+    if (!txIdsByPri.has(row.payment_request_item_id)) txIdsByPri.set(row.payment_request_item_id, new Set());
+    if (row.transaction_id) txIdsByPri.get(row.payment_request_item_id).add(row.transaction_id);
   });
-  // 3) 分摊分母：该 PR 的全体 pri（与 payableItemsSettlementBreakdown 的 totalByPr 完全一致）
-  const totalByPr = new Map();
-  query(
-    `SELECT payment_request_id, SUM(requested_amount_minor) AS total_minor
-     FROM payment_request_items
-     WHERE payment_request_id IN (${ph2})
-     GROUP BY payment_request_id`,
-    prIds
-  ).rows.forEach(r => totalByPr.set(r.payment_request_id, Number(r.total_minor || 0)));
-  // 4) settlement logs 全量一次取（与 paymentSettlementLogs 同排序），按 PR 内存分组
-  const logRows = query(
-    `SELECT * FROM payment_settlement_logs WHERE payment_request_id IN (${ph2}) ORDER BY created_at, id`,
+  const allPriRows = query(
+    `SELECT id, payable_item_id, payment_request_id, requested_amount_minor
+     FROM payment_request_items WHERE payment_request_id IN (${ph2}) ORDER BY id`,
     prIds
   ).rows;
-  // 5) transactions（与 paymentSettlementFacts 同口径：仅 reconciled 计入）
+  const allRowsByPR = new Map();
+  for (const row of allPriRows) {
+    if (!allRowsByPR.has(row.payment_request_id)) allRowsByPR.set(row.payment_request_id, []);
+    allRowsByPR.get(row.payment_request_id).push(row);
+  }
+  const allPaidByPri = new Map();
+  const allPriIds = allPriRows.map(row => row.id);
+  query(
+    `SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor FROM payment_allocations
+     WHERE status = 'reconciled' AND payment_request_item_id IN (${allPriIds.map(() => '?').join(',')})
+     GROUP BY payment_request_item_id`,
+    allPriIds
+  ).rows.forEach(row => allPaidByPri.set(row.payment_request_item_id, Number(row.paid_minor || 0)));
+  const logRows = query(`SELECT * FROM payment_settlement_logs WHERE payment_request_id IN (${ph2}) ORDER BY created_at, id`, prIds).rows;
   const txRows = query(
     `SELECT id, payment_request_id, trans_no, paid_amount_minor, paid_date, payment_account, trans_status, created_at
-     FROM payment_transactions
-     WHERE payment_request_id IN (${ph2}) AND trans_status = 'reconciled'
+     FROM payment_transactions WHERE payment_request_id IN (${ph2}) AND trans_status = 'reconciled'
      ORDER BY paid_date, created_at, id`,
     prIds
   ).rows;
-  const logsByPR = new Map();
-  for (const l of logRows) { if (!logsByPR.has(l.payment_request_id)) logsByPR.set(l.payment_request_id, []); logsByPR.get(l.payment_request_id).push(l); }
-  const txsByPR = new Map();
+  const logsByPR = new Map(), txsByPR = new Map();
+  for (const log of logRows) { if (!logsByPR.has(log.payment_request_id)) logsByPR.set(log.payment_request_id, []); logsByPR.get(log.payment_request_id).push(log); }
   for (const tx of txRows) { if (!txsByPR.has(tx.payment_request_id)) txsByPR.set(tx.payment_request_id, []); txsByPR.get(tx.payment_request_id).push(tx); }
   const out = [];
   for (const [prId, pris] of priByPR) {
-    const pr = prMap.get(prId);
+    const pr = prMap.get(prId), allRows = allRowsByPR.get(prId) || [];
     const logs = logsByPR.get(prId) || [];
-    const totalMinor = totalByPr.get(prId) || 0;
-    // 本 CI 在该 PR 的应付（分摊分子）
-    const ciRequestedMinor = pris.reduce((s, p) => s + (Number(p.requested_minor) || 0), 0);
-    const share = totalMinor > 0 ? ciRequestedMinor / totalMinor : 0;
-    // 仅归属本 CI 的交易（经 payment_allocations 关联），避免把同 PR 下其他 CI 的交易显示进来
+    const requestedWeight = row => Number(row.requested_amount_minor || 0);
+    const legacyMinor = excludeLegacy ? 0 : logs.filter(log => log.event_type === 'payment' && log.status === 'applied' && Number(log.is_legacy) === 1).reduce((sum, log) => sum + amountToMinor(log.amount), 0);
+    const legacy = allocateMinorByWeights(legacyMinor, allRows, requestedWeight, requestedWeight);
+    const paidAll = new Map(allRows.map(row => [row.id, (allPaidByPri.get(row.id) || 0) + (legacy.get(row.id) || 0)]));
+    const dedMinor = logs.filter(log => log.event_type === 'deduction' && log.status === 'applied').reduce((sum, log) => sum + amountToMinor(log.amount), 0);
+    const rndMinor = logs.filter(log => log.event_type === 'rounding' && log.status === 'applied').reduce((sum, log) => sum + amountToMinor(log.amount), 0);
+    const deduction = allocateMinorByWeights(dedMinor, allRows,
+      row => Math.max(0, requestedWeight(row) - (paidAll.get(row.id) || 0)), requestedWeight);
+    const rounding = allocateMinorByWeights(rndMinor, allRows,
+      row => Math.max(0, requestedWeight(row) - (paidAll.get(row.id) || 0) - (deduction.get(row.id) || 0)), requestedWeight);
+    const ciRequestedMinor = pris.reduce((sum, row) => sum + (Number(row.requested_minor) || 0), 0);
+    const ciPaidMinor = pris.reduce((sum, row) => sum + (paidAll.get(row.pri_id) || 0), 0);
+    const ciDedMinor = pris.reduce((sum, row) => sum + (deduction.get(row.pri_id) || 0), 0);
+    const ciRndMinor = pris.reduce((sum, row) => sum + (rounding.get(row.pri_id) || 0), 0);
     const ciTxIds = new Set();
-    for (const p of pris) {
-      const t = txIdsByPri.get(p.pri_id);
-      if (t) for (const txId of t) ciTxIds.add(txId);
-    }
+    for (const row of pris) { const txIds = txIdsByPri.get(row.pri_id); if (txIds) for (const txId of txIds) ciTxIds.add(txId); }
     const ciTxs = (txsByPR.get(prId) || []).filter(tx => ciTxIds.has(tx.id));
-    const deductionLogs = logs.filter(l => l.event_type === 'deduction');
-    const roundingLogs = logs.filter(l => l.event_type === 'rounding');
-    // ↓↓↓ 与 payableItemsSettlementBreakdown 同公式（minor 单位，最后统一 minor→元）
-    let paidMinor = pris.reduce((s, p) => s + (paidByPri.get(p.pri_id) || 0), 0);
-    if (!excludeLegacy) {
-      const legacyMinor = logs.filter(l => l.event_type === 'payment' && l.status === 'applied' && Number(l.is_legacy) === 1)
-        .reduce((s, l) => s + amountToMinor(l.amount), 0);
-      paidMinor += Math.round(legacyMinor * share);
-    }
-    const dedMinor = Math.round(deductionLogs.filter(l => l.status === 'applied')
-      .reduce((s, l) => s + amountToMinor(l.amount), 0) * share);
-    const rndMinor = Math.round(roundingLogs.filter(l => l.status === 'applied')
-      .reduce((s, l) => s + amountToMinor(l.amount), 0) * share);
-    const payableAmount = settlementMoney(minorToAmount(ciRequestedMinor));
-    const effectivePaid = settlementMoney(minorToAmount(paidMinor));
-    const effectiveDeduction = settlementMoney(minorToAmount(dedMinor));
-    const effectiveRounding = settlementMoney(minorToAmount(rndMinor));
-    const outstanding = settlementMoney(payableAmount - effectivePaid - effectiveDeduction - effectiveRounding);
-    const facts = {
-      effectivePaid, effectiveDeduction, effectiveRounding, outstanding,
-      hasReversal: logs.some(l => l.status === 'reversed' || l.event_type === 'rounding_reversal')
-    };
+    const payableAmount = minorToAmount(ciRequestedMinor);
+    const effectivePaid = minorToAmount(ciPaidMinor);
+    const effectiveDeduction = minorToAmount(ciDedMinor);
+    const effectiveRounding = minorToAmount(ciRndMinor);
+    const outstanding = minorToAmount(ciRequestedMinor - ciPaidMinor - ciDedMinor - ciRndMinor);
+    const facts = { effectivePaid, effectiveDeduction, effectiveRounding, outstanding,
+      hasReversal: logs.some(log => log.status === 'reversed' || log.event_type === 'rounding_reversal') };
     out.push({
-      payment_request_id: prId,
-      payment_no: pr.request_no || '',
-      payable_amount: payableAmount,
-      actual_paid_amount: effectivePaid,
-      deduction_amount: effectiveDeduction,
-      rounding_amount: effectiveRounding,
-      outstanding,
-      paid_date: pr.paid_date || (ciTxs.map(tx => tx.paid_date).filter(Boolean).sort().slice(-1)[0] || ''),
+      payment_request_id: prId, payment_no: pr.request_no || '', payable_amount: payableAmount,
+      actual_paid_amount: effectivePaid, deduction_amount: effectiveDeduction, rounding_amount: effectiveRounding,
+      outstanding, paid_date: pr.paid_date || (ciTxs.map(tx => tx.paid_date).filter(Boolean).sort().slice(-1)[0] || ''),
       payment_account: [...new Set(ciTxs.map(tx => tx.payment_account).filter(Boolean))].join(' / '),
-      payment_status: derivePaymentStatus(pr, facts),
-      approval_status: pr.approval_status || '',
-      currency: pr.currency || '',
-      payee_name: pr.payee_name_snapshot || '',
+      payment_status: derivePaymentStatus(pr, facts), approval_status: pr.approval_status || '',
+      currency: pr.currency || '', payee_name: pr.payee_name_snapshot || '',
       transactions: ciTxs.map(tx => ({ trans_no: tx.trans_no || '', paid_amount: minorToAmount(Number(tx.paid_amount_minor) || 0), paid_date: tx.paid_date || '', payment_account: tx.payment_account || '' }))
     });
   }

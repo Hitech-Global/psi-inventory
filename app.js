@@ -12382,12 +12382,6 @@ async function renderCI(){
   document.getElementById('content-inner').innerHTML=t('html.renderCI', '<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>CI类型</label><select id="ci-source-mode" onchange="onCISourceModeChange()"><option value="all" selected>全部</option><option value="operational">运营 CI</option><option value="historical">历史 CI</option></select></div>{v3}<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadCI()">搜索</button>{v1}{v2}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🚚 CI/PL列表</div></div><div id="ci-purchase-summary"></div><div id="ci-table"></div></div>', {v1: hasPermission('ci_create')?t('gen.L5756.1','<button class="btn btn-primary btn-sm" onclick="createCI()">➕ 新建CI</button>'):'', v2: '', v3: ciFilterControls});
   refreshCIFilterOptions();
   loadCI();
-  // CI/PL PERF-01：purchase-amount-summary 为全局口径（不随筛选/单据类型变化），页面渲染时拉取一次；
-  // 筛选与模式切换（loadCI）不再重复请求。拉取失败不影响列表渲染。
-  api('/api/purchase-amount-summary').then(function(s){
-    const el=document.getElementById('ci-purchase-summary');
-    if(el&&s) el.innerHTML=renderPurchaseAmountSummary(s);
-  }).catch(function(){ /* 汇总拉取失败不影响列表 */ });
 }
 function onCISourceModeChange(){const mode=document.getElementById('ci-source-mode')?.value||'operational',fs=document.getElementById('ci-logistics-fs');if(fs)fs.disabled=mode==='historical';refreshCIFilterOptions();loadCI()}
 async function refreshCIFilterOptions(){
@@ -12589,11 +12583,49 @@ function renderUnifiedCITable(operationalData,historicalData){
   return wrap.outerHTML;
 }
 
-function renderPurchaseAmountSummary(summary){
-  const scope=(label,data)=>'<div class="stat-card"><div class="stat-label">'+label+'</div><div class="stat-number" style="font-size:17px">'+((data.by_currency||[]).map(x=>esc(x.currency)+' '+Number(x.amount||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})).join(' · ')||'0.00')+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+data.count+t('gen.L5767.1',' 张；人民币待补 ')+data.rmb_pending_count+t('gen.L5767.2',' 张</div></div>');
-  return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+scope(t("app.979", "采购金额合计"),summary.total)+'</div>';
+function renderPurchaseAmountSummary(operationalData,historicalData){
+  if(!Array.isArray(operationalData)){const summary=operationalData||{};historicalData=summary.historicalRows||[];operationalData=summary.operationalRows||[];}
+  const metrics={
+    total:{label:t('app.979','采购金额合计'),byCurrency:new Map()},
+    paid:{label:t('ci.summary.paid_total','已付款总金额'),byCurrency:new Map()},
+    unpaid:{label:t('ci.summary.unpaid_total','剩余未付款总金额'),byCurrency:new Map()}
+  };
+  let count=0,rmbPendingCount=0;
+  function add(metric,currency,amount){
+    const cur=String(currency||'').trim().toUpperCase()||'UNKNOWN';
+    const value=Number(amount||0);
+    metric.byCurrency.set(cur,(metric.byCurrency.get(cur)||0)+value);
+  }
+  (operationalData||[]).forEach(function(row){
+    if(String(row.ci_status||'').toLowerCase()==='cancelled')return;
+    count++;
+    const cur=row.currency||'';
+    if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
+    add(metrics.total,cur,row.goods_amount);
+    add(metrics.paid,cur,Number(row.actual_deducted_deposit||0)+Number(row.balance_paid_amount||0));
+    add(metrics.unpaid,cur,row.balance_unpaid_amount);
+  });
+  (historicalData||[]).forEach(function(row){
+    count++;
+    const cur=row.currency||'';
+    if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
+    add(metrics.total,cur,row.gross_goods_amount);
+    add(metrics.paid,cur,Number(row.historical_paid_amount||0)+Number(row.subsequent_paid_amount||0));
+    add(metrics.unpaid,cur,row.unpaid_amount);
+  });
+  function amountText(map){
+    return Array.from(map.entries()).sort(function(a,b){return a[0].localeCompare(b[0]);})
+      .map(function(entry){return esc(entry[0])+' '+Number(entry[1]||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}).join(' · ')||'—';
+  }
+  function card(metric,sub){
+    return '<div class="stat-card"><div class="stat-label">'+metric.label+'</div><div class="stat-number" style="font-size:17px">'+amountText(metric.byCurrency)+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+sub+'</div></div>';
+  }
+  return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+
+    card(metrics.total,count+t('gen.L5767.1',' 张；人民币待补 ')+rmbPendingCount+t('gen.L5767.2',' 张'))+
+    card(metrics.paid,t('ci.summary.filtered','当前筛选结果'))+
+    card(metrics.unpaid,t('ci.summary.filtered','当前筛选结果'))+
+    '</div>';
 }
-// ── Multi-PI display helpers ��─
 // ── CI list display helpers ──
 function ciTypeBadge(type){
   if(type==='historical')return '<span class="ci-type-badge ci-type-hist">'+t('ci.type.historical','历史CI')+'</span>';
@@ -12652,7 +12684,10 @@ async function loadCI(){
       if(window.AppStore) AppStore.page.set('ci',_ciSig,results,{ttl:30000});
     }
     const table=document.getElementById('ci-table');if(!table)return;
-    table.innerHTML=renderUnifiedCITable(results[0]||[],results[1]||[]);
+    const operationalRows=results[0]||[],historicalRows=results[1]||[];
+    table.innerHTML=renderUnifiedCITable(operationalRows,historicalRows);
+    const summary=document.getElementById('ci-purchase-summary');
+    if(summary) summary.innerHTML=hasPermission('ci_amount_view')?renderPurchaseAmountSummary(operationalRows,historicalRows):'';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function createHistoricalCI(){

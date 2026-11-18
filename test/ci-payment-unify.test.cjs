@@ -32,6 +32,7 @@ const dbMod = require('../db');
 const { run, getDB } = dbMod;
 const {
   computeHistoricalCIPaymentFacts,
+  computeHistoricalCIPaymentFactsBulk,
   computeOperatingCIBalancePaymentFacts,
   payableItemsSettlementBreakdown,
 } = require('../server');
@@ -53,7 +54,7 @@ function createSchema() {
     );
     CREATE TABLE IF NOT EXISTS payment_requests (
       id TEXT PRIMARY KEY, request_no TEXT, source_type TEXT,
-      payment_status TEXT DEFAULT 'pending', approval_status TEXT DEFAULT 'pending'
+      payment_status TEXT DEFAULT 'pending', approval_status TEXT DEFAULT 'pending', created_at TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS payment_request_items (
       id TEXT PRIMARY KEY, payable_item_id TEXT, payment_request_id TEXT, requested_amount_minor INTEGER DEFAULT 0
@@ -466,4 +467,34 @@ test('HCI-11: 已取消的旧 PAY-HCI 不应让导入前已付款从应付项中
   assert.equal(itemFacts.paidMinor, minor(300), '取消的旧 PAY-HCI 不参与 settlement log，改从 HCI 快照计入一次');
   const hciFacts = computeHistoricalCIPaymentFacts(hciId);
   assert.equal(hciFacts.unpaid_amount, 700, 'HCI 汇总仍单独扣减历史已付款，不重复计算');
-});\n
+});
+
+
+test('HCI multi-CI rounding allocates against each CI remaining balance and closes exact cents', () => {
+  clearAll();
+  const ciA = seedHistoricalCI({ gross: 166668.60, baseYuan: 166668.60, imported: 0 });
+  const ciB = seedHistoricalCI({ gross: 89973.80, baseYuan: 89973.80, imported: 0 });
+  const prId = seedPR({ request_no: 'PAY-MULTI-ROUNDING-TAIL', payment_status: 'paid', approval_status: 'approved' });
+  const priA = seedPRI(ciA.itemId, prId, minor(166668.60));
+  const priB = seedPRI(ciB.itemId, prId, minor(89973.80));
+  seedAllocation(priA, minor(166668.48));
+  seedAllocation(priB, minor(89973.72));
+  seedSettlementLog(prId, 'rounding', 0.20);
+
+  const a = computeHistoricalCIPaymentFacts(ciA.hciId);
+  const b = computeHistoricalCIPaymentFacts(ciB.hciId);
+  assert.equal(a.subsequent_paid_amount, 166668.48);
+  assert.equal(b.subsequent_paid_amount, 89973.72);
+  assert.equal(a.rounding_amount, 0.12);
+  assert.equal(b.rounding_amount, 0.08);
+  assert.equal(a.unpaid_amount, 0);
+  assert.equal(b.unpaid_amount, 0);
+  assert.equal(a.rounding_amount + b.rounding_amount, 0.20);
+  const bulk = computeHistoricalCIPaymentFactsBulk([ciA.hciId, ciB.hciId]);
+  assert.equal(bulk.get(ciA.hciId).rounding_amount, 0.12);
+  assert.equal(bulk.get(ciB.hciId).rounding_amount, 0.08);
+  assert.equal(bulk.get(ciA.hciId).unpaid_amount, 0);
+  assert.equal(bulk.get(ciB.hciId).unpaid_amount, 0);
+
+
+});
