@@ -5,6 +5,14 @@ const vm=require('node:vm');
 const path=require('node:path');
 
 const source=fs.readFileSync(path.join(__dirname,'..','quotation-procurement-brief.js'),'utf8');
+const managementSource=fs.readFileSync(path.join(__dirname,'..','quotation-management.js'),'utf8');
+const serverSource=fs.readFileSync(path.join(__dirname,'..','quotation-server.js'),'utf8');
+const bootstrapSource=fs.readFileSync(path.join(__dirname,'..','scripts','quotation-management-bootstrap.cjs'),'utf8');
+assert.doesNotMatch(source,/last purchase price|purchase-price|采购价|CI\/PI|currency mismatch/i,'brief must only use quote history');
+assert.doesNotMatch(managementSource,/last_purchase_|vs_purchase_pct|above_purchase_count|top_purchase_gaps|最近采购价对比|较上次采购价|采购基准/,'quote UI must not expose purchase-price comparisons');
+assert.doesNotMatch(serverSource,/purchaseBaselines|parseIdList|vs_purchase_pct|last_purchase_|above_purchase_count|top_purchase_gaps|commercial_invoice_items|proforma_invoice_items/,'quote API must not load or calculate purchase-price baselines');
+assert.doesNotMatch(bootstrapSource,/purchaseBaselineText|last purchase price|purchase-price|与上次采购价/,'production bootstrap must not restore purchase-price comparison logic');
+assert.match(source,/采购简报|Procurement Brief/,'brief heading remains available');
 const applyStart=source.indexOf('function apply(){');
 const applyEnd=source.indexOf('\nfunction wrapApi()',applyStart);
 assert(applyStart>=0&&applyEnd>applyStart,'apply function boundaries must exist');
