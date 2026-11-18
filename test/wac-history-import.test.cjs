@@ -280,7 +280,7 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   assert.equal(history.confirmed_at,'2026-10-29 12:00:00');
   assert.equal(history.last_inbound_date,'2026-10-29');
   assert.equal(history.effective_end_date,'2026-11-01');
-  assert.equal(history.fx_rate_date,'2026-10-29');
+  assert.equal(history.fx_rate_date,'', 'missing FX settlement date must not default to last inbound date');
   assert.equal(history.local_currency,'IDR');
   assert.equal(Number(history.rmb_to_local_rate),2724.7956);
   assert.equal(history.source_type,'historical_import');
@@ -363,6 +363,8 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   assert.equal(noFxPrecheck.ok,true);
   assert.equal(noFxPrecheck.normalized_items[0].rmb_to_local_rate,null);
   assert.ok(noFxPrecheck.warnings.length>0);
+  assert.ok(noFxPrecheck.warnings.some(w=>String(w.message||'').includes('未提供实际汇率结算日期')),
+    'missing FX date must be called out without substituting inbound date');
 
   const noFxImport = await request('/api/wac/history-import','POST',{items:[noFx]});
   assert.equal(noFxImport.status,200);
@@ -386,7 +388,9 @@ test('WAC history import validates master data, syncs current WAC, skips exact d
   assert.equal(Number(importedWithFx.rmb_to_local_rate),2724.7956);
   assert.equal(importedWithFx.local_currency,'IDR');
   assert.equal(importedWithFx.source_type,'historical_import');
+  assert.equal(importedWithFx.fx_rate_date,'', 'matrix must preserve an unknown FX date instead of substituting inbound date');
   assert.equal(importedWithoutFx.rmb_to_local_rate,null,'must not fall back to current-day FX');
+  assert.equal(importedWithoutFx.fx_rate_date,'', 'missing FX date must remain unrecorded');
 });
 
 
@@ -536,12 +540,20 @@ test('WAC history matrix keeps the agreed dimensions, left alignment, sticky hea
   assert.match(importConfig,/fx_rate_date/);
   assert.match(importConfig,/历史汇率日期/);
   assert.doesNotMatch(importConfig,/确认日期|confirmed_at/);
+  const validationStart = serverSource.indexOf('function validateWacHistoryImportRows');
+  const validationEnd = serverSource.indexOf('function generateWacVersion', validationStart);
+  assert.ok(validationStart >= 0 && validationEnd > validationStart);
+  const validationSource = serverSource.slice(validationStart, validationEnd);
+  assert.ok(validationSource.includes("const fxDate = hasFxDate ? normalizeWacHistoryDate(fxDateRaw) : '';"));
+  assert.ok(!validationSource.includes(' : historyDate;'), 'history import must not default FX date to inbound date');
   const templateStart = serverSource.indexOf("app.get('/api/wac/history-import/template'");
   const templateEnd = serverSource.indexOf("app.post('/api/wac/history-import/precheck'",templateStart);
   assert.ok(templateStart >= 0 && templateEnd > templateStart);
   const templateRoute = serverSource.slice(templateStart,templateEnd);
   assert.match(templateRoute,/columns: \['SKU', '品牌', '国家', '仓库', '历史WAC（本币）', '最后入库日期', '结束日期', '本币币种', '历史汇率日期', '1 RMB = 本币汇率'\]/);
   assert.match(templateRoute,/历史汇率日期/);
+  assert.match(templateRoute,/实际付款完成日期/);
+  assert.doesNotMatch(templateRoute,/留空时默认使用最后入库日期/);
   assert.doesNotMatch(templateRoute,/确认日期/);
 
 });
