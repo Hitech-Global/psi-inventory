@@ -15702,7 +15702,6 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     return b.localeCompare(a);
   });
   const groupMap = new Map();
-  const groupMap = new Map();
   selected.forEach(function(r) {
     const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
     if (!groupMap.has(key)) groupMap.set(key,{sku:r.sku_code,brand:r.brand,country:r.country,warehouse:r.warehouse,records:[]});
@@ -15886,7 +15885,6 @@ async function loadWacHistoryMatrix(refresh) {
       if (b === missingInboundDateKey) return -1;
       return b.localeCompare(a);
     });
-    const groupMap = new Map();
     const groupMap = new Map();
     selected.forEach(function(r) {
       const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
