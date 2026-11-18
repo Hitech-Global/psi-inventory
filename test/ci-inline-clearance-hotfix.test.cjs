@@ -1,6 +1,10 @@
 'use strict';
 const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const path=require('node:path');
 const {patchAppPerfSource,patchServerSource}=require('../scripts/ci-inline-clearance-hotfix.cjs');
+const indexHtml=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
+assert.match(indexHtml,/app-perf\.js\?v=20261118-1/,'app-perf.js must be cache-busted for delegated CI clearance events');
 const ui=patchAppPerfSource('function renderOperationalCITable(data){return data;}');
 assert.equal(patchAppPerfSource(ui),ui);
 assert.match(ui,/CI-INLINE-CLEARANCE-UI-V3/);

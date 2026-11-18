@@ -7,7 +7,7 @@ const APP_JS = path.join(__dirname, '..', 'app.js');
 const INDEX_HTML = path.join(__dirname, '..', 'index.html');
 const APP_MARKER = '// CI-DETAIL-LOADING-STATE-V1';
 const CSS_MARKER = '/* CI-DETAIL-LOADING-STYLE-V1 */';
-const APP_CACHE_VERSION = '20261117-5';
+const APP_CACHE_VERSION = '20261118-1';
 const VIEW_CI_ANCHOR = "async function viewCI(id, backPay, backMode){\n  try{const ci=await api('/api/commercial-invoices/'+id);";
 const NEXT_SECTION_MARKER = '// ==================== CI/PL × 物流合并 PHASE A（前端）====================';
 const CATCH_ANCHOR = "  }catch(e){showToast(e.message,'danger')}";
