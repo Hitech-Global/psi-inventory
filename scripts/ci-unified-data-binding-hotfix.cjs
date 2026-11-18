@@ -28,7 +28,7 @@ function patchAppSource(src){
 "    var clearanceLabel=t('ci.clearance_type','清关方式');clearanceSelect.setAttribute('aria-label',clearanceLabel);clearanceSelect.title=clearanceLabel;",
 "    clearanceSelect.setAttribute('data-saved-value',clearanceValue);clearanceSelect.setAttribute('data-original-value',clearanceValue);clearanceSelect.setAttribute('data-ci-id',String(c.id));",
 "    clearanceSelect.disabled=!(typeof hasPermission==='function'&&hasPermission('ci_edit'));",
-"    [['',t('ci.clearance.unset','未设置')],['formal',t('ci.clearance.formal','正清')],['non_formal',t('ci.clearance.non_formal','非正清')]].forEach(function(option){var node=document.createElement('option');node.value=option[0];node.textContent=option[1];node.selected=clearanceValue===option[0];clearanceSelect.appendChild(node);});",
+"    [['',t('ci.clearance.unset','未设置')],['formal',t('ci.clearance.formal','正清')],['non_formal',t('ci.clearance.non_formal','非正清')]].forEach(function(option){var node=document.createElement('option');node.value=option[0];node.textContent=option[1];if(clearanceValue===option[0])node.setAttribute('selected','selected');clearanceSelect.appendChild(node);});",
 "    clearanceCell.appendChild(clearanceSelect);tr.appendChild(clearanceCell);",
 "    tr.appendChild(textCell(fmtDate(c.ci_date)));",
 "    tr.appendChild(textCell(fmtMoney(c.goods_amount,c.currency)));",
