@@ -12588,6 +12588,8 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
   const metrics={
     total:{label:t('app.979','采购金额合计'),byCurrency:new Map()},
     paid:{label:t('ci.summary.paid_total','已付款总金额'),byCurrency:new Map()},
+    deduction:{label:t('ci.summary.breakdown_deduction','抵扣'),byCurrency:new Map()},
+    rounding:{label:t('ci.summary.breakdown_rounding','抹零'),byCurrency:new Map()},
     unpaid:{label:t('ci.summary.unpaid_total','剩余未付款总金额'),byCurrency:new Map()}
   };
   let count=0,rmbPendingCount=0;
@@ -12602,7 +12604,10 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     const cur=row.currency||'';
     if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
     add(metrics.total,cur,row.goods_amount);
+    // 现金实付只统计尾款实际付款；已抵扣定金与后续付款抵扣单独列为抵扣。
     add(metrics.paid,cur,Number(row.balance_paid_amount||0));
+    add(metrics.deduction,cur,Number(row.actual_deducted_deposit||0)+Number(row.balance_deduction_amount||0));
+    add(metrics.rounding,cur,row.balance_rounding_amount);
     add(metrics.unpaid,cur,row.balance_unpaid_amount);
   });
   (historicalData||[]).forEach(function(row){
@@ -12611,6 +12616,8 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
     add(metrics.total,cur,row.gross_goods_amount);
     add(metrics.paid,cur,Number(row.historical_paid_amount||0)+Number(row.subsequent_paid_amount||0));
+    add(metrics.deduction,cur,row.deduction_amount);
+    add(metrics.rounding,cur,row.rounding_amount);
     add(metrics.unpaid,cur,row.unpaid_amount);
   });
   function amountText(map){
@@ -12618,11 +12625,16 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
       .map(function(entry){return esc(entry[0])+' '+Number(entry[1]||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}).join(' · ')||'—';
   }
   function card(metric,sub){
-    return '<div class="stat-card"><div class="stat-label">'+metric.label+'</div><div class="stat-number" style="font-size:17px">'+amountText(metric.byCurrency)+'</div><div style="font-size:12px;color:#999;margin-top:4px">'+sub+'</div></div>';
+    return '<div class="stat-card"><div class="stat-label">'+metric.label+'</div><div class="stat-number" style="font-size:17px">'+amountText(metric.byCurrency)+'</div><div style="font-size:12px;color:#999;margin-top:4px;line-height:1.45">'+sub+'</div></div>';
   }
+  const paidBreakdown='<div style="font-size:11px;line-height:1.45">'+[
+    '<div>'+esc(t('ci.summary.breakdown_paid','已付款'))+'：'+amountText(metrics.paid.byCurrency)+'</div>',
+    '<div title="'+esc(t('ci.summary.breakdown_deduction_hint','含已抵扣定金及付款抵扣'))+'">'+esc(t('ci.summary.breakdown_deduction','抵扣'))+'：'+amountText(metrics.deduction.byCurrency)+'</div>',
+    '<div>'+esc(t('ci.summary.breakdown_rounding','抹零'))+'：'+amountText(metrics.rounding.byCurrency)+'</div>'
+  ].join('')+'</div>';
   return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+
     card(metrics.total,count+t('gen.L5767.1',' 张；人民币待补 ')+rmbPendingCount+t('gen.L5767.2',' 张'))+
-    card(metrics.paid,t('ci.summary.paid_basis','实际已付款金额合计'))+
+    card(metrics.paid,paidBreakdown)+
     card(metrics.unpaid,t('ci.summary.unpaid_basis','未结金额合计'))+
     '</div>';
 }

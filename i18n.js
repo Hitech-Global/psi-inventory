@@ -5471,5 +5471,17 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.zh["ci.summary.unpaid_basis"]="未结金额合计";
   I18N.dict.en["ci.summary.unpaid_basis"]="Total Outstanding Amount";
   I18N.dict.id["ci.summary.unpaid_basis"]="Total Belum Dilunasi";
+  I18N.dict.zh["ci.summary.breakdown_paid"]="已付款";
+  I18N.dict.en["ci.summary.breakdown_paid"]="Paid";
+  I18N.dict.id["ci.summary.breakdown_paid"]="Dibayar";
+  I18N.dict.zh["ci.summary.breakdown_deduction"]="抵扣";
+  I18N.dict.en["ci.summary.breakdown_deduction"]="Deduction";
+  I18N.dict.id["ci.summary.breakdown_deduction"]="Potongan";
+  I18N.dict.zh["ci.summary.breakdown_rounding"]="抹零";
+  I18N.dict.en["ci.summary.breakdown_rounding"]="Rounding";
+  I18N.dict.id["ci.summary.breakdown_rounding"]="Pembulatan";
+  I18N.dict.zh["ci.summary.breakdown_deduction_hint"]="含已抵扣定金及付款抵扣";
+  I18N.dict.en["ci.summary.breakdown_deduction_hint"]="Includes deducted deposits and payment deductions";
+  I18N.dict.id["ci.summary.breakdown_deduction_hint"]="Termasuk uang muka dan potongan pembayaran";
 
 })();

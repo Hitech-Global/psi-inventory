@@ -13,7 +13,7 @@ vm.runInNewContext(source+'; this.renderPurchaseAmountSummary=renderPurchaseAmou
 test('CI summary cards use filtered CI rows, currency grouping and actual-paid-only totals',()=>{
  const html=context.renderPurchaseAmountSummary(
   [
-   {ci_status:'shipped',currency:'RMB',goods_amount:100,actual_deducted_deposit:10,balance_paid_amount:20,balance_unpaid_amount:70},
+   {ci_status:'shipped',currency:'RMB',goods_amount:100,actual_deducted_deposit:10,balance_paid_amount:20,balance_deduction_amount:5,balance_rounding_amount:0.5,balance_unpaid_amount:64.5},
    {ci_status:'cancelled',currency:'RMB',goods_amount:999,actual_deducted_deposit:999,balance_paid_amount:0,balance_unpaid_amount:0}
   ],
   [
@@ -23,13 +23,15 @@ test('CI summary cards use filtered CI rows, currency grouping and actual-paid-o
  assert.match(html,/采购金额合计/);
  assert.match(html,/已付款总金额/);
  assert.match(html,/剩余未付款总金额/);
- assert.match(html,/实际已付款金额合计/);
  assert.match(html,/未结金额合计/);
+ assert.match(html,/已付款：RMB 20\.00 · USD 15\.00/);
+ assert.match(html,/抵扣：RMB 15\.00 · USD 3\.00/);
+ assert.match(html,/抹零：RMB 0\.50 · USD 0\.20/);
  assert.match(html,/RMB 100\.00/);
  assert.match(html,/USD 50\.00/);
  assert.match(html,/RMB 20\.00/);
  assert.match(html,/USD 15\.00/);
- assert.match(html,/RMB 70\.00/);
+ assert.match(html,/RMB 64\.50/);
  assert.match(html,/USD 31\.80/);
  assert.doesNotMatch(html,/999\.00/);
 });
