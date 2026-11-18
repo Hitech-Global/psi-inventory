@@ -148,13 +148,15 @@ test("the WAC importer is wired to the parser and the parser is loaded by index.
   const path = require("node:path");
   const app = fs.readFileSync(path.join(__dirname, "../app.js"), "utf8");
   const html = fs.readFileSync(path.join(__dirname, "../index.html"), "utf8");
+  const server = fs.readFileSync(path.join(__dirname, "../server.js"), "utf8");
   assert.match(app, /WacBigSellerOldInventory\.parseBigSellerWorkbook/);
   assert.match(app, /selectWacBigSellerCandidate/);
   assert.ok(app.includes("matchCandidates(history,batchItems,(p.meta||{}).actual_arrival_date||'',(p.meta||{}).country||'')"));
   assert.match(app, /ZhisuInventoryImport\.parseZhisuWorkbook/);
   assert.match(app, /deriveWacOriginalStock/);
   assert.match(app, /wac-zhisu-derived-panel/);
-  assert.match(html, /app\.js\?v=\d{8}-\d+/);
+  assert.match(html, /<script src="app\.js"><\/script>/);
+  assert.match(server, /const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/);
   assert.match(html, /assets\/wac-bigseller-old-inventory\.js/);
   assert.match(html, /assets\/zhisu-inventory-import\.js\?v=20261110-2/);
 });
