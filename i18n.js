@@ -2869,6 +2869,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['wac.matrix.latest_wac_inbound_date'] = 'Inbound Date for Latest WAC'; I18N.dict.id['wac.matrix.latest_wac_inbound_date'] = 'Tanggal Masuk untuk Latest WAC';
   I18N.dict.zh['wac.matrix.fx_settlement_date'] = '汇率结算日'; I18N.dict.en['wac.matrix.fx_settlement_date'] = 'FX Settlement Date'; I18N.dict.id['wac.matrix.fx_settlement_date'] = 'Tanggal Penyelesaian Kurs';
   I18N.dict.zh['wac.matrix.fx_date_missing'] = '汇率日期未记录'; I18N.dict.en['wac.matrix.fx_date_missing'] = 'FX Date Not Recorded'; I18N.dict.id['wac.matrix.fx_date_missing'] = 'Tanggal Kurs Tidak Tercatat';
+  I18N.dict.zh['wac.matrix.inbound_date'] = '入库日期'; I18N.dict.en['wac.matrix.inbound_date'] = 'Inbound Date'; I18N.dict.id['wac.matrix.inbound_date'] = 'Tanggal Masuk';
   I18N.dict.en['col.last_sale'] = 'Last Sale Date'; I18N.dict.id['col.last_sale'] = 'Tanggal Penjualan Terakhir';
   I18N.dict.en['col.level'] = 'Level'; I18N.dict.id['col.level'] = 'Level';
   I18N.dict.en['col.model'] = 'Model'; I18N.dict.id['col.model'] = 'Model';
