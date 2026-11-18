@@ -3,7 +3,7 @@
 // In-process test uses a mocked settlement SSOT and performs zero DB writes.
 const test=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
-const start=source.indexOf('const MAX_ROUND_OFF_AMOUNT = 0.99;');
+const start=source.indexOf('const MAX_ROUND_OFF_AMOUNT = 1.99;');
 const end=source.indexOf('function settleFinalPaymentApprovalInTx(',start);
 assert.ok(start>=0&&end>start,'final approval validation must remain available');
 const approvalCode=source.slice(start,end);
@@ -46,7 +46,7 @@ test('earlier partial transaction and deduction combine with fresh current outst
  assert.equal(v.applyRoundOff,true);
 });
 test('0.20 is accepted even when actual payment itself has cents',()=>{ const h=createHarness({gross:1000.30,deduction:0}); const v=h.run({actual_paid_amount:1000.10,rounding_amount:0.20}); assert.equal(v.roundingAmount,0.20); assert.equal(v.isPartialPayment,false); assert.equal(v.applyRoundOff,true); });
-test('0.46 is accepted; round-off must remain below 1.00',()=>{ const h=createHarness({gross:1000.46,deduction:0}); const v=h.run({actual_paid_amount:1000,rounding_amount:0.46}); assert.equal(v.roundingAmount,0.46); assert.equal(v.isPartialPayment,false); const upper=createHarness({gross:1000.99,deduction:0}); assert.equal(upper.run({actual_paid_amount:1000,rounding_amount:0.99}).roundingAmount,0.99); const whole=createHarness({gross:1001,deduction:0}); assert.throws(()=>whole.run({actual_paid_amount:1000,rounding_amount:1}),e=>e.status===400&&/小于 1.00/.test(e.message)); });
+test('round-off accepts 1.99 and strictly rejects 2.00',()=>{ const h=createHarness({gross:1001.99,deduction:0}); const v=h.run({actual_paid_amount:1000,rounding_amount:1.99}); assert.equal(v.roundingAmount,1.99); assert.equal(v.isPartialPayment,false); const whole=createHarness({gross:1002,deduction:0}); assert.throws(()=>whole.run({actual_paid_amount:1000,rounding_amount:2}),e=>e.status===400&&/小于 2.00/.test(e.message)); });
 test('deduction already covers amount: does not permit another payment',()=>{
  const h=createHarness({gross:200,deduction:200});
  assert.throws(()=>h.run({actual_paid_amount:1,rounding_amount:0}),e=>e.status===409);
@@ -73,15 +73,17 @@ test('full payment for fractional outstanding without round-off remains valid',(
  assert.equal(v.isPartialPayment,false);
  assert.equal(v.roundingAmount,0);
 });
-test('round-off below 1.00 is accepted with fractional actual payment; whole-unit remainder remains blocked',()=>{
+test('round-off below 2.00 is accepted with fractional actual payment; larger remainder remains blocked',()=>{
  const h=createHarness({gross:1000.20,deduction:0});
  const v=h.run({actual_paid_amount:1000.00,rounding_amount:0.20});
  assert.equal(v.isPartialPayment,false); assert.equal(v.applyRoundOff,true);
  const fractional=createHarness({gross:1000.30,deduction:0});
  const fv=fractional.run({actual_paid_amount:1000.10,rounding_amount:0.20});
  assert.equal(fv.isPartialPayment,false); assert.equal(fv.roundingAmount,0.20);
- const whole=createHarness({gross:1000,deduction:0});
- assert.throws(()=>whole.run({actual_paid_amount:999,rounding_amount:1}),e=>e.status===400);
+ const valid=createHarness({gross:1001.99,deduction:0});
+ assert.equal(valid.run({actual_paid_amount:1000,rounding_amount:1.99}).roundingAmount,1.99);
+ const whole=createHarness({gross:1002,deduction:0});
+ assert.throws(()=>whole.run({actual_paid_amount:1000,rounding_amount:2}),e=>e.status===400);
 });
 
 test('negative/NaN inputs and missing voucher are rejected before settlement',()=>{
@@ -118,4 +120,17 @@ test('rounding input passed to settlement atomic helper, not deducted twice',()=
  assert.match(s,/rounding_amount: input\.roundingAmount/);
  assert.match(s,/input\.actualPaidAmount/);
  assert.match(s,/apply_round_off: input\.applyRoundOff/);
+});
+test('all payment rounding entry points enforce a strict under-2.00 limit',()=>{
+ const settlement=source.slice(source.indexOf('function applyPaymentSettlementInTx('),source.indexOf('async function applyPaymentSettlement('));
+ const manual=source.slice(source.indexOf('async function applyRoundingSettlement('),source.indexOf('async function reverseSettlementEvent('));
+ assert.match(settlement,/roundOffAmount > MAX_ROUND_OFF_AMOUNT/);
+ assert.match(manual,/amount > MAX_ROUND_OFF_AMOUNT/);
+ const ui=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
+ assert.match(ui,/pay-final-rounding.{0,80}1\.99/);
+ assert.match(ui,/pay-settle-rounding.{0,120}1\.99/);
+ assert.ok(ui.includes("roundingInput.max='1.99'"));
+ assert.match(ui,/1\.99.{0,60}pay-rounding-amount/);
+ assert.ok(ui.includes('if(rnd>1.99)'));
+ assert.ok(ui.includes('if(hasRounding&&roundingAmount>1.99)'));
 });

@@ -15033,8 +15033,8 @@ function enrichPaymentRequestItemsForAllocation(items) {
   });
 }
 
-// 每笔付款允许抹零小于 1.00（按两位小数记账，最大 0.99）；必须精确等于本次未结差额。
-const MAX_ROUND_OFF_AMOUNT = 0.99;
+// 每笔付款允许抹零严格小于 2.00（按两位小数记账，最大 1.99）；必须精确等于本次未结差额。
+const MAX_ROUND_OFF_AMOUNT = 1.99;
 
 function finalPaymentApprovalInput(payment, body = {}) {
   // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
@@ -15055,7 +15055,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
     throw new SettlementError(400, '实际付款金额不能大于当前未结金额');
   }
   // Only the *remaining* balance, not the original application gross, is
-  // available for this payment plus a final round-off strictly below 1.00.
+  // available for this payment plus a final round-off strictly below 2.00.
   const submittedRounding = body.rounding_amount != null ? settlementMoney(body.rounding_amount) : 0;
 
   let roundingAmount = 0;
@@ -15071,9 +15071,9 @@ function finalPaymentApprovalInput(payment, body = {}) {
       throw new SettlementError(400, '抹零金额必须等于当前未结金额减实际付款金额');
     }
     roundingAmount = settlementMoney(submittedRounding);
-    // 抹零必须精确等于当前未结金额减实际付款金额，且严格小于 1.00；不再要求实际付款必须是整数。
+    // 抹零必须精确等于当前未结金额减实际付款金额，且严格小于 2.00；不再要求实际付款必须是整数。
     if (roundingAmount > MAX_ROUND_OFF_AMOUNT) {
-      throw new SettlementError(400, '抹零金额必须小于 1.00，且必须等于当前未结金额减实际付款金额');
+      throw new SettlementError(400, '抹零金额必须小于 2.00，且必须等于当前未结金额减实际付款金额');
     }
     applyRoundOff = roundingAmount > 0;
   }
@@ -15394,6 +15394,8 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
     if (hasUserRounding) {
       // ── 模式 C：人工抹零 ──
       roundOffAmount = userRoundingAmount;
+      if (roundOffAmount > MAX_ROUND_OFF_AMOUNT)
+        throw new SettlementError(400, '抹零金额必须小于 2.00');
       if (roundOffAmount > before.outstanding)
         throw new SettlementError(400, '抹零金额不能大于当前未付金额');
       const requestedAmount = (rawAmount === null || rawAmount === undefined || rawAmount === '')
@@ -15694,6 +15696,7 @@ async function applyRoundingSettlement(paymentRequestId, rawAmount, reason, req)
     const amount = settlementMoney(rawAmount);
     if (!Number.isFinite(amount) || amount < 0) throw new SettlementError(400, '抹零金额不能小于0');
     if (!(amount > 0)) throw new SettlementError(400, '抹零金额必须大于0');
+    if (amount > MAX_ROUND_OFF_AMOUNT) throw new SettlementError(400, '抹零金额必须小于 2.00');
     if (amount > before.outstanding) throw new SettlementError(400, '抹零金额不能超过当前剩余未结金额');
     const roundingReason = String(reason || '').trim();
     if (!roundingReason) throw new SettlementError(400, '抹零原因或备注不能为空');
