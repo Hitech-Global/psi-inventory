@@ -23,6 +23,8 @@ test('CI summary cards use filtered CI rows, currency grouping and actual-paid-o
  assert.match(html,/采购金额合计/);
  assert.match(html,/已付款总金额/);
  assert.match(html,/剩余未付款总金额/);
+ assert.match(html,/实际已付款金额合计/);
+ assert.match(html,/未结金额合计/);
  assert.match(html,/RMB 100\.00/);
  assert.match(html,/USD 50\.00/);
  assert.match(html,/RMB 20\.00/);

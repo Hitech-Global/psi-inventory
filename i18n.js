@@ -5465,5 +5465,11 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.zh["ci.summary.filtered"]="当前筛选结果";
   I18N.dict.en["ci.summary.filtered"]="Current Filter Results";
   I18N.dict.id["ci.summary.filtered"]="Hasil Filter Saat Ini";
+  I18N.dict.zh["ci.summary.paid_basis"]="实际已付款金额合计";
+  I18N.dict.en["ci.summary.paid_basis"]="Total Actual Payments";
+  I18N.dict.id["ci.summary.paid_basis"]="Total Pembayaran Aktual";
+  I18N.dict.zh["ci.summary.unpaid_basis"]="未结金额合计";
+  I18N.dict.en["ci.summary.unpaid_basis"]="Total Outstanding Amount";
+  I18N.dict.id["ci.summary.unpaid_basis"]="Total Belum Dilunasi";
 
 })();
