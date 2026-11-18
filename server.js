@@ -1262,6 +1262,13 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  try {
+    const fingerprintCount = backfillPaymentVoucherFingerprints();
+    console.log('[STARTUP] 付款凭证指纹补齐完成 ✓', fingerprintCount);
+  } catch (e) {
+    console.error('[FATAL] 付款凭证指纹补齐失败:', e.message);
+    process.exit(1);
+  }
   // 外部邀请凭证独立存储，首次部署幂等创建；失败时拒绝启动（不能假装邀请可用）。
   try { require('./external-user-invitations').ensureSchema(run); }
   catch(e) { console.error('[FATAL] external_user_invites schema:',e.message); process.exit(1); }
@@ -15360,6 +15367,101 @@ function paymentIdempotencyResult(existing, payment, requestedAmount, paidDate, 
   };
 }
 
+// 付款凭证指纹：忽略文件名/上传时间，只比较实际文件内容；支持 data URL、路径和历史纯文本附件。
+function paymentVoucherFingerprint(rawAttachment) {
+  const raw = String(rawAttachment || '').trim();
+  if (!raw) return '';
+  let parsed;
+  try { parsed = JSON.parse(raw); }
+  catch (_e) {
+    return crypto.createHash('sha256').update(raw).digest('hex');
+  }
+  const entries = Array.isArray(parsed) ? parsed : [parsed];
+  const contents = entries.map(entry => {
+    if (typeof entry === 'string') return entry.trim();
+    if (!entry || typeof entry !== 'object') return '';
+    const candidate = String(entry.dataUrl || entry.url || entry.file_url || entry.path || entry.file_path || '').trim();
+    if (!candidate) return '';
+    if (/^data:/i.test(candidate)) {
+      const comma = candidate.indexOf(',');
+      return (comma >= 0 ? candidate.slice(comma + 1) : candidate).replace(/\s+/g, '');
+    }
+    return candidate;
+  }).filter(Boolean);
+  if (!contents.length) return '';
+  const fileHashes = contents
+    .map(content => crypto.createHash('sha256').update(content).digest('hex'))
+    .sort();
+  return crypto.createHash('sha256').update(fileHashes.join('|')).digest('hex');
+}
+
+// 老交易记录在新字段上线前没有指纹；首次付款确认时幂等补齐，供全局查重使用。
+function backfillPaymentVoucherFingerprints() {
+  const rows = query(
+    `SELECT id, voucher_attachment FROM payment_transactions
+     WHERE trans_status = 'reconciled'
+       AND COALESCE(voucher_attachment, '') <> ''
+       AND COALESCE(voucher_fingerprint, '') = ''`
+  ).rows || [];
+  let updated = 0;
+  for (const row of rows) {
+    const fingerprint = paymentVoucherFingerprint(row.voucher_attachment);
+    if (!fingerprint) continue;
+    const result = run(
+      `UPDATE payment_transactions SET voucher_fingerprint = ?
+       WHERE id = ? AND COALESCE(voucher_fingerprint, '') = ''`,
+      [fingerprint, row.id]
+    );
+    updated += Number(result && (result.changes ?? result.rowCount) || 0);
+  }
+  return updated;
+}
+
+function assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFingerprint) {
+  // 先补齐历史记录，再检查新记录；更新只触及空指纹，不改变任何付款事实。
+  backfillPaymentVoucherFingerprints();
+  const lockKeys = [];
+  if (bankRefNo) lockKeys.push('bank-ref:' + String(paymentAccount || '').trim().toLowerCase() + ':' + String(bankRefNo).trim().toLowerCase());
+  if (voucherFingerprint) lockKeys.push('voucher:' + voucherFingerprint);
+  // PG 事务级 advisory lock 防止并发确认同一流水/凭证时两个请求同时通过查重。
+  if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
+    lockKeys.sort();
+    for (const key of lockKeys) {
+      queryOne('SELECT pg_advisory_xact_lock(hashtext(?)::bigint) AS locked', [key]);
+    }
+  }
+  if (bankRefNo) {
+    const duplicateRef = queryOne(
+      `SELECT pt.trans_no, pr.request_no
+       FROM payment_transactions pt
+       JOIN payment_requests pr ON pr.id = pt.payment_request_id
+       WHERE pt.trans_status = 'reconciled'
+         AND LOWER(TRIM(COALESCE(pt.bank_ref_no, ''))) = LOWER(TRIM(?))
+         AND LOWER(TRIM(COALESCE(pt.payment_account, ''))) = LOWER(TRIM(?))
+       LIMIT 1`,
+      [bankRefNo, paymentAccount || '']
+    );
+    if (duplicateRef) {
+      throw new SettlementError(409,
+        `银行流水号 ${bankRefNo} 已用于付款单 ${duplicateRef.request_no}（流水 ${duplicateRef.trans_no}），不能重复登记`);
+    }
+  }
+  if (voucherFingerprint) {
+    const duplicateVoucher = queryOne(
+      `SELECT pt.trans_no, pr.request_no
+       FROM payment_transactions pt
+       JOIN payment_requests pr ON pr.id = pt.payment_request_id
+       WHERE pt.trans_status = 'reconciled' AND pt.voucher_fingerprint = ?
+       LIMIT 1`,
+      [voucherFingerprint]
+    );
+    if (duplicateVoucher) {
+      throw new SettlementError(409,
+        `该付款凭证已用于付款单 ${duplicateVoucher.request_no}（流水 ${duplicateVoucher.trans_no}），不能重复用于其他付款`);
+    }
+  }
+}
+
 function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, voucher, req, rawIdempotencyKey, options = {}) {
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
     if (!payment) throw new SettlementError(404, '付款申请不存在');
@@ -15383,6 +15485,7 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
     const existing = queryOne(`SELECT * FROM payment_settlement_logs
                                WHERE event_type = 'payment' AND idempotency_key = ?`, [idempotencyKey]);
     if (existing) return paymentIdempotencyResult(existing, payment, null, paidDate, normalizedVoucher);
+    let voucherFingerprint = '';
     ensureSettlementLegacyBaselines(payment);
     const before = paymentSettlementFacts(payment);
     if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，无需重复付款');
@@ -15428,6 +15531,8 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
     let logId = null, txId = null, transNo = null;
     let priRows = { rows: [] };
     if (actualPaidAmount > 0) {
+      voucherFingerprint = paymentVoucherFingerprint(voucherAttachment);
+      if (bankRefNo || voucherFingerprint) assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFingerprint);
       const snapshot = buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
       logId = genId('settle');
       try {
@@ -15455,12 +15560,12 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
       run(
         `INSERT INTO payment_transactions
          (id, trans_no, payment_request_id, paid_amount_minor, paid_date, payment_account, bank_ref_no,
-          trans_status, operator_id, operator_name, voucher_attachment, settlement_log_id, currency,
+          trans_status, operator_id, operator_name, voucher_attachment, voucher_fingerprint, settlement_log_id, currency,
           settlement_country, local_currency, local_rate, local_rate_date, local_rate_type, local_rate_direction,
           local_amount, rmb_rate, rmb_rate_date, rmb_rate_type, rmb_rate_direction, rmb_amount)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'reconciled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'reconciled', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [txId, transNo, payment.id, paidAmountMinor, paidDate, paymentAccount, bankRefNo,
-         operator.id, operator.name, voucherAttachment, logId, payment.currency || '',
+         operator.id, operator.name, voucherAttachment, voucherFingerprint, logId, payment.currency || '',
          snapshot.settlement_country, snapshot.local_currency, snapshot.local_rate, snapshot.local_rate_date,
          snapshot.local_rate_type, snapshot.local_rate_direction, snapshot.local_amount, snapshot.rmb_rate,
          snapshot.rmb_rate_date, snapshot.rmb_rate_type, snapshot.rmb_rate_direction, snapshot.rmb_amount]
@@ -15730,16 +15835,73 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
     if (!log) throw new SettlementError(404, '结算事件不存在');
     if (log.event_type !== eventType) throw new SettlementError(409, eventType === 'payment' ? '该事件不是付款记录，不能作为付款冲销' : '该事件不是抵扣记录，不能作为抵扣冲销');
     if (log.status !== 'applied') throw new SettlementError(409, '该结算事件已经冲销，不能重复操作');
-    // PAY-CORE Phase 2 V2.1 第 11 节：reversal 安全门禁
-    // 1. payment event：若已关联 payment_transactions，禁止 reverse（避免 transaction 悬空）
+    const operator = settlementOperator(req);
+    // PAY-CORE：付款事件关联银行交易时，必须在同一事务内同步冲销交易、分摊、结算日志和应付费用状态。
     if (eventType === 'payment') {
-      const tx = queryOne('SELECT id, trans_no FROM payment_transactions WHERE settlement_log_id = ?', [log.id]);
+      const tx = queryOne(
+        'SELECT id, trans_no, trans_status FROM payment_transactions WHERE settlement_log_id = ? AND payment_request_id = ?',
+        [log.id, payment.id]
+      );
       if (tx) {
-        throw new SettlementError(409, `该付款事件已关联银行流水 ${tx.trans_no || tx.id}，不能直接冲销。请先冲销对应交易记录。`);
+        if (!['reconciled', 'cancelled'].includes(String(tx.trans_status || ''))) {
+          throw new SettlementError(409, `付款流水 ${tx.trans_no || tx.id} 当前状态为 ${tx.trans_status || '未知'}，不能冲销`);
+        }
+        run(
+          `UPDATE payment_allocations SET status = 'cancelled'
+           WHERE transaction_id = ? AND status = 'reconciled'`,
+          [tx.id]
+        );
+        run(
+          `UPDATE payment_transactions SET trans_status = 'cancelled'
+           WHERE id = ? AND trans_status = 'reconciled'`,
+          [tx.id]
+        );
+        run(
+          `UPDATE payment_settlement_logs
+           SET status = 'reversed', reversed_at = datetime('now'), reversed_by = ?, reversal_reason = ?
+           WHERE id = ? AND status = 'applied'`,
+          [operator.name || operator.id, reversalReason, log.id]
+        );
+
+        // 分摊撤销后按剩余有效结算重算 payable_item 生命周期：
+        // 仍有有效结算 → partially_paid/paid；没有结算但付款申请仍获批 → reserved。
+        const payableIds = [...new Set(query(
+          'SELECT payable_item_id FROM payment_request_items WHERE payment_request_id = ?',
+          [payment.id]
+        ).rows.map(row => row.payable_item_id).filter(Boolean))];
+        if (payableIds.length) {
+          const settledMap = payableItemsSettledMinor(payableIds);
+          const payableRows = query(
+            `SELECT id, payable_amount_minor FROM payable_items
+             WHERE id IN (${payableIds.map(() => '?').join(',')})`,
+            payableIds
+          ).rows || [];
+          for (const item of payableRows) {
+            const settled = Number(settledMap.get(item.id) || 0);
+            const remaining = Number(item.payable_amount_minor || 0) - settled;
+            const nextLifecycle = remaining <= 0
+              ? 'paid'
+              : (settled > 0
+                ? 'partially_paid'
+                : (payment.approval_status === 'approved' && !['cancelled', 'rejected'].includes(payment.payment_status) ? 'reserved' : 'active'));
+            run(
+              `UPDATE payable_items SET lifecycle_status = ?
+               WHERE id = ? AND lifecycle_status <> 'cancelled'`,
+              [nextLifecycle, item.id]
+            );
+          }
+        }
+        const result = recalculatePaymentSettlement(payment.id);
+        return {
+          reversed_log_id: log.id,
+          reversed_transaction_id: tx.id,
+          reversed_trans_no: tx.trans_no,
+          ...result
+        };
       }
     }
-    // 2. rounding event：若 PR 已有 payable_items 处于 paid 状态，禁止 reverse（避免状态分裂）
-    //    现有 markPayableItemPaid 不会自动回退，reverse rounding 会导致 PR 未结清但 payable_item 仍为 paid
+    // rounding event：若 PR 已有 payable_items 处于 paid 状态，禁止直接 reverse（避免状态分裂）。
+    // 付款流水冲销已实现完整生命周期回退；抹零撤销仍保留原安全门禁。
     if (eventType === 'rounding') {
       const paidItems = query(
         `SELECT pri.payable_item_id, pi.fee_no, pi.lifecycle_status
@@ -15753,7 +15915,6 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
         throw new SettlementError(409, `该抹零事件已影响应付费用状态（${feeNos}），不能直接冲销。冲销抹零会导致付款申请未结清但应付费用仍为已付款，请通过完整冲销流程处理。`);
       }
     }
-    const operator = settlementOperator(req);
     run(`UPDATE payment_settlement_logs
          SET status = 'reversed', reversed_at = datetime('now'), reversed_by = ?, reversal_reason = ?
          WHERE id = ?`, [operator.name || operator.id, reversalReason, log.id]);
@@ -19271,7 +19432,7 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
 app.post('/api/payment-requests/:id/reverse-payment', requireApiPermission('payment_approve'), asyncHandler(async (req, res) => {
   try {
     const result = await reverseSettlementEvent(req.params.id, req.body.settlement_log_id, 'payment', req.body.reason, req);
-    res.json({ success: true, reversed_log_id: result.reversed_log_id, paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
+    res.json({ success: true, reversed_log_id: result.reversed_log_id, reversed_transaction_id: result.reversed_transaction_id || null, reversed_trans_no: result.reversed_trans_no || '', paid_amount: result.effectivePaid, outstanding: result.outstanding, payment_status: result.payment_status });
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
@@ -23520,6 +23681,8 @@ module.exports = {
   releasePayableItemsByPR,
   syncMultiSourcePiStatus,
   recalculatePaymentSettlement,
+  applyPaymentSettlement,
+  reverseSettlementEvent,
   syncPaymentSource,
   payableItemSourceExpenseCountry,
   resolvePaymentFxRate,
@@ -23532,6 +23695,8 @@ module.exports = {
   resolveInventoryCurrencyRates,
   finalPaymentApprovalInput,
   paymentSettlementFacts,
+  paymentVoucherFingerprint,
+  backfillPaymentVoucherFingerprints,
   derivePaymentStatus,
   computeHistoricalCIPaymentFacts,
   computeOperatingCIBalancePaymentFacts,

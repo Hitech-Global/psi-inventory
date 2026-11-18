@@ -1777,6 +1777,10 @@ async function initDatabase() {
   // PAY-CORE Phase 1.5 Task 0：payment_transactions 水单附件字段（V5 修正：URL/path，非 base64）
   // 文件与数据库分离，voucher_attachment 保存文件路径
   await exec("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_attachment TEXT DEFAULT ''");
+  // PAY-CORE：付款凭证内容指纹，避免同一银行凭证跨付款申请重复入账。
+  await exec("ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_fingerprint TEXT DEFAULT ''");
+  await exec("CREATE INDEX IF NOT EXISTS ix_tx_voucher_fingerprint ON payment_transactions(voucher_fingerprint) WHERE voucher_fingerprint <> '' AND trans_status = 'reconciled'");
+  await exec("CREATE INDEX IF NOT EXISTS ix_tx_bank_ref_active ON payment_transactions(LOWER(TRIM(payment_account)), LOWER(TRIM(bank_ref_no))) WHERE TRIM(bank_ref_no) <> '' AND trans_status = 'reconciled'");
   // V5 修正 3：trans_status 状态约束通过应用层校验（避免 SQLite 重建表）
   // 应用层允许值：paid_pending_allocation / allocated / cancelled
   // 数据库 CHECK 保留旧值（registered/reconciled/cancelled）以保证向后兼容
