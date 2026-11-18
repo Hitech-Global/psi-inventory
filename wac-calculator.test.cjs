@@ -2431,14 +2431,14 @@ test('WAC confirmation persists the actual freight-payment FX date and matrix sh
   assert.ok(modelStart >= 0 && modelEnd > modelStart, 'WAC history export model must exist');
   const model = app.slice(modelStart, modelEnd);
   assert.ok(model.includes('maximumFractionDigits:2'), 'export model WAC values must use two decimals');
-  assert.ok(model.includes('r.fx_rate_date'), 'export model must label the actual FX snapshot date');
-  assert.ok(model.includes('__missing_fx_date__'), 'export model must preserve records whose FX date is unknown');
-  assert.ok(!model.includes('r.fx_rate_date || r.last_inbound_date'), 'export model must not substitute inbound date for FX date');
+  assert.ok(model.includes('r && r.last_inbound_date'), 'export model date axis must use the actual inbound date');
+  assert.ok(!model.includes('汇率结算日'), 'export model must not display the freight FX settlement date');
 
   const renderStart = app.indexOf('async function loadWacHistoryMatrix(');
   const renderEnd = app.indexOf('// ==================== WAC历史记录导入', renderStart);
   assert.ok(renderStart >= 0 && renderEnd > renderStart, 'WAC history matrix renderer must exist');
   const render = app.slice(renderStart, renderEnd);
   assert.ok(render.includes('maximumFractionDigits:2'), 'rendered WAC values must use two decimals');
-  assert.ok(render.includes('r.fx_rate_date'), 'rendered matrix must display the actual FX snapshot date');
+  assert.ok(render.includes('r && r.last_inbound_date'), 'rendered matrix date axis must use the actual inbound date');
+  assert.ok(!render.includes('汇率结算日'), 'rendered matrix must not display the freight FX settlement date');
 });
