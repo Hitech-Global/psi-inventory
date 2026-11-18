@@ -25,58 +25,38 @@ function ensureCss(){
 function makeEnglishBrief(r){
   const brand=esc(r.brand||document.getElementById('qm-brand')?.value||'Current brand');
   const avg=r.avg_change_pct;
-  const lower=Number(r.below_purchase_count)||0;
-  const higher=Number(r.above_purchase_count)||0;
   const noQuote=Number(r.no_quote_count)||0;
-  const mismatch=Number(r.currency_mismatch_count)||0;
-  const comparable=Number(r.comparable_purchase_count)||(lower+higher);
   const up=Number(r.up_count)||0;
   const down=Number(r.down_count)||0;
+  const comparable=up+down;
   let headline='';
   if(avg==null)headline=brand+' has insufficient quote history to establish a price trend.';
-  else if(avg<0)headline=brand+' valid quotes fell by '+Math.abs(avg).toFixed(2)+'% on average. Review discounted SKUs alongside inventory and replenishment needs.';
-  else if(avg>0)headline=brand+' valid quotes rose by '+Math.abs(avg).toFixed(2)+'% on average. Check the largest increases before placing an order.';
-  else headline=brand+' valid quotes were flat overall. Focus on individual SKU changes and the latest purchase-price differences.';
+  else if(avg<0)headline=brand+' valid supplier quotes fell by '+Math.abs(avg).toFixed(2)+'% on average. Review discounted SKUs alongside inventory and replenishment needs.';
+  else if(avg>0)headline=brand+' valid supplier quotes rose by '+Math.abs(avg).toFixed(2)+'% on average. Check the largest increases before placing an order.';
+  else headline=brand+' valid supplier quotes were flat overall. Focus on individual SKU quote changes and historical supplier quote trends.';
   const items=[];
-  if(comparable>0){
-    items.push('<div class="qm-procurement-item good"><b>'+lower+' SKUs below last purchase price</b><span>Review these potentially attractive quotes against replenishment needs.</span></div>');
-    items.push('<div class="qm-procurement-item '+(higher?'risk':'muted')+'"><b>'+higher+' SKUs above last purchase price</b><span>'+(higher?'Negotiate or verify the increase before ordering.':'No comparable SKUs are above the last purchase price.')+'</span></div>');
-  }else if(mismatch>0){
-    items.push('<div class="qm-procurement-item warn"><b>'+mismatch+' SKUs with currency mismatch</b><span>Different currencies are not converted automatically and are excluded from comparisons.</span></div>');
-  }else{
-    items.push('<div class="qm-procurement-item warn"><b>No comparable purchase price</b><span>No historical CI/PI purchase in the same currency matches the selected quote SKUs.</span></div>');
-  }
-  items.push('<div class="qm-procurement-item '+(noQuote?'warn':'muted')+'"><b>'+noQuote+' SKUs currently unquoted</b><span>'+(noQuote?'Request the missing quotes before ranking prices.':'No unquoted SKUs in the current selection.')+'</span></div>');
-  items.push('<div class="qm-procurement-item muted"><b>'+down+' price decreases · '+up+' increases</b><span>Review the largest movements to decide whether to lock prices, negotiate, or postpone purchases.</span></div>');
+  items.push('<div class="qm-procurement-item muted"><b>'+comparable+' SKUs with comparable quote history</b><span>Price movement is based solely on each SKU’s previous valid supplier quote.</span></div>');
+  items.push('<div class="qm-procurement-item '+(noQuote?'warn':'muted')+'"><b>'+noQuote+' SKUs currently unquoted</b><span>'+(noQuote?'Request the missing quotes before ranking supplier prices.':'No unquoted SKUs in the current selection.')+'</span></div>');
+  items.push('<div class="qm-procurement-item muted"><b>'+down+' price decreases · '+up+' increases</b><span>Review the largest quote movements to decide whether to lock prices, negotiate, or postpone purchases.</span></div>');
   return '<h4>🧭 Procurement Brief</h4><div class="qm-procurement-headline">'+headline+'</div><div class="qm-procurement-grid">'+items.join('')+'</div>';
 }
 function makeBrief(r){
   if(typeof window.getLang==='function'&&window.getLang()==='en')return makeEnglishBrief(r);
   const brand=r.brand||document.getElementById('qm-brand')?.value||'当前品牌';
   const avg=r.avg_change_pct;
-  const lower=Number(r.below_purchase_count)||0;
-  const higher=Number(r.above_purchase_count)||0;
   const noQuote=Number(r.no_quote_count)||0;
-  const comparable=Number(r.comparable_purchase_count)||(lower+higher);
-  const mismatch=Number(r.currency_mismatch_count)||0;
   const up=Number(r.up_count)||0;
   const down=Number(r.down_count)||0;
+  const comparable=up+down;
   let headline='';
   if(avg==null) headline=`${brand} 当前报价历史还不足以判断整体价格方向。`;
-  else if(avg<0) headline=`${brand} 最新有效报价较上一轮平均下降 ${Math.abs(avg).toFixed(2)}%，采购侧可以优先查看降价 SKU，再结合库存和补货需求决定是否下单。`;
-  else if(avg>0) headline=`${brand} 最新有效报价较上一轮平均上涨 ${Math.abs(avg).toFixed(2)}%，采购侧应优先关注涨幅大的 SKU，并在下单前核对涨价原因。`;
-  else headline=`${brand} 最新有效报价较上一轮整体持平，采购侧重点应放在单 SKU 异动和最近采购价差异。`;
+  else if(avg<0) headline=`${brand} 最新有效供应商报价较上一轮平均下降 ${Math.abs(avg).toFixed(2)}%，采购侧可以优先查看降价 SKU，再结合库存和补货需求决定是否下单。`;
+  else if(avg>0) headline=`${brand} 最新有效供应商报价较上一轮平均上涨 ${Math.abs(avg).toFixed(2)}%，采购侧应优先关注涨幅大的 SKU，并在下单前核对涨价原因。`;
+  else headline=`${brand} 最新有效供应商报价较上一轮整体持平，采购侧重点应放在单 SKU 报价异动和供应商历次报价趋势。`;
 
   const items=[];
-  if(comparable>0){
-    items.push(`<div class="qm-procurement-item good"><b>${lower} 个 SKU 低于上次采购价</b><span>这些 SKU 当前报价更有采购优势，可优先结合补货需求复核。</span></div>`);
-    items.push(`<div class="qm-procurement-item ${higher?'risk':'muted'}"><b>${higher} 个 SKU 高于上次采购价</b><span>${higher?'建议优先议价或核对涨价原因，再决定是否下单。':'当前没有高于上次采购价的可比 SKU。'}</span></div>`);
-  }else if(mismatch>0){
-    items.push(`<div class="qm-procurement-item warn"><b>${mismatch} 个 SKU 币种不一致</b><span>报价与上次采购价币种不同，系统不会自动换算，因此不参与采购价环比。</span></div>`);
-  }else{
-    items.push(`<div class="qm-procurement-item warn"><b>暂无可比采购价</b><span>当前筛选范围内没有能与报价 SKU 对上的同币种历史 CI/PI 采购记录。</span></div>`);
-  }
-  items.push(`<div class="qm-procurement-item ${noQuote?'warn':'muted'}"><b>${noQuote} 个 SKU 当前未报价</b><span>${noQuote?'这部分应先向供应商补报价，不进入价格优劣判断。':'当前所选范围内没有未报价 SKU。'}</span></div>`);
+  items.push(`<div class="qm-procurement-item muted"><b>${comparable} 个 SKU 有历史报价可比较</b><span>涨跌幅仅按同一 SKU 的最新有效报价与上一条有效供应商报价计算。</span></div>`);
+  items.push(`<div class="qm-procurement-item ${noQuote?'warn':'muted'}"><b>${noQuote} 个 SKU 当前未报价</b><span>${noQuote?'这部分应先向供应商补报价。':'当前所选范围内没有未报价 SKU。'}</span></div>`);
   items.push(`<div class="qm-procurement-item muted"><b>${down} 个降价 · ${up} 个涨价</b><span>优先查看波动最大的 SKU，确认是否需要提前锁价、议价或延后采购。</span></div>`);
 
   return `<h4>🧭 采购简报</h4><div class="qm-procurement-headline">${esc(headline)}</div><div class="qm-procurement-grid">${items.join('')}</div>`;
