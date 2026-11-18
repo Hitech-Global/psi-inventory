@@ -38,12 +38,13 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
   assert.equal(model.rows.length, 1);
   assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
-  assert.deepEqual(Array.from(model.dates), ['2026-11-09','__missing_fx_date__|2026-08-12']);
-  const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-09'));
+  assert.deepEqual(Array.from(model.dates), ['2026-11-02','2026-08-12']);
+  const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-02'));
   assert.ok(latestDateHeader.includes('1 RMB = 5.01 IDR'));
-  assert.ok(latestDateHeader.includes('汇率结算日 2026-11-09'));
-  assert.ok(model.headers[8].includes('汇率日期未记录'));
-  assert.ok(model.headers[8].includes('入库日期 2026-08-12'), 'inbound date may distinguish undated history but is never presented as FX date');
+  assert.ok(latestDateHeader.includes('入库日期 2026-11-02'));
+  assert.ok(!latestDateHeader.includes('2026-11-09'), 'freight FX settlement date must not be displayed in the matrix header');
+  assert.ok(model.headers[8].includes('入库日期 2026-08-12'));
+
   assert.equal(model.rows[0][7], '79,816.81 IDR');
   assert.equal(model.rows[0][8], '76,854.00 IDR');
   assert.equal(model.rows[0][6], '2026-11-02');
@@ -57,7 +58,7 @@ test('both screen and export sort latest records by confirmed_at before version_
   assert.ok(!appSource.includes('Latest WAC及变化按版本号最新的记录计算'));
 });
 
-test('matrix date axis collapses inbound dates sharing one actual freight FX date', () => {
+test('matrix date axis uses inbound dates even when different inbound dates share one freight FX date', () => {
   const rows = [
     { sku_code:'RD-TH-1', brand:'Redragon', country:'泰国', warehouse:'至速仓', version_no:1,
       confirmed_at:'2026-09-14 12:00:00', last_inbound_date:'2026-09-14', fx_rate_date:'2026-09-13',
@@ -67,11 +68,14 @@ test('matrix date axis collapses inbound dates sharing one actual freight FX dat
       new_avg_cost:110, local_currency:'THB', rmb_to_local_rate:4.9 }
   ];
   const model = vm.runInNewContext(fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});', testContext);
-  assert.deepEqual(Array.from(model.dates), ['2026-09-13']);
+  assert.deepEqual(Array.from(model.dates), ['2026-09-15','2026-09-14']);
   assert.equal(model.rows[0][6], '2026-09-15');
   assert.match(model.headers[7], /1 RMB = 4\.90 THB/);
-  assert.match(model.headers[7], /汇率结算日 2026-09-13/);
+  assert.match(model.headers[7], /入库日期 2026-09-15/);
+  assert.match(model.headers[8], /入库日期 2026-09-14/);
+  assert.ok(!model.headers[7].includes('2026-09-13'));
   assert.equal(model.rows[0][7], '110.00 THB');
+  assert.equal(model.rows[0][8], '100.00 THB');
 });
 
 test('matrix export labels the last inbound date as the inbound date for Latest WAC', () => {
