@@ -15687,33 +15687,21 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
       (!from || date >= from) && (!to || date <= to);
   });
-  const missingFxDateKey = '__missing_fx_date__';
-  const isMissingFxDate = function(d) {
-    return d === missingFxDateKey || String(d || '').indexOf(missingFxDateKey + '|') === 0;
+  const missingInboundDateKey = '__missing_inbound_date__';
+  const inboundDateKey = function(r) {
+    return String(r && r.last_inbound_date || '').slice(0,10) || missingInboundDateKey;
   };
-  const fxDateKey = function(r) {
-    const fxDate = String(r && r.fx_rate_date || '').slice(0,10);
-    if (fxDate) return fxDate;
-    const inboundDate = String(r && r.last_inbound_date || '').slice(0,10);
-    return inboundDate ? missingFxDateKey + '|' + inboundDate : missingFxDateKey;
+  const inboundDateLabel = function(d) {
+    return d === missingInboundDateKey
+      ? t('wac.matrix.inbound_date_missing', '入库日期未记录')
+      : t('wac.matrix.inbound_date', '入库日期') + ' ' + d;
   };
-  const fxDateLabel = function(d) {
-    if (d === missingFxDateKey) return t('wac.matrix.fx_date_missing', '汇率日期未记录');
-    if (String(d || '').indexOf(missingFxDateKey + '|') === 0) {
-      return t('wac.matrix.fx_date_missing', '汇率日期未记录') + ' · ' +
-        t('wac.matrix.inbound_date', '入库日期') + ' ' + String(d).slice(missingFxDateKey.length + 1);
-    }
-    return t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
-  };
-  const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
-    const aMissing = isMissingFxDate(a), bMissing = isMissingFxDate(b);
-    if (aMissing && !bMissing) return 1;
-    if (!aMissing && bMissing) return -1;
-    if (aMissing && bMissing) {
-      return String(b).slice(missingFxDateKey.length + 1).localeCompare(String(a).slice(missingFxDateKey.length + 1));
-    }
+  const dates = Array.from(new Set(selected.map(inboundDateKey))).sort(function(a,b) {
+    if (a === missingInboundDateKey) return 1;
+    if (b === missingInboundDateKey) return -1;
     return b.localeCompare(a);
   });
+  const groupMap = new Map();
   const groupMap = new Map();
   selected.forEach(function(r) {
     const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15741,7 +15729,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   groups.forEach(function(g) {
     const latestByDate = new Map();
     g.records.forEach(function(r) {
-      const d = fxDateKey(r);
+      const d = inboundDateKey(r);
       if (!d) return;
       const old = latestByDate.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
@@ -15758,7 +15746,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   const headers = ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化',t('wac.matrix.latest_wac_inbound_date', 'Latest WAC 对应入库日期')].concat(
     dates.map(function(d) {
       const rates = Array.from(dateFxLabels.get(d) || []).filter(Boolean);
-      return (rates.length ? rates.join(' / ') + '\n' : '') + fxDateLabel(d);
+      return (rates.length ? rates.join(' / ') + '\n' : '') + inboundDateLabel(d);
     })
   );
   const matrixRows = groups.map(function(g) {
@@ -15775,7 +15763,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (delta === null ? '' : '\n' + (delta > 0 ? '+' : '') + money(delta) + currency);
     const dateValues = new Map();
     g.records.forEach(function(r) {
-      const d = fxDateKey(r);
+      const d = inboundDateKey(r);
       const old = dateValues.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
         (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
@@ -15884,33 +15872,21 @@ async function loadWacHistoryMatrix(refresh) {
         (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
         (!from || date >= from) && (!to || date <= to);
     });
-    const missingFxDateKey = '__missing_fx_date__';
-  const isMissingFxDate = function(d) {
-    return d === missingFxDateKey || String(d || '').indexOf(missingFxDateKey + '|') === 0;
-  };
-  const fxDateKey = function(r) {
-    const fxDate = String(r && r.fx_rate_date || '').slice(0,10);
-    if (fxDate) return fxDate;
-    const inboundDate = String(r && r.last_inbound_date || '').slice(0,10);
-    return inboundDate ? missingFxDateKey + '|' + inboundDate : missingFxDateKey;
-  };
-  const fxDateLabel = function(d) {
-    if (d === missingFxDateKey) return t('wac.matrix.fx_date_missing', '汇率日期未记录');
-    if (String(d || '').indexOf(missingFxDateKey + '|') === 0) {
-      return t('wac.matrix.fx_date_missing', '汇率日期未记录') + ' · ' +
-        t('wac.matrix.inbound_date', '入库日期') + ' ' + String(d).slice(missingFxDateKey.length + 1);
-    }
-    return t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
-  };
-  const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
-    const aMissing = isMissingFxDate(a), bMissing = isMissingFxDate(b);
-    if (aMissing && !bMissing) return 1;
-    if (!aMissing && bMissing) return -1;
-    if (aMissing && bMissing) {
-      return String(b).slice(missingFxDateKey.length + 1).localeCompare(String(a).slice(missingFxDateKey.length + 1));
-    }
-    return b.localeCompare(a);
-  });
+    const missingInboundDateKey = '__missing_inbound_date__';
+    const inboundDateKey = function(r) {
+      return String(r && r.last_inbound_date || '').slice(0,10) || missingInboundDateKey;
+    };
+    const inboundDateLabel = function(d) {
+      return d === missingInboundDateKey
+        ? t('wac.matrix.inbound_date_missing', '入库日期未记录')
+        : t('wac.matrix.inbound_date', '入库日期') + ' ' + d;
+    };
+    const dates = Array.from(new Set(selected.map(inboundDateKey))).sort(function(a,b) {
+      if (a === missingInboundDateKey) return 1;
+      if (b === missingInboundDateKey) return -1;
+      return b.localeCompare(a);
+    });
+    const groupMap = new Map();
     const groupMap = new Map();
     selected.forEach(function(r) {
       const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15941,7 +15917,7 @@ async function loadWacHistoryMatrix(refresh) {
     groups.forEach(function(g) {
       const latestByDate = new Map();
       g.records.forEach(function(r) {
-        const d = fxDateKey(r);
+        const d = inboundDateKey(r);
         if (!d) return;
         const old = latestByDate.get(d);
         if (!old || Number(r.version_no||0) > Number(old.version_no||0) ||
@@ -15959,10 +15935,10 @@ async function loadWacHistoryMatrix(refresh) {
       const fxHtml = rates.map(function(rate) {
         return '<div class="wac-history-date-fx">' + esc(rate) + '</div>';
       }).join('');
-      return '<th style="min-width:150px">' + fxHtml + '<div class="wac-history-date-label">' + esc(fxDateLabel(d)) + '</div></th>'; 
+      return '<th style="min-width:150px">' + fxHtml + '<div class="wac-history-date-label">' + esc(inboundDateLabel(d)) + '</div></th>'; 
     };
     const countEl = document.getElementById('wac-matrix-count');
-    if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史汇率列';
+    if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史入库日期列';
     if (!groups.length) {
       target.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';
       return;
@@ -15990,7 +15966,7 @@ async function loadWacHistoryMatrix(refresh) {
       const trendColor = pct === null ? 'var(--text-secondary)' : (pct > 0 ? '#16a34a' : pct < 0 ? '#dc2626' : 'var(--text-secondary)');
       const dateVals = new Map();
       g.records.forEach(function(r) {
-        const d = fxDateKey(r);
+        const d = inboundDateKey(r);
         const old = dateVals.get(d);
         if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
           (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) dateVals.set(d,r);
@@ -16016,7 +15992,7 @@ async function loadWacHistoryMatrix(refresh) {
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；“Latest WAC 对应入库日期”取物流批次实际到货日期。历史成本列按汇率结算日期分组，汇率日期取运费实际付款完成日；关税按关税实际付款完成日换算。缺少实际汇率日期的记录按入库日期区分，并标记“汇率日期未记录”；入库日期仅用于区分历史记录，不作为汇率日期，也不用于汇率查询。横向滚动可查看全部历史汇率列。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；“Latest WAC 对应入库日期”取物流批次实际到货日期。历史成本列按实际入库日期分组；表头汇率数值沿用成本记录保存的实际付款结算汇率，不改变WAC成本计算。横向滚动可查看全部历史入库日期。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
