@@ -93,6 +93,7 @@ module.exports = function installQuotationManagement(deps) {
     // record in the selected SKU group for accurate previous-price comparisons.
     const by = new Map([...grouped].filter(([, a]) => !type || primaryQuotationCategory(a[0].master_category, a[0].product_type) === type));
     const history = [...by.values()].flat();
+    const brandCurrencies = getBrandCurrencyMap();
     const rows = [];
 
     for (const a of by.values()) {
