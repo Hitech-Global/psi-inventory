@@ -141,9 +141,9 @@
   function installSummaryGuard() {
     var original = global.renderPurchaseAmountSummary;
     if (typeof original !== 'function' || original.__ciAmountWrapped) return;
-    function wrapped(summary) {
+    function wrapped(summary, historicalRows) {
       if (!canViewAmounts()) return '';
-      return original.call(this, summary);
+      return original.call(this, summary, historicalRows);
     }
     wrapped.__ciAmountWrapped = true;
     wrapped.__original = original;
