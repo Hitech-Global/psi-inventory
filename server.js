@@ -5285,7 +5285,7 @@ function validateWacHistoryImportRows(items) {
     const fxDateRaw = item && (item.fx_rate_date !== undefined ? item.fx_rate_date :
       (item['历史汇率日期'] !== undefined ? item['历史汇率日期'] : item['汇率日期']));
     const hasFxDate = fxDateRaw !== undefined && fxDateRaw !== null && String(fxDateRaw).trim() !== '';
-    const fxDate = hasFxDate ? normalizeWacHistoryDate(fxDateRaw) : historyDate;
+    const fxDate = hasFxDate ? normalizeWacHistoryDate(fxDateRaw) : '';
     let rowHasRequiredError = false;
 
     const requiredIssue = (type, reason) => { rowHasRequiredError = true; pushIssue(rowNo, skuCode, type, reason); };
@@ -5375,7 +5375,15 @@ function validateWacHistoryImportRows(items) {
     if (!localCurrency) {
       warnings.push({ row: rowNo, sku_code: skuCode, message: '未能从国家主数据识别本币币种；WAC仍可导入，但历史人民币汇率将显示为空' });
     } else if (!rmbRate && localCurrency !== 'RMB') {
-      warnings.push({ row: rowNo, sku_code: skuCode, message: '没有找到该汇率日期的精确人民币汇率；WAC仍可导入，历史汇率显示为空，不会使用今天汇率替代' });
+      warnings.push({
+        row: rowNo,
+        sku_code: skuCode,
+        message: fxRateDate
+          ? '没有找到 ' + fxRateDate + ' 的精确人民币汇率；WAC仍可导入，历史汇率显示为空，不会使用今天汇率替代'
+          : '未提供实际汇率结算日期及已保存汇率快照；WAC仍可导入，历史汇率显示为空，不会使用最后入库日期或当前汇率替代'
+      });
+    } else if (rmbRate && localCurrency !== 'RMB' && !fxRateDate) {
+      warnings.push({ row: rowNo, sku_code: skuCode, message: '已提供人民币汇率，但未提供实际汇率结算日期；系统保留汇率数值并标记日期未记录，不会用最后入库日期替代' });
     }
 
     if (sku && skuCode && country && warehouse && confirmedDate && Number.isFinite(cost) && cost > 0) {
@@ -20215,10 +20223,10 @@ app.get('/api/wac/history-import/template', requireApiPermission('ci_edit'), asy
       ['国家、仓库', '必填；必须与系统仓库主数据中的国家和仓库名称一致'],
       ['历史WAC（本币）', '必填；填写该SKU在对应国家/仓库的历史本币WAC，必须大于0'],
       ['最后入库日期', '必填；作为该条历史WAC的生效开始日期，格式 YYYY-MM-DD'],
-      ['历史汇率日期', '选填；如实际成本按其他日期的汇率结算，请填写实际汇率日期；留空时默认使用最后入库日期'],
+      ['历史汇率日期', '选填；填写运费实际付款完成日期对应的汇率日期；没有实际付款日期凭证时留空，系统不会用最后入库日期代替'],
       ['结束日期', '选填；填写该条历史WAC的有效期结束日期，格式 YYYY-MM-DD，不能早于开始日期；留空表示未指定结束日期'],
       ['本币币种', '选填；可填 IDR、MYR、THB 等；留空时按国家主数据识别'],
-      ['1 RMB = 本币汇率', '选填；填写历史精确汇率。留空时系统只查历史汇率日期对应的精确汇率，不会使用今天汇率'],
+      ['1 RMB = 本币汇率', '选填；填写实际结算汇率。留空时仅在填写历史汇率日期后查询该日精确汇率；没有汇率日期时不使用到货日期或当前汇率替代'],
       ['重要说明', '本导入新增锁定的WAC历史记录，并自动同步库存总表的最新有效WAC和最后入库日期；不会修改库存数量或库存货值。']
     ]
   });
@@ -20349,14 +20357,14 @@ app.get('/api/wac/history-matrix', requireApiPermission('ci_view'), asyncHandler
         currencyByCountry.get(canonicalCountry) || currencyByCountry.get(rawCountry) || '';
       r.local_currency = localCurrency === 'CNY' ? 'RMB' : localCurrency;
       r.last_inbound_date = String(r.last_inbound_date || '').slice(0, 10);
-      const fxDate = normalizeWacHistoryDate(r.fx_rate_date) || normalizeWacHistoryDate(r.last_inbound_date) || '';
+      const fxDate = normalizeWacHistoryDate(r.fx_rate_date) || '';
       r.fx_rate_date = fxDate;
       const storedRate = Number(r.rmb_to_local_rate);
       if (Number.isFinite(storedRate) && storedRate > 0) {
         r.rmb_to_local_rate = storedRate;
         r.fx_rate_source = 'snapshot';
       } else {
-        const snapshot = resolveExactRmbToLocalRate(r.local_currency, fxDate, fxCache);
+        const snapshot = fxDate ? resolveExactRmbToLocalRate(r.local_currency, fxDate, fxCache) : null;
         r.rmb_to_local_rate = snapshot ? snapshot.rate : null;
         r.fx_rate_source = snapshot ? snapshot.source : 'missing';
       }
@@ -20577,7 +20585,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
         // Persist the matching RMB→local snapshot for history display; inbound date remains separate.
         const inboundDate = normalizeWacHistoryDate(batch.actual_arrival_date) || '';
         const localCurrency = resolveWacHistoryCurrency(item.country, '');
-        const paymentFxDate = normalizeWacHistoryDate(meta.rmb_to_local_rate_date || meta.freight_last_paid_date || inboundDate) || inboundDate;
+        const paymentFxDate = normalizeWacHistoryDate(meta.rmb_to_local_rate_date || meta.freight_last_paid_date) || '';
         const savedRmbToLocalRate = Number(meta.rmb_to_local_rate);
         const ciCurrency = String(ci && ci.currency || '').trim().toUpperCase();
         const itemProductFxRate = Number(item.product_fx_rate);
