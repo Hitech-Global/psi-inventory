@@ -19,7 +19,7 @@ const delegatedEvents={};
 const select={getAttribute(name){return name==='data-ci-id'?'CI-1':'';}};
 let delegatedSave=null,clickStopped=false;
 const delegatedSandbox={addEventListener(){},document:{addEventListener(name,fn,capture){delegatedEvents[name]={fn,capture};}},updateCIClearanceInline(el,id){delegatedSave={el,id};}};
-delegatedSandbox.globalThis=delegatedSandbox;
+delegatedSandbox.window=delegatedSandbox;
 vm.runInNewContext(ui,delegatedSandbox);
 assert.equal(delegatedEvents.change.capture,true,'change delegation must run before row handlers');
 delegatedEvents.change.fn({target:{closest(){return select;}}});
