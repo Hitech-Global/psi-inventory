@@ -12622,8 +12622,8 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
   }
   return '<div class="stats-grid mb-16" style="grid-template-columns:repeat(3,minmax(0,1fr))">'+
     card(metrics.total,count+t('gen.L5767.1',' 张；人民币待补 ')+rmbPendingCount+t('gen.L5767.2',' 张'))+
-    card(metrics.paid,t('ci.summary.filtered','当前筛选结果'))+
-    card(metrics.unpaid,t('ci.summary.filtered','当前筛选结果'))+
+    card(metrics.paid,t('ci.summary.paid_basis','实际已付款金额合计'))+
+    card(metrics.unpaid,t('ci.summary.unpaid_basis','未结金额合计'))+
     '</div>';
 }
 // ── CI list display helpers ──
