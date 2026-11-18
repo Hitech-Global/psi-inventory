@@ -15,7 +15,7 @@ assert.match(html, /<script src="app\.js"><\/script>/);
 assert.doesNotMatch(html, /<script src="(?:i18n|app)\.js\?v=/);
 assert.match(server, /const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/);
 assert.match(server, /if \(src\.indexOf\('\?v='\) !== -1\) return m/);
-assert.match(logisticsHotfix, /out\.replace\(appScriptPattern, '<script src="app\.js"><\\/script>'\)/);
+assert.ok(logisticsHotfix.includes("out = out.replace(appScriptPattern, '<script src=\"app.js\"></script>');"), 'postinstall must leave app.js unversioned for deployment cache busting');
 assert.doesNotMatch(logisticsHotfix, /APP_CACHE_VERSION/, 'postinstall must not restore a pinned core asset version');
 
 console.log('frontend core asset cache-busting: PASS');
