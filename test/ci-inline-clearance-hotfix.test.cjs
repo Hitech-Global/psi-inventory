@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const {patchAppPerfSource,patchServerSource}=require('../scripts/ci-inline-clearance-hotfix.cjs');
 const indexHtml=fs.readFileSync(path.join(__dirname,'../index.html'),'utf8');
-assert.match(indexHtml,/app-perf\.js\?v=20261118-1/,'app-perf.js must be cache-busted for delegated CI clearance events');
+assert.match(indexHtml,/app-perf\.js\?v=20261118-2/,'app-perf.js must be cache-busted for delegated CI clearance events');
 const ui=patchAppPerfSource('function renderOperationalCITable(data){return data;}');
 assert.equal(patchAppPerfSource(ui),ui);
 assert.match(ui,/CI-INLINE-CLEARANCE-UI-V3/);
@@ -19,6 +19,8 @@ assert.match(ui,/清关方式/);
 assert.match(ui,/global\.api\('\/api\/commercial-invoices\/'/);
 new Function(ui);
 assert.ok(ui.includes("global.updateCIClearanceInline(select,select.getAttribute('data-ci-id'))"),'delegated change handler must pass the selected CI id to the existing save function');
+assert.ok(ui.includes("v&&v!=='formal'&&v!=='non_formal'"),'legacy clearance values must not silently render as unset');
+assert.ok(ui.includes('原值待核对：'),'legacy clearance values must be shown explicitly until corrected');
 assert.ok(ui.includes("doc.addEventListener('click'"),'selector clicks must be intercepted before CI row navigation');
 const server=[
 "app.put('/api/commercial-invoices/:id', handler);",
