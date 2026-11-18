@@ -19884,7 +19884,7 @@ async function financeApprove(id, action){
     const dedDesc=document.getElementById('pay-final-ded-desc')?document.getElementById('pay-final-ded-desc').value.trim():'';
     if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
     if(!paidDate){showToast(t('payment.err_date_required','请选择实际付款日期'),'warning');return}
-    if(!bankRef){showToast(t('payment.bank_ref_required','请填写银行流水号/交易参考号'),'warning');document.getElementById('pay-final-bank-ref')?.focus();return}
+    if(amount>0&&!bankRef){showToast(t('payment.bank_ref_required','请填写银行流水号/交易参考号'),'warning');document.getElementById('pay-final-bank-ref')?.focus();return}
     // 有抵扣时来源类型与原因必填（后端 applyDeductionSettlement 要求）
     if(dedAmt>0&&!dedType){showToast(t('payment.ded_type_required','有抵扣时必须选择抵扣来源类型'),'warning');return}
     if(dedAmt>0&&!dedDesc){showToast(t('payment.ded_reason_required','有抵扣时必须填写抵扣原因/备注'),'warning');return}
@@ -19938,7 +19938,7 @@ async function financeConfirmPay(id){
   const roundingAmount=parseFloat(roundingVal);
   if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
   if(!paidDate){showToast(t('payment.err_date_required','请选择实际付款日期'),'warning');return}
-  if(!bankRef){showToast(t('payment.bank_ref_required','请填写银行流水号/交易参考号'),'warning');document.getElementById('pay-final-bank-ref')?.focus();return}
+  if(amount>0&&!bankRef){showToast(t('payment.bank_ref_required','请填写银行流水号/交易参考号'),'warning');document.getElementById('pay-final-bank-ref')?.focus();return}
   // 抵扣字段：确认模式下若已生效则被 disabled（无 id），此时跳过；否则按普通抵扣处理
   const dedAmtEl=document.getElementById('pay-final-ded-amt');
   let dedAmt=0,dedType='',dedDesc='';

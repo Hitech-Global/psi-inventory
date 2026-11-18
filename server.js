@@ -15112,7 +15112,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
   if (!hasAttachment) {
     throw new SettlementError(400, '最终审批必须上传水单附件');
   }
-  if (!bankRefNo) throw new SettlementError(400, '最终审批必须填写银行流水号/交易参考号');
+  if (actualPaidAmount > 0 && !bankRefNo) throw new SettlementError(400, '最终审批必须填写银行流水号/交易参考号');
 
   return {
     actualPaidAmount,
