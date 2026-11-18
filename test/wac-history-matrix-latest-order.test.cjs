@@ -38,10 +38,13 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
   assert.equal(model.rows.length, 1);
   assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
-  assert.deepEqual(Array.from(model.dates), ['2026-11-09','2026-08-12']);
+  assert.deepEqual(Array.from(model.dates), ['2026-11-09','__missing_fx_date__']);
   const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-09'));
   assert.ok(latestDateHeader.includes('1 RMB = 5.01 IDR'));
-  assert.ok(!latestDateHeader.includes('汇率日'));
+  assert.ok(latestDateHeader.includes('汇率结算日 2026-11-09'));
+  assert.ok(model.headers[8].includes('汇率日期未记录'));
+  assert.equal(model.rows[0][7], '79,816.81 IDR');
+  assert.equal(model.rows[0][8], '76,854.00 IDR');
   assert.equal(model.rows[0][6], '2026-11-02');
 });
 
@@ -66,7 +69,7 @@ test('matrix date axis collapses inbound dates sharing one actual freight FX dat
   assert.deepEqual(Array.from(model.dates), ['2026-09-13']);
   assert.equal(model.rows[0][6], '2026-09-15');
   assert.match(model.headers[7], /1 RMB = 4\.90 THB/);
-  assert.doesNotMatch(model.headers[7], /汇率日/);
+  assert.match(model.headers[7], /汇率结算日 2026-09-13/);
   assert.equal(model.rows[0][7], '110.00 THB');
 });
 
