@@ -15047,6 +15047,7 @@ const MAX_ROUND_OFF_AMOUNT = 1.99;
 function finalPaymentApprovalInput(payment, body = {}) {
   // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
   const paymentAccount = body.payment_account != null ? String(body.payment_account) : '';
+  const bankRefNo = String(body.bank_ref_no || '').trim();
   const actualPaidAmount = settlementMoney(body.actual_paid_amount);
   if (!(actualPaidAmount > 0)) {
     throw new SettlementError(400, '最终审批必须填写有效的实际付款金额');
@@ -15111,6 +15112,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
   if (!hasAttachment) {
     throw new SettlementError(400, '最终审批必须上传水单附件');
   }
+  if (!bankRefNo) throw new SettlementError(400, '最终审批必须填写银行流水号/交易参考号');
 
   return {
     actualPaidAmount,
@@ -15120,6 +15122,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
     isPartialPayment,
     attachment,
     paymentAccount,
+    bankRefNo,
     idempotencyKey: String(body.idempotency_key || `approval:${payment.id}`).trim()
   };
 }
@@ -15146,7 +15149,7 @@ function settleFinalPaymentApprovalInTx(payment, body, req) {
       apply_round_off: input.applyRoundOff,
       rounding_amount: input.roundingAmount,
       rounding_reason: body.rounding_reason || '',
-      bank_ref_no: body.bank_ref_no || '',
+      bank_ref_no: input.bankRefNo,
       payment_account: input.paymentAccount || '',
       allocations: Array.isArray(body.allocations) ? body.allocations : undefined
     }
@@ -15422,7 +15425,7 @@ function assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFi
   // 先补齐历史记录，再检查新记录；更新只触及空指纹，不改变任何付款事实。
   backfillPaymentVoucherFingerprints();
   const lockKeys = [];
-  if (bankRefNo) lockKeys.push('bank-ref:' + String(paymentAccount || '').trim().toLowerCase() + ':' + String(bankRefNo).trim().toLowerCase());
+  if (bankRefNo) lockKeys.push('bank-ref:' + String(bankRefNo).trim().toLowerCase());
   if (voucherFingerprint) lockKeys.push('voucher:' + voucherFingerprint);
   // PG 事务级 advisory lock 防止并发确认同一流水/凭证时两个请求同时通过查重。
   if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
@@ -15438,9 +15441,13 @@ function assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFi
        JOIN payment_requests pr ON pr.id = pt.payment_request_id
        WHERE pt.trans_status = 'reconciled'
          AND LOWER(TRIM(COALESCE(pt.bank_ref_no, ''))) = LOWER(TRIM(?))
-         AND LOWER(TRIM(COALESCE(pt.payment_account, ''))) = LOWER(TRIM(?))
+         AND (
+           LOWER(TRIM(COALESCE(pt.payment_account, ''))) = LOWER(TRIM(?))
+           OR TRIM(COALESCE(pt.payment_account, '')) = ''
+           OR TRIM(COALESCE(?, '')) = ''
+         )
        LIMIT 1`,
-      [bankRefNo, paymentAccount || '']
+      [bankRefNo, paymentAccount || '', paymentAccount || '']
     );
     if (duplicateRef) {
       throw new SettlementError(409,
@@ -15532,6 +15539,9 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
     let logId = null, txId = null, transNo = null;
     let priRows = { rows: [] };
     if (actualPaidAmount > 0) {
+      if (!bankRefNo && options.allow_missing_bank_ref !== true) {
+        throw new SettlementError(400, '实际付款必须填写银行流水号/交易参考号');
+      }
       voucherFingerprint = paymentVoucherFingerprint(voucherAttachment);
       if (bankRefNo || voucherFingerprint) assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFingerprint);
       const snapshot = buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
@@ -19220,6 +19230,9 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
       if (payment.approval_status !== 'approved') {
         return res.status(409).json({ error: '该付款申请尚未完成审批，不能确认付款' });
       }
+      if (Number(req.body.paid_amount || 0) > 0 && !String(req.body.bank_ref_no || '').trim()) {
+        return res.status(400).json({ error: '实际付款必须填写银行流水号/交易参考号' });
+      }
       const hasExecutePerm = (req.currentUserPermissions || []).some(p => p === 'payment_execute' || p === 'payment_approve' || p === '*');
       if (!hasExecutePerm) {
         return res.status(403).json({ error: '确认付款需要 payment_approve 或 payment_execute 权限' });
@@ -19473,7 +19486,10 @@ app.post('/api/payment-requests/bulk-import-result', requireApiPermission('payme
         if (!item.request_no) throw new SettlementError(400, '付款申请号为空');
         const payment = await queryOne('SELECT * FROM payment_requests WHERE request_no = ?', [item.request_no]);
         if (!payment) throw new SettlementError(404, `付款申请号 ${item.request_no} 不存在`);
-        const paymentResult = await applyPaymentSettlement(payment.id, item.paid_amount, item.paid_date, item.payment_voucher, req, bulkPaymentIdempotencyKey(item));
+        const paymentResult = await applyPaymentSettlement(payment.id, item.paid_amount, item.paid_date, item.payment_voucher, req, bulkPaymentIdempotencyKey(item), {
+          bank_ref_no: item.bank_ref_no || '',
+          allow_missing_bank_ref: true
+        });
         if (paymentResult.idempotent) result.idempotent++;
         else result.updated++;
       } catch (e) {
