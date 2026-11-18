@@ -55,11 +55,14 @@ assert.match(htmlOnce, /app\.js\?v=20261118-4/, 'frontend cache version must be 
 const repoRoot = path.join(__dirname, '..');
 const liveApp = fs.readFileSync(path.join(repoRoot, 'app.js'), 'utf8');
 const liveIndex = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+const liveServer = fs.readFileSync(path.join(repoRoot, 'server.js'), 'utf8');
 assert.ok(liveApp.includes(APP_MARKER), 'live logistics detail handler must include immediate loading');
 assert.match(liveApp, /window\.__logDetailRetry=/, 'live handler must retain a retry target');
 assert.match(liveApp, /log-detail-loading/, 'live handler must use the logistics-specific loading node');
 assert.ok(liveIndex.includes('ci-detail-loading'), 'existing Mac-style CI loading styles must be present for reuse');
-assert.match(liveIndex, /app\.js\?v=20261118-4/, 'live frontend must be cache-busted');
+assert.match(liveIndex, /<script src="app\.js"><\/script>/, 'live frontend must use the deployment-versioned app script');
+assert.doesNotMatch(liveIndex, /app\.js\?v=/, 'live frontend must not pin a stale app script version');
+assert.match(liveServer, /const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/, 'server must inject the current deployment commit into core script URLs');
 
 console.log('logistics-detail-loading hotfix: PASS');
 
