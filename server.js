@@ -14994,6 +14994,37 @@ function payableItemRemainingMinor(item) {
   return Math.max(0, Number(item.payable_amount_minor || 0) - settled);
 }
 
+// Return the same per-payable-item remaining balance used by settlement validation.
+function enrichPaymentRequestItemsForAllocation(items) {
+  const rows = Array.isArray(items) ? items : [];
+  if (!rows.length) return rows;
+  const payableIds = [...new Set(rows.map(row => row.payable_item_id).filter(Boolean))];
+  const settledByPayable = payableItemsSettledMinor(payableIds);
+  const priIds = rows.map(row => row.id).filter(Boolean);
+  const paidByPri = new Map();
+  if (priIds.length) {
+    query(
+      'SELECT payment_request_item_id, SUM(allocated_amount_minor) AS paid_minor ' +
+      'FROM payment_allocations WHERE status = \'reconciled\' ' +
+      'AND payment_request_item_id IN (' + priIds.map(() => '?').join(',') + ') ' +
+      'GROUP BY payment_request_item_id',
+      priIds
+    ).rows.forEach(row => paidByPri.set(row.payment_request_item_id, Number(row.paid_minor || 0)));
+  }
+  return rows.map(row => {
+    const payableAmountMinor = Number(row.payable_amount_minor || 0);
+    const settledMinor = Number(settledByPayable.get(row.payable_item_id) || 0);
+    const requestedMinor = Number(row.requested_amount_minor || 0);
+    const paidMinor = Number(paidByPri.get(row.id) || 0);
+    return {
+      ...row,
+      settled_amount_minor: settledMinor,
+      remaining_amount_minor: payableAmountMinor - settledMinor,
+      deduction_weight_minor: Math.max(0, requestedMinor - paidMinor)
+    };
+  });
+}
+
 // 每笔付款允许抹零小于 1.00（按两位小数记账，最大 0.99）；必须精确等于本次未结差额。
 const MAX_ROUND_OFF_AMOUNT = 0.99;
 
@@ -15438,26 +15469,46 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
         if (Array.isArray(options.allocations) && options.allocations.length > 0) {
           insertHumanAllocations(items, options.allocations, txId, paidAmountMinor);
         } else {
-          // 自动比例分摊：按 requested_amount_minor 比例，尾差归最大项（旧逻辑，单费用/旧流程保持不变）
-          const totalRequestedMinor = items.reduce((s, r) => s + (r.requested_amount_minor || 0), 0);
-          let allocated = 0;
-          const sorted = items.slice().sort((a, b) => (b.requested_amount_minor || 0) - (a.requested_amount_minor || 0));
-          for (let i = 0; i < sorted.length; i++) {
-            const item = sorted[i];
-            let allocMinor;
-            if (i === 0) {
-              // 最大项：paidAmountMinor - 其余项之和（吸收尾差）
-              const othersSum = sorted.slice(1).reduce((s, r) => s + Math.floor(paidAmountMinor * (r.requested_amount_minor || 0) / totalRequestedMinor), 0);
-              allocMinor = paidAmountMinor - othersSum;
-            } else {
-              allocMinor = Math.floor(paidAmountMinor * (item.requested_amount_minor || 0) / totalRequestedMinor);
+          // Auto allocation must use balances after prior payments and deductions.
+          const payableIds = [...new Set(items.map(item => item.payable_item_id).filter(Boolean))];
+          const settledMap = payableItemsSettledMinor(payableIds);
+          const payableRows = query(
+            'SELECT id, fee_no, payable_amount_minor FROM payable_items WHERE id IN (' +
+            payableIds.map(() => '?').join(',') + ')',
+            payableIds
+          ).rows || [];
+          const payableMap = new Map(payableRows.map(row => [row.id, row]));
+          const remainingByPri = new Map();
+          let totalRemainingMinor = 0;
+          for (const item of items) {
+            const payable = payableMap.get(item.payable_item_id);
+            if (!payable) throw new SettlementError(500, '\u8d39\u7528\u9879 ' + (item.payable_item_id || item.id) + ' \u5173\u8054\u7684\u5e94\u4ed8\u8d39\u7528\u4e0d\u5b58\u5728');
+            const remaining = Number(payable.payable_amount_minor || 0) - (settledMap.get(item.payable_item_id) || 0);
+            if (remaining < 0) {
+              throw new SettlementError(409, '\u8d39\u7528 ' + (payable.fee_no || item.payable_item_id) + ' \u7684\u5df2\u7ed3\u7b97\u91d1\u989d\u8d85\u8fc7\u5e94\u4ed8\u91d1\u989d\uff0c\u4e0d\u80fd\u81ea\u52a8\u5206\u644a');
             }
-            if (allocMinor < 0) allocMinor = 0;
-            allocated += allocMinor;
+            remainingByPri.set(item.id, remaining);
+            totalRemainingMinor += remaining;
+          }
+          if (paidAmountMinor > totalRemainingMinor) {
+            throw new SettlementError(400, '\u672c\u6b21\u4ed8\u6b3e ' + minorToAmount(paidAmountMinor) + ' \u8d85\u8fc7\u5408\u5e76\u8d39\u7528\u5269\u4f59\u672a\u4ed8\u5408\u8ba1 ' + minorToAmount(totalRemainingMinor));
+          }
+          const autoAllocations = allocateMinorByWeights(
+            paidAmountMinor,
+            items,
+            item => remainingByPri.get(item.id) || 0,
+            item => remainingByPri.get(item.id) || 0
+          );
+          for (const item of items) {
+            const allocMinor = autoAllocations.get(item.id) || 0;
+            const remaining = remainingByPri.get(item.id) || 0;
+            if (allocMinor > remaining) {
+              throw new SettlementError(400, '\u8d39\u7528 ' + payableMap.get(item.payable_item_id).fee_no + ' \u81ea\u52a8\u5206\u644a\u91d1\u989d ' + minorToAmount(allocMinor) + ' \u8d85\u8fc7\u5269\u4f59\u672a\u4ed8 ' + minorToAmount(remaining));
+            }
             run(
-              `INSERT INTO payment_allocations
-               (id, transaction_id, payment_request_item_id, allocated_amount_minor, status)
-               VALUES (?, ?, ?, ?, 'reconciled')`,
+              'INSERT INTO payment_allocations ' +
+              '(id, transaction_id, payment_request_item_id, allocated_amount_minor, status) ' +
+              "VALUES (?, ?, ?, ?, 'reconciled')",
               [genId('alloc'), txId, item.id, allocMinor]
             );
           }
@@ -17884,7 +17935,7 @@ app.get('/api/payment-requests/:id', requireApiPermission('payment_view'), async
          ORDER BY pi.fee_type, pi.created_at`,
         [req.params.id]
       );
-      items = itemRows.rows;
+      items = enrichPaymentRequestItemsForAllocation(itemRows.rows);
     }
     // PAY-SOURCE-TRACE-01：来源追溯明细（复用列表同一解析器 resolvePaymentSourcesForRequests，
     // 保证列表与详情口径一致；只读派生，不参与应付/抵扣/已付/未付任何计算）
@@ -17973,7 +18024,7 @@ app.get('/api/payment-requests/:id/items', requireApiPermission('payment_view'),
       payee_key: pr.payee_key,
       payee_name_snapshot: pr.payee_name_snapshot,
       currency: pr.currency,
-      items: rows.rows
+      items: enrichPaymentRequestItemsForAllocation(rows.rows)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
