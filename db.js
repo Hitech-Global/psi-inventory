@@ -367,6 +367,11 @@ if (driver === 'pg') {
         "CREATE INDEX IF NOT EXISTS ix_payment_settlement_request ON payment_settlement_logs(payment_request_id, event_type, status)",
         "CREATE INDEX IF NOT EXISTS ix_alloc_item ON payment_allocations(payment_request_item_id, status)",
         "CREATE INDEX IF NOT EXISTS ix_tx_req ON payment_transactions(payment_request_id)",
+        // PAYMENT-EVIDENCE-DUPLICATE-01：生产实际执行入口（worker_threads）补齐付款凭证附件、指纹与查重索引。
+        "ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_attachment TEXT DEFAULT ''",
+        "ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_fingerprint TEXT DEFAULT ''",
+        "CREATE INDEX IF NOT EXISTS ix_tx_voucher_fingerprint ON payment_transactions(voucher_fingerprint) WHERE voucher_fingerprint <> '' AND trans_status = 'reconciled'",
+        "CREATE INDEX IF NOT EXISTS ix_tx_bank_ref_active ON payment_transactions(LOWER(TRIM(payment_account)), LOWER(TRIM(bank_ref_no))) WHERE TRIM(bank_ref_no) <> '' AND trans_status = 'reconciled'",
         "CREATE INDEX IF NOT EXISTS ix_ci_brand ON commercial_invoices(brand)",
         "CREATE INDEX IF NOT EXISTS ix_ci_country ON commercial_invoices(country)",
         "CREATE INDEX IF NOT EXISTS ix_ci_warehouse ON commercial_invoices(target_warehouse)",

@@ -6,6 +6,8 @@ process.env.NODE_ENV = 'test';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const db = require('../db');
 db.initDatabase();
 
@@ -135,6 +137,13 @@ function seedExistingPayment(opts) {
 }
 
 const operator = { currentUserId: 'tester', currentUserName: 'Test Operator' };
+
+test('PostgreSQL worker-thread migration creates voucher fingerprint before startup backfill', () => {
+  const dbSource = fs.readFileSync(path.join(__dirname, '..', 'db.js'), 'utf8');
+  assert.match(dbSource, /ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_fingerprint/);
+  assert.match(dbSource, /ix_tx_voucher_fingerprint/);
+  assert.match(dbSource, /ix_tx_bank_ref_active/);
+});
 
 test('payment voucher fingerprint ignores upload metadata and filenames', () => {
   const a = JSON.stringify([{ name: 'proof-a.png', dataUrl: 'data:image/png;base64,QUJD\nREVG' }]);
