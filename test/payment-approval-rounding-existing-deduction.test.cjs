@@ -106,6 +106,7 @@ test('final approval applies deduction inside the same transaction before paymen
  assert.doesNotMatch(finance,/await api\('\/api\/payment-requests\/\+id\+'\/deduction'/);
  assert.match(finance,/body\.has_deduction=1/);
 });
+test('already-effective deduction stays locked after reopening a pending approval',()=>{ const ui=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8'); const section=ui.slice(ui.indexOf('const paymentFormHtml='),ui.indexOf('const opinionHtml=')); assert.equal((section.match(/Number\(p\.deduction_amount\|\|0\)>0/g)||[]).length,3); assert.doesNotMatch(section,/isPendingPaymentConfirmation&&Number\(p\.deduction_amount\|\|0\)>0/); });
 test('previously committed identical deduction can be safely retried',()=>{
  const helper=source.slice(source.indexOf('function applyDeductionSettlementInTx('),source.indexOf('async function applyDeductionSettlement('));
  assert.match(helper,/activeAmount - amount/);

@@ -19361,15 +19361,15 @@ async function viewPayment(id, mode, backCtx){
         +'<div class="form-group form-group-full"><label>'+t("payment.payment_account","付款账户")+'</label>'
         +'<input type="text" id="pay-final-account" placeholder="'+t("payment.payment_account_placeholder","选填，用于结算记录付款账户")+'"></div>'
         +'<div class="form-group"><label>'+t("payment.deduction_amount","抵扣金额")+'</label>'
-        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+        +(Number(p.deduction_amount||0)>0
             ? '<input type="number" class="is-disabled" disabled value="'+Number(p.deduction_amount||0).toFixed(2)+'">'
             : '<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="recalcFinalPay()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.deduction_source_type","抵扣来源类型")+'</label>'
-        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+        +(Number(p.deduction_amount||0)>0
             ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_type||'—')+'">'
             : '<select id="pay-final-ded-type" onchange="recalcFinalPay()"><option value="">'+t("payment.ded_type_select","选择")+'</option><option value="other_payment">'+t("payment.ded_other_payment","其他付款多付")+'</option><option value="price_diff">'+t("payment.ded_price_diff","价格差异")+'</option><option value="other">'+t("payment.ded_other","其他")+'</option></select>')+'</div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.deduction_reason","抵扣原因/备注")+'</label>'
-        +(isPendingPaymentConfirmation&&Number(p.deduction_amount||0)>0
+        +(Number(p.deduction_amount||0)>0
             ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_desc||'—')+'">'
             : '<input type="text" id="pay-final-ded-desc" placeholder="'+t("payment.deduction_reason_placeholder","有抵扣时建议填写")+'" oninput="recalcFinalPay()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
