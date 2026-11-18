@@ -825,9 +825,9 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     });
     seedPaymentRequest('pr_paid_anchor', 'PR-PAID-ANCHOR', 'RMB', 1000, 'ci_paid_anchor', 'warehouse_arrival', 'freight');
     seedCiCostItem('cci_paid_anchor', 'ci_paid_anchor', 'pr_paid_anchor', 'warehouse_arrival', 'freight', 1000, 'RMB', 'lb_paid_anchor');
-    seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01000001, '2026-11-02', 'THB');
+    seedPaymentLog('psl_paid_anchor', 'pr_paid_anchor', 1000, 5010, 5.01000001, '2026-11-09', 'THB');
     run('UPDATE payment_settlement_logs SET rmb_rate=?, rmb_rate_date=?, rmb_amount=? WHERE id=?',
-      [1, '2026-11-02', 1000, 'psl_paid_anchor']);
+      [1, '2026-11-09', 1000, 'psl_paid_anchor']);
     seedPL('pl_paid_anchor', 'PL-PAID-ANCHOR', 'ci_paid_anchor', 'lb_paid_anchor', { status: 'confirmed', country: 'Thailand', warehouse: 'WH-TH' });
     seedPLItem('pli_paid_anchor', 'pl_paid_anchor', 'SKU-PAID-ANCHOR', 10, 1, 10);
     seedInventory('SKU-PAID-ANCHOR', 'Thailand', 'WH-TH', 0, 0);
@@ -837,12 +837,13 @@ describe('computeWacCostFacts - freight payment date + goods FX', () => {
     const result = computeWacCostFacts('lb_paid_anchor');
     assert.equal(result.blockers.length, 0, JSON.stringify(result.blockers));
     assert.equal(result.items[0].product_fx_rate, 5.01000001);
-    assert.equal(result.items[0].product_fx_rate_date, '2026-11-02');
+    assert.equal(result.items[0].product_fx_rate_date, '2026-11-09');
     assert.equal(result.items[0].product_fx_rate_type, 'payment_settlement');
     assert.equal(result.items[0].product_fx_direction, 'payment_settlement');
     assert.equal(result.items[0].product_cost_local, 5010);
     assert.equal(result.meta.rmb_to_local_rate, 5.01000001);
-    assert.equal(result.meta.rmb_to_local_rate_date, '2026-11-02');
+    assert.equal(result.meta.rmb_to_local_rate_date, '2026-11-09');
+    assert.equal(result.meta.actual_arrival_date, '2026-11-07');
   });
 
   test('Same-currency → rate=1, no FX needed', () => {
@@ -1154,13 +1155,12 @@ describe('computeWacCostFacts - duty', () => {
     seedCIItem('cii_d2', 'ci_duty', 'SKU-D2', 100, 50, 0, 0.10);
 
     seedBatch('lb_duty', 'BATCH-DUTY', 'ci_duty', {
-      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 500, vatGst: 200, freightCurrency: 'USD'
+      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 500, vatGst: 200, freightCurrency: 'IDR'
     });
     seedPL('pl_duty', 'PL-DUTY', 'ci_duty', 'lb_duty', { status: 'confirmed' });
     seedPLItem('pli_d1', 'pl_duty', 'SKU-D1', 100, 2, 500);
     seedPLItem('pli_d2', 'pl_duty', 'SKU-D2', 100, 1, 300);
 
-    seedExchangeRate('USD', 'IDR', '2026-03-01', 15000);
     seedInventory('SKU-D1', 'Indonesia', 'WH-JKT', 0, 0);
     seedInventory('SKU-D2', 'Indonesia', 'WH-JKT', 0, 0);
 
@@ -1168,10 +1168,36 @@ describe('computeWacCostFacts - duty', () => {
     assert.equal(result.blockers.length, 0, `Expected 0 blockers, got: ${JSON.stringify(result.blockers)}`);
 
     assert.equal(result.meta.duty_business_amount, 500);
-    assert.equal(result.meta.duty_local_amount, 7500000);
+    assert.equal(result.meta.duty_local_amount, 500);
 
     const dutyTotal = result.items.reduce((s, i) => s + i.customs_cost_local, 0);
-    assert.ok(Math.abs(dutyTotal - 7500000) < 1, `duty allocation sum=${dutyTotal}, expected ~7500000`);
+    assert.ok(Math.abs(dutyTotal - 500) < 1, `duty allocation sum=${dutyTotal}, expected ~500`);
+  });
+
+  test('legacy foreign-currency batch duty cannot use inbound-date FX without a payment date', () => {
+    const db = require('./db').getDB();
+    for (const table of [
+      'logistics_batches', 'packing_lists', 'packing_list_items', 'commercial_invoices',
+      'commercial_invoice_items', 'ci_cost_items', 'payment_requests', 'payment_settlement_logs',
+      'exchange_rates', 'inventory'
+    ]) db.exec('DELETE FROM ' + table);
+
+    seedCI('ci_legacy_duty_fx', 'CI-LEGACY-DUTY-FX', 'IDR', 10000, 'cbm');
+    seedCIItem('cii_legacy_duty_fx', 'ci_legacy_duty_fx', 'SKU-LEGACY-DUTY-FX', 100, 50, 0, 0.05);
+    seedBatch('lb_legacy_duty_fx', 'BATCH-LEGACY-DUTY-FX', 'ci_legacy_duty_fx', {
+      arrivalDate: '2026-03-01', totalFreight: 0, customsDuty: 500, vatGst: 0, freightCurrency: 'USD'
+    });
+    seedPL('pl_legacy_duty_fx', 'PL-LEGACY-DUTY-FX', 'ci_legacy_duty_fx', 'lb_legacy_duty_fx', { status: 'confirmed' });
+    seedPLItem('pli_legacy_duty_fx', 'pl_legacy_duty_fx', 'SKU-LEGACY-DUTY-FX', 100, 2, 500);
+    seedExchangeRate('USD', 'IDR', '2026-03-01', 15000);
+    seedInventory('SKU-LEGACY-DUTY-FX', 'Indonesia', 'WH-JKT', 0, 0);
+
+    const result = computeWacCostFacts('lb_legacy_duty_fx');
+    const codes = result.blockers.map(b => b.code);
+    assert.ok(codes.includes('DUTY_PAYMENT_DATE_MISSING'),
+      `Expected missing actual duty payment date blocker, got: ${JSON.stringify(result.blockers)}`);
+    assert.equal(result.meta.duty_local_amount, 0);
+    assert.equal(result.meta.duty_payment_date, '');
   });
 
   test('CUSTOMS_RATE_MISSING when duty > 0 but customs rate is null', () => {
@@ -2373,12 +2399,24 @@ test('WAC confirmation persists the actual freight-payment FX date and matrix sh
   const confirmEnd = server.indexOf("app.post('/api/wac/notifications/", confirmStart);
   assert.ok(confirmStart >= 0 && confirmEnd > confirmStart, 'WAC confirmation route must exist');
   const confirmRoute = server.slice(confirmStart, confirmEnd);
-  assert.ok(confirmRoute.includes('meta.rmb_to_local_rate_date || meta.freight_last_paid_date || inboundDate'),
-    'FX snapshot date must follow actual payment settlement date');
+  assert.ok(confirmRoute.includes('meta.rmb_to_local_rate_date || meta.freight_last_paid_date) ||'),
+    'FX snapshot date must follow actual payment settlement date only');
+  assert.ok(!confirmRoute.includes('meta.freight_last_paid_date || inboundDate'),
+    'inbound date must never be used as an FX-date fallback');
+  assert.ok(confirmRoute.includes('last_inbound_date: inboundDate'),
+    'WAC history must persist the actual inbound date separately');
   assert.ok(confirmRoute.includes('fx_rate_date: fxSnapshot ? fxSnapshot.rate_date : paymentFxDate'),
     'WAC history must save the payment FX date even when the exact rate is missing');
   assert.ok(!confirmRoute.includes('resolveExactRmbToLocalRate(localCurrency, inboundDate'),
     'WAC confirmation must not resolve FX by inbound date');
+  const matrixStart = server.indexOf("app.get('/api/wac/history-matrix'");
+  const matrixEnd = server.indexOf('/* WAC-BATCH-EXCLUSION', matrixStart);
+  assert.ok(matrixStart >= 0 && matrixEnd > matrixStart, 'WAC history matrix API must exist');
+  const matrixRoute = server.slice(matrixStart, matrixEnd);
+  assert.ok(matrixRoute.includes("const fxDate = normalizeWacHistoryDate(r.fx_rate_date) || ''"),
+    'history matrix must use only the recorded FX settlement date');
+  assert.ok(!matrixRoute.includes('normalizeWacHistoryDate(r.last_inbound_date)'),
+    'history matrix must not substitute inbound date for missing FX date');
 
   assert.ok(calculator.includes('rmb_to_local_rate: rmbToLocalEffectiveRate'),
     'calculator must expose the applied payment-derived RMB→local rate');
@@ -2389,6 +2427,8 @@ test('WAC confirmation persists the actual freight-payment FX date and matrix sh
   const model = app.slice(modelStart, modelEnd);
   assert.ok(model.includes('maximumFractionDigits:2'), 'export model WAC values must use two decimals');
   assert.ok(model.includes('r.fx_rate_date'), 'export model must label the actual FX snapshot date');
+  assert.ok(model.includes('__missing_fx_date__'), 'export model must preserve records whose FX date is unknown');
+  assert.ok(!model.includes('r.fx_rate_date || r.last_inbound_date'), 'export model must not substitute inbound date for FX date');
 
   const renderStart = app.indexOf('async function loadWacHistoryMatrix(');
   const renderEnd = app.indexOf('// ==================== WAC历史记录导入', renderStart);
