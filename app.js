@@ -15470,11 +15470,14 @@ function moveWacHistoryCalendar(monthDelta) {
 function updateWacHistoryDateRangeLabel() {
   const from = document.getElementById('wac-matrix-from')?.value || '';
   const to = document.getElementById('wac-matrix-to')?.value || '';
-  let label = '确认日期范围';
-  if (from && to) label = from + ' 至 ' + to;
-  else if (from) label = from + ' 起';
+  const rangeTitle = t('wac.matrix.inbound_date_range', '最后入库日期范围');
+  const rangeText = from && to ? from + ' 至 ' + to : (from ? from + ' 起' : '');
+  const label = rangeText
+    ? t('wac.matrix.inbound_date_short', '最后入库') + ' ' + rangeText
+    : rangeTitle;
+  const title = rangeText ? rangeTitle + '：' + rangeText : rangeTitle;
   const el = document.getElementById('wac-matrix-date-label');
-  if (el) { el.textContent = label; el.title = label; }
+  if (el) { el.textContent = label; el.title = title; }
 }
 
 function selectWacHistoryCalendarDate(value) {
@@ -15624,7 +15627,7 @@ async function renderWacHistoryMatrix() {
         _wacMatrixMultiMarkup('warehouse','全部仓库') +
         '<div class="wac-history-date-range">' +
           '<button type="button" class="wac-history-date-trigger" id="wac-matrix-date-trigger" onclick="toggleWacHistoryDateRange();event.stopPropagation()">' +
-            '<span id="wac-matrix-date-label">确认日期范围</span><span class="wac-history-chevron">⌄</span>' +
+            '<span id="wac-matrix-date-label">' + esc(t('wac.matrix.inbound_date_range', '最后入库日期范围')) + '</span><span class="wac-history-chevron">⌄</span>' +
           '</button>' +
           '<div class="wac-history-date-range-panel" id="wac-matrix-date-range-panel" style="display:none" onclick="event.stopPropagation()">' +
             '<input id="wac-matrix-from" type="hidden" value="">' +
@@ -15727,7 +15730,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     });
   });
 
-  const headers = ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','最后入库日期'].concat(
+  const headers = ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化',t('wac.matrix.latest_wac_inbound_date', 'Latest WAC 对应入库日期')].concat(
     dates.map(function(d) {
       const rates = Array.from(dateFxLabels.get(d) || []).filter(Boolean);
       return (rates.length ? rates.join(' / ') + '\n' : '') + d;
@@ -15805,7 +15808,7 @@ async function exportWacHistoryMatrix() {
     }
     const worksheet = XLSX.utils.aoa_to_sheet([model.headers].concat(model.rows));
     worksheet['!cols'] = model.headers.map(function(header,index) {
-      return {wch:index < 7 ? [18,14,14,18,20,28,18][index] : 24};
+      return {wch:index < 7 ? [18,14,14,18,20,28,30][index] : 24};
     });
     if (typeof XLSX.utils.encode_range === 'function') {
       worksheet['!autofilter'] = {ref:XLSX.utils.encode_range({
