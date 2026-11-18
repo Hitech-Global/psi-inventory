@@ -302,3 +302,26 @@ test('ciPaymentRecords: 单 CI 维度金额与 SSOT 公式逐项一致（基于 
   // 反例：PR 级整单实付为 400（CI-A 300 + CI-B 100），展示层必须不是 PR 级
   assert.notEqual(r.actual_paid_amount, 400);
 });
+
+
+test('ciPaymentRecords: final round-off follows each CI actual remaining cents, not original gross ratio', () => {
+  insertPR('PAY-TAIL-ROUNDING', { request_no: 'PAY-MULTI-TAIL-ROUNDING', payment_status: 'paid', approval_status: 'approved',
+    payable_amount: 256642.40, created_at: '2026-11-18T00:00:00Z' });
+  pri('pri_tail_a', 'pi_tail_a', 'PAY-TAIL-ROUNDING', 16666860);
+  pri('pri_tail_b', 'pi_tail_b', 'PAY-TAIL-ROUNDING', 8997380);
+  tx('tx_tail_a', 'PAY-TAIL-ROUNDING', 'TX-TAIL-A', 16666848, '2026-11-18', 'BCA');
+  tx('tx_tail_b', 'PAY-TAIL-ROUNDING', 'TX-TAIL-B', 8997372, '2026-11-18', 'BCA');
+  alloc('al_tail_a', 'tx_tail_a', 'pri_tail_a', 16666848);
+  alloc('al_tail_b', 'tx_tail_b', 'pri_tail_b', 8997372);
+  log('sl_tail_rounding', 'PAY-TAIL-ROUNDING', 'rounding', 0.20, 0);
+
+  const a = ciPaymentRecords(['pi_tail_a'], { excludeLegacy: true })[0];
+  const b = ciPaymentRecords(['pi_tail_b'], { excludeLegacy: true })[0];
+  assert.equal(a.actual_paid_amount, 166668.48);
+  assert.equal(b.actual_paid_amount, 89973.72);
+  assert.equal(a.rounding_amount, 0.12);
+  assert.equal(b.rounding_amount, 0.08);
+  assert.equal(a.outstanding, 0);
+  assert.equal(b.outstanding, 0);
+  assert.equal(a.rounding_amount + b.rounding_amount, 0.20);
+});

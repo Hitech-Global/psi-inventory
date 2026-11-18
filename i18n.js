@@ -5455,4 +5455,15 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.zh["wac.calc.alloc.unit_formula_inspection"]="单位商检 = SKU商检分摊额合计 ÷ 本批次数量"; I18N.dict.en["wac.calc.alloc.unit_formula_inspection"]="Unit Inspection = Total SKU Inspection Allocation ÷ Batch Qty"; I18N.dict.id["wac.calc.alloc.unit_formula_inspection"]="Inspeksi per Unit = Total Alokasi Inspeksi SKU ÷ Jumlah Batch";
   I18N.dict.zh["wac.calc.alloc.unit_formula_other"]="单位其他费用 = SKU其他费用分摊额合计 ÷ 本批次数量"; I18N.dict.en["wac.calc.alloc.unit_formula_other"]="Unit Other Fees = Total SKU Other Fee Allocation ÷ Batch Qty"; I18N.dict.id["wac.calc.alloc.unit_formula_other"]="Biaya Lain per Unit = Total Alokasi Biaya Lain SKU ÷ Jumlah Batch";
   I18N.dict.zh["wac.calc.alloc.rounding_note"]="系统按4位小数分摊，并将尾差调整到权重最大的SKU；金额显示两位小数。"; I18N.dict.en["wac.calc.alloc.rounding_note"]="Allocations are calculated to 4 decimals; any remainder is assigned to the SKU with the largest weight. Amounts display 2 decimals."; I18N.dict.id["wac.calc.alloc.rounding_note"]="Alokasi dihitung hingga 4 desimal; selisih pembulatan diberikan ke SKU dengan bobot terbesar. Nilai ditampilkan 2 desimal.";
+
+  I18N.dict.zh["ci.summary.paid_total"]="已付款总金额";
+  I18N.dict.en["ci.summary.paid_total"]="Total Paid Amount";
+  I18N.dict.id["ci.summary.paid_total"]="Total Dibayar";
+  I18N.dict.zh["ci.summary.unpaid_total"]="剩余未付款总金额";
+  I18N.dict.en["ci.summary.unpaid_total"]="Remaining Unpaid Amount";
+  I18N.dict.id["ci.summary.unpaid_total"]="Sisa Belum Dibayar";
+  I18N.dict.zh["ci.summary.filtered"]="当前筛选结果";
+  I18N.dict.en["ci.summary.filtered"]="Current Filter Results";
+  I18N.dict.id["ci.summary.filtered"]="Hasil Filter Saat Ini";
+
 })();

@@ -38,7 +38,7 @@ function makeContext() {
 }
 
 test('CI list gets one compact single-date control without changing existing layout rules', () => {
-  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261117-3/);
+  assert.match(index, /assets\/ci-single-date-filter\.js\?v=20261118-1/);
   assert.match(script, /type="date"/);
   assert.match(script, /ci-date-filter-group/);
   assert.match(script, /translate\('common\.all', '全部'\)/);
@@ -91,6 +91,29 @@ test('single date filters operational and historical CI rows by CI date', () => 
     [['RMB', 100], ['USD', 60]]
   );
   assert.equal(context.lastSummary.total.rmb_pending_count, 2);
+});
+
+test('new three-card summary remains synchronized when the injected date filter changes', () => {
+  const { context, fields } = makeContext();
+  const operational = [
+    { id: 'op-a', ci_date: '2026-11-05', currency: 'RMB', goods_amount: 100, actual_deducted_deposit: 10, balance_paid_amount: 20, balance_unpaid_amount: 70, ci_status: 'completed' },
+    { id: 'op-b', ci_date: '2026-11-06', currency: 'RMB', goods_amount: 300, actual_deducted_deposit: 30, balance_paid_amount: 40, balance_unpaid_amount: 230, ci_status: 'completed' }
+  ];
+  const historical = [
+    { id: 'hist-a', ci_date: '2026-11-05', currency: 'USD', gross_goods_amount: 50, historical_paid_amount: 5, subsequent_paid_amount: 10, unpaid_amount: 35 }
+  ];
+  context.renderUnifiedCITable(operational, historical);
+  context.renderPurchaseAmountSummary(operational, historical);
+  assert.deepEqual(Array.from(context.lastSummary.operationalRows, row => row.id), ['op-a', 'op-b']);
+  assert.deepEqual(Array.from(context.lastSummary.historicalRows, row => row.id), ['hist-a']);
+
+  fields['ci-date-filter-input'].value = '2026-11-05';
+  context.__ciSingleDateFilterV1.renderLatest();
+  assert.deepEqual(Array.from(context.lastSummary.operationalRows, row => row.id), ['op-a']);
+  assert.deepEqual(Array.from(context.lastSummary.historicalRows, row => row.id), ['hist-a']);
+  assert.equal(context.lastSummary.total.count, 2);
+  assert.equal(context.lastSummary.total.by_currency.find(row => row.currency === 'RMB').amount, 100);
+  assert.equal(context.lastSummary.total.by_currency.find(row => row.currency === 'USD').amount, 50);
 });
 
 test('clearing the single date restores all currently loaded CI rows and totals', () => {

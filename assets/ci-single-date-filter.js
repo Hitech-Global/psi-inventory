@@ -81,6 +81,8 @@
       operational: amountScope(operational, 'goods_amount'),
       historical: amountScope(historical, 'gross_goods_amount'),
       total: amountScope(totalRows, 'amount'),
+      operationalRows: operational,
+      historicalRows: historical,
       rmb_note: lastServerSummary && lastServerSummary.rmb_note || ''
     };
   }
@@ -128,7 +130,12 @@
   }
 
   if (typeof originalSummaryRenderer === 'function') {
-    global.renderPurchaseAmountSummary = function (summary) {
+    global.renderPurchaseAmountSummary = function (summary, historicalRows) {
+      if (Array.isArray(summary) && Array.isArray(historicalRows)) {
+        amountPermission = true;
+        latestRows = { operational: summary.slice(), historical: historicalRows.slice() };
+        return originalSummaryRenderer.call(this, buildSummary(latestRows.operational, latestRows.historical));
+      }
       if (summary && summary.amount_view_allowed === false) {
         amountPermission = false;
         lastServerSummary = null;
@@ -144,7 +151,6 @@
       return originalSummaryRenderer.call(this, summary);
     };
   }
-
   function translate(key, fallback) {
     try {
       return typeof global.t === 'function' ? global.t(key, fallback) : fallback;
