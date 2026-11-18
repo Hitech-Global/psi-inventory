@@ -25,7 +25,7 @@ test('CI summary cards use filtered CI rows, currency grouping and actual-paid-o
  assert.match(html,/剩余未付款总金额/);
  assert.match(html,/RMB 100\.00/);
  assert.match(html,/USD 50\.00/);
- assert.match(html,/RMB 30\.00/);
+ assert.match(html,/RMB 20\.00/);
  assert.match(html,/USD 15\.00/);
  assert.match(html,/RMB 70\.00/);
  assert.match(html,/USD 31\.80/);
@@ -44,6 +44,6 @@ test('summary renderer accepts the date-filter bridge payload and uses its alrea
 });
 test('CI list refresh recalculates the three cards from the currently fetched filtered rows',()=>{
  const load=app.slice(app.indexOf('async function loadCI()'),app.indexOf('async function createHistoricalCI()'));
- assert.match(load,/renderPurchaseAmountSummary\(operationalRows,historicalRows\)/);
+ assert.match(load,/renderPurchaseAmountSummary\(\{operationalRows:operationalRows,historicalRows:historicalRows\}\)/);
  assert.doesNotMatch(load,/api\('\/api\/purchase-amount-summary'\)/);
 });

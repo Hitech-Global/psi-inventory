@@ -12602,7 +12602,7 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     const cur=row.currency||'';
     if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
     add(metrics.total,cur,row.goods_amount);
-    add(metrics.paid,cur,Number(row.actual_deducted_deposit||0)+Number(row.balance_paid_amount||0));
+    add(metrics.paid,cur,Number(row.balance_paid_amount||0));
     add(metrics.unpaid,cur,row.balance_unpaid_amount);
   });
   (historicalData||[]).forEach(function(row){
@@ -12687,7 +12687,7 @@ async function loadCI(){
     const operationalRows=results[0]||[],historicalRows=results[1]||[];
     table.innerHTML=renderUnifiedCITable(operationalRows,historicalRows);
     const summary=document.getElementById('ci-purchase-summary');
-    if(summary) summary.innerHTML=hasPermission('ci_amount_view')?renderPurchaseAmountSummary(operationalRows,historicalRows):'';
+    if(summary) summary.innerHTML=hasPermission('ci_amount_view')?renderPurchaseAmountSummary({operationalRows:operationalRows,historicalRows:historicalRows}):'';
   }catch(e){showFlash(e.message,'danger')}
 }
 async function createHistoricalCI(){
