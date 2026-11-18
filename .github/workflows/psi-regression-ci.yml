@@ -16,6 +16,7 @@ on:
       - 'scripts/logistics-detail-loading-hotfix.cjs'
       - 'test/logistics-detail-loading-hotfix.test.cjs'
       - 'index.html'
+      - 'test/frontend-asset-cache-busting.test.cjs'
       - 'package.json'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
@@ -271,6 +272,8 @@ jobs:
           node --check test/wac-batch-exclusion.test.cjs
       - name: Test WAC history matrix selects latest confirmation chronologically
         run: node --test test/wac-history-matrix-latest-order.test.cjs
+      - name: Test frontend core asset cache-busting
+        run: node test/frontend-asset-cache-busting.test.cjs
       - name: Test page-scoped modal cleanup on navigation
         run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
