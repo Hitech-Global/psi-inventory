@@ -9,6 +9,17 @@ module.exports = function installQuotationManagement(deps) {
     : query('PRAGMA table_info(quotation_prices)').rows;
   const quotationColumns = new Set(quotationColumnRows.map(r => String(r.column_name || r.name || '')));
   const quotationAddColumns = [
+    // Older production databases may have the legacy quotation_prices table without
+    // the current core quote fields. Add these before any supplier/brand backfill SQL.
+    ['brand', "TEXT NOT NULL DEFAULT ''"],
+    ['product_type', "TEXT NOT NULL DEFAULT ''"],
+    ['quote_price', 'NUMERIC NOT NULL DEFAULT 0'],
+    ['currency', "TEXT NOT NULL DEFAULT ''"],
+    ['quote_date', "TEXT NOT NULL DEFAULT ''"],
+    ['remark', "TEXT DEFAULT ''"],
+    ['import_batch_id', 'TEXT'],
+    ['created_at', 'TEXT'],
+    ['updated_at', 'TEXT'],
     ['supplier_id', "TEXT NOT NULL DEFAULT ''"],
     ['supplier_part_no', "TEXT NOT NULL DEFAULT ''"],
     ['supplier_part_no_key', "TEXT NOT NULL DEFAULT ''"],
@@ -24,8 +35,26 @@ module.exports = function installQuotationManagement(deps) {
   }
   run("UPDATE quotation_prices SET supplier_part_no=sku_code WHERE supplier_part_no=''");
   run("UPDATE quotation_prices SET supplier_part_no_key=UPPER(TRIM(supplier_part_no)) WHERE supplier_part_no_key=''");
-  run("UPDATE quotation_prices SET supplier_id=COALESCE((SELECT id FROM suppliers WHERE name=quotation_prices.brand OR associated_brands LIKE '%' || quotation_prices.brand || '%' ORDER BY CASE WHEN name=quotation_prices.brand THEN 0 ELSE 1 END LIMIT 1),'') WHERE supplier_id=''");
-  run("UPDATE quotation_prices SET psi_sku_code=sku_code,match_status='matched' WHERE psi_sku_code='' AND EXISTS (SELECT 1 FROM skus WHERE UPPER(TRIM(skus.sku_code))=UPPER(TRIM(quotation_prices.sku_code)) AND skus.brand=quotation_prices.brand)");
+  // Keep legacy backfills portable: SQLite cannot resolve the target table name/alias
+  // from these correlated UPDATE subqueries, so select candidate rows and update by id.
+  const quotationRowsForSupplier = query("SELECT id, brand FROM quotation_prices WHERE supplier_id = ''").rows || [];
+  for (const row of quotationRowsForSupplier) {
+    const brand = String(row.brand || '').trim();
+    if (!brand) continue;
+    const supplier = queryOne(
+      "SELECT id FROM suppliers WHERE name = ? OR associated_brands LIKE ? ORDER BY CASE WHEN name = ? THEN 0 ELSE 1 END LIMIT 1",
+      [brand, '%' + brand + '%', brand]
+    );
+    if (supplier && supplier.id) run('UPDATE quotation_prices SET supplier_id = ? WHERE id = ?', [supplier.id, row.id]);
+  }
+  const quotationRowsForSku = query("SELECT id, sku_code, brand FROM quotation_prices WHERE psi_sku_code = '' AND match_status = 'matched'").rows || [];
+  for (const row of quotationRowsForSku) {
+    const sku = queryOne(
+      'SELECT sku_code FROM skus WHERE UPPER(TRIM(sku_code)) = UPPER(TRIM(?)) AND brand = ? LIMIT 1',
+      [row.sku_code, row.brand]
+    );
+    if (sku) run("UPDATE quotation_prices SET psi_sku_code = ?, match_status = 'matched' WHERE id = ?", [row.sku_code, row.id]);
+  }
   run("UPDATE quotation_prices SET match_status='unlinked' WHERE psi_sku_code='' AND match_status='matched'");
   run("CREATE TABLE IF NOT EXISTS quotation_sku_mappings (id TEXT PRIMARY KEY, supplier_id TEXT NOT NULL DEFAULT '', brand TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL, supplier_part_no_key TEXT NOT NULL, psi_sku_code TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT '', updated_at TEXT NOT NULL DEFAULT '', UNIQUE(supplier_id,brand,supplier_part_no_key))");
   run('CREATE INDEX IF NOT EXISTS idx_quotation_sku_mappings_lookup ON quotation_sku_mappings (supplier_id,brand,supplier_part_no_key)');
