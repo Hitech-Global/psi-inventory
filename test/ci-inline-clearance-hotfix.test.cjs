@@ -19,6 +19,8 @@ assert.match(ui,/清关方式/);
 assert.match(ui,/global\.api\('\/api\/commercial-invoices\/'/);
 new Function(ui);
 assert.ok(ui.includes("global.updateCIClearanceInline(select,select.getAttribute('data-ci-id'))"),'delegated change handler must pass the selected CI id to the existing save function');
+assert.ok(ui.includes("v&&v!=='formal'&&v!=='non_formal'"),'legacy clearance values must not silently render as unset');
+assert.ok(ui.includes('原值待核对：'),'legacy clearance values must be shown explicitly until corrected');
 assert.ok(ui.includes("doc.addEventListener('click'"),'selector clicks must be intercepted before CI row navigation');
 const server=[
 "app.put('/api/commercial-invoices/:id', handler);",
