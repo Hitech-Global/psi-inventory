@@ -18,6 +18,8 @@ assert.ok(patched.includes("clearanceSelect.className='ci-clearance-inline'"),'o
 assert.ok(patched.includes("clearanceSelect.disabled=!(typeof hasPermission==='function'&&hasPermission('ci_edit'))"),'operational clearance selector must respect ci_edit permission');
 assert.ok(patched.includes("clearanceSelect.setAttribute('data-saved-value',clearanceValue)"),'operational clearance selector must retain its saved value for rollback');
 assert.ok(patched.includes("clearanceSelect.setAttribute('data-ci-id',String(c.id))"),'operational selector must expose CI id for delegated save handling');
+assert.ok(patched.includes("if(clearanceValue===option[0])node.setAttribute('selected','selected')"),'selected clearance option must survive outerHTML serialization');
+assert.ok(!patched.includes('node.selected=clearanceValue===option[0]'),'serialized selector must not rely on the transient selected property');
 assert.ok(!patched.includes('clearanceSelect.onchange='),'serialized rows must not rely on DOM property change handlers');
 assert.ok(!patched.includes('clearanceSelect.onclick='),'serialized rows must not rely on DOM property click handlers');
 assert.ok(patched.includes("t('ci.clearance.non_formal','非正清')"),'operational clearance selector must use the localized non-formal label');
