@@ -1262,6 +1262,7 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  // PostgreSQL production uses db.js worker_threads migrations; keep the voucher_fingerprint schema there in sync before this backfill.
   try {
     const fingerprintCount = backfillPaymentVoucherFingerprints();
     console.log('[STARTUP] 付款凭证指纹补齐完成 ✓', fingerprintCount);
