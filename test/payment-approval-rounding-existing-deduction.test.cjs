@@ -3,7 +3,7 @@
 // In-process test uses a mocked settlement SSOT and performs zero DB writes.
 const test=require('node:test'), assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const source=fs.readFileSync(path.join(__dirname,'..','server.js'),'utf8');
-const start=source.indexOf('const MAX_ROUND_OFF_AMOUNT = 0.20;');
+const start=source.indexOf('const MAX_ROUND_OFF_AMOUNT = 0.99;');
 const end=source.indexOf('function settleFinalPaymentApprovalInTx(',start);
 assert.ok(start>=0&&end>start,'final approval validation must remain available');
 const approvalCode=source.slice(start,end);
@@ -46,7 +46,7 @@ test('earlier partial transaction and deduction combine with fresh current outst
  assert.equal(v.applyRoundOff,true);
 });
 test('0.20 is accepted even when actual payment itself has cents',()=>{ const h=createHarness({gross:1000.30,deduction:0}); const v=h.run({actual_paid_amount:1000.10,rounding_amount:0.20}); assert.equal(v.roundingAmount,0.20); assert.equal(v.isPartialPayment,false); assert.equal(v.applyRoundOff,true); });
-test('amount above 0.20 is rejected even when it exactly matches the remainder',()=>{ const h=createHarness({gross:1000.21,deduction:0}); assert.throws(()=>h.run({actual_paid_amount:1000,rounding_amount:0.21}),e=>e.status===400&&/不能超过 0.20/.test(e.message)); });
+test('0.46 is accepted; round-off must remain below 1.00',()=>{ const h=createHarness({gross:1000.46,deduction:0}); const v=h.run({actual_paid_amount:1000,rounding_amount:0.46}); assert.equal(v.roundingAmount,0.46); assert.equal(v.isPartialPayment,false); const upper=createHarness({gross:1000.99,deduction:0}); assert.equal(upper.run({actual_paid_amount:1000,rounding_amount:0.99}).roundingAmount,0.99); const whole=createHarness({gross:1001,deduction:0}); assert.throws(()=>whole.run({actual_paid_amount:1000,rounding_amount:1}),e=>e.status===400&&/小于 1.00/.test(e.message)); });
 test('deduction already covers amount: does not permit another payment',()=>{
  const h=createHarness({gross:200,deduction:200});
  assert.throws(()=>h.run({actual_paid_amount:1,rounding_amount:0}),e=>e.status===409);
@@ -73,7 +73,7 @@ test('full payment for fractional outstanding without round-off remains valid',(
  assert.equal(v.isPartialPayment,false);
  assert.equal(v.roundingAmount,0);
 });
-test('0.20 round-off is accepted with fractional actual payment; whole-unit remainder remains blocked',()=>{
+test('round-off below 1.00 is accepted with fractional actual payment; whole-unit remainder remains blocked',()=>{
  const h=createHarness({gross:1000.20,deduction:0});
  const v=h.run({actual_paid_amount:1000.00,rounding_amount:0.20});
  assert.equal(v.isPartialPayment,false); assert.equal(v.applyRoundOff,true);
@@ -95,6 +95,22 @@ test('negative/NaN inputs and missing voucher are rejected before settlement',()
 test('transaction SSOT is used and not payment.unpaid_amount (which can be stale)',()=>{
  const h=createHarness(),p=h.payment;p.unpaid_amount=42976.72;
  const v=h.run();assert.equal(v.roundingAmount,.20);assert.equal(v.isPartialPayment,false);
+});
+test('final approval applies deduction inside the same transaction before payment settlement',()=>{
+ const route=source.slice(source.indexOf("app.post('/api/payment-requests/:id/approve'"),source.indexOf("app.post('/api/payment-requests/:id/reverse-payment'"));
+ assert.match(route,/transaction\(\(\) => \{/);
+ assert.match(route,/applyDeductionSettlementInTx\(req\.params\.id/);
+ assert.ok(route.indexOf('applyDeductionSettlementInTx(req.params.id')<route.indexOf('settleFinalPaymentApprovalInTx(approvedPayment'));
+ const ui=fs.readFileSync(path.join(__dirname,'..','app.js'),'utf8');
+ const finance=ui.slice(ui.indexOf('async function financeApprove('),ui.indexOf('async function financeConfirmPay('));
+ assert.doesNotMatch(finance,/await api\('\/api\/payment-requests\/\+id\+'\/deduction'/);
+ assert.match(finance,/body\.has_deduction=1/);
+});
+test('previously committed identical deduction can be safely retried',()=>{
+ const helper=source.slice(source.indexOf('function applyDeductionSettlementInTx('),source.indexOf('async function applyDeductionSettlement('));
+ assert.match(helper,/activeAmount - amount/);
+ assert.match(helper,/sameSource/);
+ assert.match(helper,/idempotent: true/);
 });
 test('rounding input passed to settlement atomic helper, not deducted twice',()=>{
  const s=source.slice(end,source.indexOf('/**',end));

@@ -19373,7 +19373,7 @@ async function viewPayment(id, mode, backCtx){
             ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_desc||'—')+'">'
             : '<input type="text" id="pay-final-ded-desc" placeholder="'+t("payment.deduction_reason_placeholder","有抵扣时建议填写")+'" oninput="recalcFinalPay()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.rounding_amount","抹零金额")+'</label>'
-        +'<input type="number" min="0" step="0.01" id="pay-final-rounding" max="0.20" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'" oninput="recalcFinalPay()"></div>'
+        +'<input type="number" min="0" step="0.01" id="pay-final-rounding" max="0.99" placeholder="'+t("payment.rounding_placeholder","选填，不抹零请留空")+'" oninput="recalcFinalPay()"></div>'
         +'<div class="form-group form-group-full"><label>'+t("payment.rounding_reason","抹零原因")+'</label>'
         +'<input type="text" id="pay-final-rounding-reason" placeholder="'+t("payment.rounding_reason_placeholder","建议填写")+'"></div>'
         +'<div class="form-group form-group-full" style="background:#f6f8fb;padding:8px 10px;border-radius:6px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
@@ -19659,7 +19659,7 @@ async function financeApprove(id, action){
     const roundingAmount=parseFloat(roundingVal);
     // 抵扣字段（确认付款页固定显示，无抵扣时留空）
     const dedAmtEl=document.getElementById('pay-final-ded-amt');
-    const dedAmt=dedAmtEl?parseFloat(dedAmtEl.value)||0:0;
+    const dedAmt=dedAmtEl&&!dedAmtEl.disabled?(parseFloat(dedAmtEl.value)||0):0;
     const dedType=document.getElementById('pay-final-ded-type')?document.getElementById('pay-final-ded-type').value.trim():'';
     const dedDesc=document.getElementById('pay-final-ded-desc')?document.getElementById('pay-final-ded-desc').value.trim():'';
     if(!(Number.isFinite(amount)&&amount>0)){showToast(t('payment.err_amount_required','实际付款金额必须大于0'),'warning');amtEl.focus();return}
@@ -19680,19 +19680,14 @@ async function financeApprove(id, action){
       body.rounding_amount=rnd;
       if(roundingReason)body.rounding_reason=roundingReason;
     }
+    if(dedAmt>0){body.has_deduction=1;body.deduction_amount=dedAmt;body.deduction_source_type=dedType;body.deduction_source_desc=dedDesc;}
     body.idempotency_key='appr:'+id+':'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
     // 合并付款人工分摊（付款确认场景）：收集 + 校验（与 financeConfirmPay 共用）
     const allocRes=collectPayAllocations(amount);
     if(!allocRes.ok)return;
     if(allocRes.allocations)body.allocations=allocRes.allocations;
     if(!window.confirm(t('payment.final_approve_confirm','确认通过最终审批并执行付款？此操作将自动结算付款。'))){return}
-    // 有抵扣时先写抵扣（复用现有 /deduction 接口与 PAY-CORE deduction 能力），再执行审批结算。
-    // 顺序保证：deduction 写入后 applyPaymentSettlement 计算 outstanding 时自动扣减抵扣，满足 应付−实际付款−抵扣−抹零=未结
-    if(dedAmt>0){
-      try{
-        await api('/api/payment-requests/'+id+'/deduction','POST',{has_deduction:1,deduction_amount:dedAmt,deduction_source_type:dedType,deduction_source_desc:dedDesc});
-      }catch(e){ showToast(e.message,'danger'); return; }
-    }
+    // 抵扣随最终审批请求提交，由后端在同一个数据库事务内写入并结算；不再先单独写入。
   }
   try{
     const r=await api('/api/payment-requests/'+id+'/approve','POST',body);
@@ -19799,9 +19794,9 @@ async function confirmPaid(id){
     const now=new Date(),today=new Date(now.getTime()-now.getTimezoneOffset()*60000).toISOString().slice(0,10);
     const idempotencyKey='pay:'+(window.crypto&&window.crypto.randomUUID?window.crypto.randomUUID():(Date.now()+'-'+Math.random().toString(36).slice(2)));
     openModal(t('modal.title.confirmPaid', '确认付款 - {v1}', {v1: esc(p.request_no)}),
-      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}" onchange="onPayDateChanged()"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" max="0.20" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用按付款日 realtime 汇率校验并保存快照；货款汇率仅供参考显示，不影响原有付款结算规则。</div><div id="pay-fx-display" style="margin-top:12px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
+      (function(){ var _b=t('modal.body.confirmPaid', '<div class="form-card" style="box-shadow:none;padding:0"><input type="hidden" id="pay-settle-idempotency" value="{v1}"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">当前未付</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">币种</span><span class="detail-value">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>本次实际付款金额 <span class="required">*</span></label><input type="number" min="0" step="0.01" id="pay-settle-amount" value="{v4}" oninput="onPayAmountChanged()"></div><div class="form-group"><label>实际付款日期 <span class="required">*</span></label><input type="date" id="pay-settle-date" value="{v5}" onchange="onPayDateChanged()"></div><div class="form-group form-group-full"><label>付款凭证号</label><input type="text" id="pay-settle-voucher"></div><div class="form-group"><label>抹零金额</label><input type="number" min="0" step="0.01" id="pay-settle-rounding" max="0.99" placeholder="选填，不抹零请留空" oninput="recalcFinalPay()"></div><div class="form-group form-group-full"><label>抹零原因</label><input type="text" id="pay-settle-rounding-reason" placeholder="建议填写，未填将记录为人工抹零"></div></div><div style="font-size:12px;color:#999">非货款费用按付款日 realtime 汇率校验并保存快照；货款汇率仅供参考显示，不影响原有付款结算规则。</div><div id="pay-fx-display" style="margin-top:12px;padding:8px 12px;background:#f5f5f5;border-radius:6px;display:none"></div></div>', {v1: idempotencyKey, v2: fmtMoney(p.outstanding,p.currency), v3: esc(p.currency||''), v4: Number(p.outstanding||0).toFixed(2), v5: today}); if(p.payment_mode==='multi'&&p.items&&p.items.length){ _b+=buildMultiAllocationTable(p.items, p.currency); } return _b; })(),
       t('modal.footer.confirmPaid', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment('{v1}')">确认付款</button>`, {v1: id}));
-    const roundingInput=document.getElementById('pay-settle-rounding');if(roundingInput)roundingInput.max='0.20';
+    const roundingInput=document.getElementById('pay-settle-rounding');if(roundingInput)roundingInput.max='0.99';
     window._finalPayCtx={outstanding:Number(p.outstanding||0),prId:id,paymentCategory:p.payment_category||'',dateInputId:'pay-settle-date',amountInputId:'pay-settle-amount'};
     setTimeout(function(){onPayDateChanged();},0);
   }catch(e){showToast(e.message,'danger')}

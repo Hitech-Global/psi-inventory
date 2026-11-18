@@ -14979,8 +14979,8 @@ function payableItemRemainingMinor(item) {
   return Math.max(0, Number(item.payable_amount_minor || 0) - settled);
 }
 
-// 每笔付款按单据原币最多允许抹零 0.20；必须精确等于本次未结差额。
-const MAX_ROUND_OFF_AMOUNT = 0.20;
+// 每笔付款允许抹零小于 1.00（按两位小数记账，最大 0.99）；必须精确等于本次未结差额。
+const MAX_ROUND_OFF_AMOUNT = 0.99;
 
 function finalPaymentApprovalInput(payment, body = {}) {
   // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
@@ -15001,7 +15001,7 @@ function finalPaymentApprovalInput(payment, body = {}) {
     throw new SettlementError(400, '实际付款金额不能大于当前未结金额');
   }
   // Only the *remaining* balance, not the original application gross, is
-  // available for this payment plus a small final fractional round-off.
+  // available for this payment plus a final round-off strictly below 1.00.
   const submittedRounding = body.rounding_amount != null ? settlementMoney(body.rounding_amount) : 0;
 
   let roundingAmount = 0;
@@ -15017,9 +15017,9 @@ function finalPaymentApprovalInput(payment, body = {}) {
       throw new SettlementError(400, '抹零金额必须等于当前未结金额减实际付款金额');
     }
     roundingAmount = settlementMoney(submittedRounding);
-    // 抹零必须精确等于当前未结金额减实际付款金额，且不得超过 0.20；不再要求实际付款必须是整数。
+    // 抹零必须精确等于当前未结金额减实际付款金额，且严格小于 1.00；不再要求实际付款必须是整数。
     if (roundingAmount > MAX_ROUND_OFF_AMOUNT) {
-      throw new SettlementError(400, '抹零金额不能超过 0.20，且必须等于当前未结金额减实际付款金额');
+      throw new SettlementError(400, '抹零金额必须小于 1.00，且必须等于当前未结金额减实际付款金额');
     }
     applyRoundOff = roundingAmount > 0;
   }
@@ -15566,40 +15566,48 @@ function insertHumanAllocations(items, allocations, txId, paidAmountMinor) {
   }
 }
 
-async function applyDeductionSettlement(paymentRequestId, body, req) {
-  return transaction(() => {
-    const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
-    if (!payment) throw new SettlementError(404, '付款申请不存在');
-    ensureSettlementLegacyBaselines(payment);
-    const before = paymentSettlementFacts(payment);
-    if (before.effectivePaid > 0) throw new SettlementError(409, '该付款申请已产生有效付款，不能通过普通编辑修改抵扣；如需调整请先冲销付款');
+function applyDeductionSettlementInTx(paymentRequestId, body, req) {
+  const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
+  if (!payment) throw new SettlementError(404, '付款申请不存在');
+  ensureSettlementLegacyBaselines(payment);
+  const before = paymentSettlementFacts(payment);
+  const hasDeduction = Number(body.has_deduction) === 1;
+  const amount = hasDeduction ? settlementMoney(body.deduction_amount) : 0;
+  if (!hasDeduction || amount === 0) {
+    if (body._finalApprovalSettlement) return recalculatePaymentSettlement(payment.id);
+    if (before.effectivePaid > 0) throw new SettlementError(409, '该付款申请已有生效付款，不能通过普通编辑修改抵扣；需要先冲销原付款');
     if (before.effectiveDeduction > 0) throw new SettlementError(409, '该付款申请已有生效抵扣，不能直接覆盖；请先冲销原抵扣');
-    if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，不能编辑抵扣');
-    const hasDeduction = Number(body.has_deduction) === 1;
-    const amount = hasDeduction ? settlementMoney(body.deduction_amount) : 0;
-    if (!hasDeduction || amount === 0) {
-      run(`UPDATE payment_requests SET has_deduction = 0, deduction_amount = 0,
-           deduction_source_type = '', deduction_source_desc = '', deduction_ref_no = '',
-           deduction_attachment = '', updated_at = datetime('now') WHERE id = ?`, [payment.id]);
-      return recalculatePaymentSettlement(payment.id);
-    }
-    if (!(amount > 0)) throw new SettlementError(400, '抵扣金额必须大于0');
-    if (amount > before.outstanding) throw new SettlementError(400, '抵扣金额不能大于当前未付金额');
-    const sourceType = String(body.deduction_source_type || '').trim();
-    const description = String(body.deduction_source_desc || '').trim();
-    if (!sourceType || !description) throw new SettlementError(400, '抵扣金额大于0时必须填写抵扣来源类型和说明');
-    const operator = settlementOperator(req);
-    run(`INSERT INTO payment_settlement_logs
-         (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name)
-         VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, ?, ?)`,
-      [genId('settle'), payment.id, amount, description, payment.currency || '', operator.id, operator.name]);
-    run(`UPDATE payment_requests SET deduction_source_type = ?, deduction_source_desc = ?,
-         deduction_ref_no = ?, deduction_attachment = ?, updated_at = datetime('now') WHERE id = ?`,
-      [sourceType, description, String(body.deduction_ref_no || ''), String(body.deduction_attachment || ''), payment.id]);
+    run("UPDATE payment_requests SET has_deduction = 0, deduction_amount = 0, deduction_source_type = '', deduction_source_desc = '', deduction_ref_no = '', deduction_attachment = '', updated_at = datetime('now') WHERE id = ?", [payment.id]);
     return recalculatePaymentSettlement(payment.id);
-  });
+  }
+  if (!(amount > 0)) throw new SettlementError(400, '抵扣金额必须大于0');
+  const sourceType = String(body.deduction_source_type || '').trim();
+  const description = String(body.deduction_source_desc || '').trim();
+  if (!sourceType || !description) throw new SettlementError(400, '抵扣金额大于0时必须填写抵扣来源类型和说明');
+  if (before.effectiveDeduction > 0) {
+    const activeRows = query("SELECT amount FROM payment_settlement_logs WHERE payment_request_id = ? AND event_type = 'deduction' AND status = 'applied'", [payment.id]).rows || [];
+    const activeAmount = settlementMoney(activeRows.reduce((sum, row) => sum + Number(row.amount || 0), 0));
+    const sameSource = String(payment.deduction_source_type || '') === sourceType
+      && String(payment.deduction_source_desc || '') === description;
+    if (Math.abs(activeAmount - amount) <= 0.005 && sameSource) {
+      return { ...recalculatePaymentSettlement(payment.id), idempotent: true };
+    }
+    throw new SettlementError(409, '该付款申请已有生效抵扣，不能直接覆盖；请先冲销原抵扣');
+  }
+  if (before.effectivePaid > 0) throw new SettlementError(409, '该付款申请已有生效付款，不能通过普通编辑修改抵扣；需要先冲销原付款');
+  if (before.outstanding <= 0) throw new SettlementError(409, '该付款申请已结清，不能编辑抵扣');
+  if (amount > before.outstanding) throw new SettlementError(400, '抵扣金额不能大于当前未结金额');
+  const operator = settlementOperator(req);
+  run("INSERT INTO payment_settlement_logs (id, payment_request_id, event_type, amount, status, reason, original_currency, operator_id, operator_name) VALUES (?, ?, 'deduction', ?, 'applied', ?, ?, ?, ?)",
+    [genId('settle'), payment.id, amount, description, payment.currency || '', operator.id, operator.name]);
+  run("UPDATE payment_requests SET deduction_source_type = ?, deduction_source_desc = ?, deduction_ref_no = ?, deduction_attachment = ?, updated_at = datetime('now') WHERE id = ?",
+    [sourceType, description, String(body.deduction_ref_no || ''), String(body.deduction_attachment || ''), payment.id]);
+  return recalculatePaymentSettlement(payment.id);
 }
 
+async function applyDeductionSettlement(paymentRequestId, body, req) {
+  return transaction(() => applyDeductionSettlementInTx(paymentRequestId, body, req));
+}
 async function applyRoundingSettlement(paymentRequestId, rawAmount, reason, req) {
   return transaction(() => {
     const payment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [paymentRequestId]);
@@ -19107,6 +19115,10 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
             run(`UPDATE payment_requests SET approval_status = ?, approval_remark = ?, approver_name = ?, approved_at = datetime('now'), updated_at = datetime('now') WHERE id = ?`, ['approved', apprRemark, userName, req.params.id]);
             // PAY-CORE Phase 2：最终审批 + 本次实际付款合并为同一事务边界（P0 原子性修复）
             if (req.body.actual_paid_amount != null) {
+              // Keep deduction, approval, payment and round-off atomic. A failed payment validation rolls everything back.
+              if (Number(req.body.has_deduction) === 1) {
+                applyDeductionSettlementInTx(req.params.id, { ...req.body, _finalApprovalSettlement: true }, req);
+              }
               const approvedPayment = queryOne('SELECT * FROM payment_requests WHERE id = ?', [req.params.id]);
               settlementResult = settleFinalPaymentApprovalInTx(approvedPayment, req.body, req);
             }
