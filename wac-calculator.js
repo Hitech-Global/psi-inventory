@@ -905,20 +905,26 @@ function computeWacCostFacts(logisticsBatchId) {
       }
     }
   } else if (legacyDutyBusinessAmount > 0) {
-    // Backward compatibility for old batches whose duty is recorded directly
-    // on logistics_batches instead of CI cost items.
-    dutyCurrency = freightCurrency;
-    if (dutyCurrency !== localCurrency) {
-      const dutyFxRate = resolveExactFxRate(dutyCurrency, localCurrency, arrivalDate, fxCache);
-      if (dutyFxRate) {
-        dutyLegacyFxRate = dutyFxRate.rate;
-        dutyLocalAmount = legacyDutyBusinessAmount * dutyFxRate.rate;
-      } else {
-        blockers.push({
-          code: 'DUTY_FX_MISSING',
-          message: `关税${legacyDutyBusinessAmount}缺少 ${arrivalDate} ${dutyCurrency}→${localCurrency} 的汇率`
-        });
-      }
+    // Legacy batch-level duty has no linked payment request or actual paid date.
+    // Never substitute the inbound date or the freight FX date for duty settlement FX.
+    dutyCurrency = normalizeCurrency(freightCurrency || '');
+    if (!dutyCurrency) {
+      blockers.push({
+        code: 'DUTY_PAYMENT_DATE_MISSING',
+        message: `旧版物流批次关税 ${legacyDutyBusinessAmount} 未记录独立币种及实际付款日期，不能按到货日期或运费汇率换算`,
+        detail: { duty_business_amount: legacyDutyBusinessAmount, local_currency: localCurrency }
+      });
+    } else if (dutyCurrency !== localCurrency) {
+      blockers.push({
+        code: 'DUTY_PAYMENT_DATE_MISSING',
+        message: `旧版物流批次关税 ${legacyDutyBusinessAmount} ${dutyCurrency} 缺少关联付款记录及实际付款日期；请将关税补录为关联CI的Import Duty付款记录后再确认WAC`,
+        detail: {
+          duty_business_amount: legacyDutyBusinessAmount,
+          duty_currency: dutyCurrency,
+          local_currency: localCurrency,
+          actual_arrival_date: arrivalDate
+        }
+      });
     } else {
       dutyLegacyFxRate = 1;
       dutyLocalAmount = legacyDutyBusinessAmount;
