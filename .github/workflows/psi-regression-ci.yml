@@ -269,6 +269,8 @@ jobs:
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test WAC history matrix selects latest confirmation chronologically
+        run: node --test test/wac-history-matrix-latest-order.test.cjs
       - name: Test page-scoped modal cleanup on navigation
         run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
@@ -365,8 +367,6 @@ jobs:
         run: node --test test/wac-cost-change-notification.test.cjs
       - name: Test WAC settlement date remains separate from actual inbound date
         run: node --test test/wac-settlement-date-semantics.test.cjs
-      - name: Test WAC history matrix selects latest confirmation chronologically
-        run: node --test test/wac-history-matrix-latest-order.test.cjs
       - name: Test Listing Feishu notification table cards
         run: node --test test/listing-notification-card.test.cjs
       - name: Test suggested purchase quantity wheel behavior
