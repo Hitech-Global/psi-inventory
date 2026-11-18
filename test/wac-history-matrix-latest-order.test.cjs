@@ -7,6 +7,8 @@ const vm = require('node:vm');
 const path = require('node:path');
 
 const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+const i18nSource = fs.readFileSync(path.join(__dirname, '..', 'i18n.js'), 'utf8');
+const testContext = { t: (key, fallback) => fallback };
 const matrixStart = appSource.indexOf('function _wacHistoryMatrixExportModel(');
 const matrixEnd = appSource.indexOf('async function exportWacHistoryMatrix', matrixStart);
 const fnSource = appSource.slice(matrixStart, matrixEnd);
@@ -32,7 +34,7 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
   const start2 = appSource.indexOf('function _wacHistoryMatrixExportModel(');
   const end2 = appSource.indexOf('\nasync function exportWacHistoryMatrix', start2);
   const fnSource2 = appSource.slice(start2, end2);
-  const model = vm.runInNewContext(fnSource2 + '\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
+  const model = vm.runInNewContext(fnSource2 + '\n_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});', testContext);
   assert.equal(model.rows.length, 1);
   assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
@@ -60,10 +62,31 @@ test('matrix date axis collapses inbound dates sharing one actual freight FX dat
       confirmed_at:'2026-09-15 12:00:00', last_inbound_date:'2026-09-15', fx_rate_date:'2026-09-13',
       new_avg_cost:110, local_currency:'THB', rmb_to_local_rate:4.9 }
   ];
-  const model = vm.runInNewContext(fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});');
+  const model = vm.runInNewContext(fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});', testContext);
   assert.deepEqual(Array.from(model.dates), ['2026-09-13']);
   assert.equal(model.rows[0][6], '2026-09-15');
   assert.match(model.headers[7], /1 RMB = 4\.90 THB/);
   assert.doesNotMatch(model.headers[7], /汇率日/);
   assert.equal(model.rows[0][7], '110.00 THB');
+});
+
+test('matrix export labels the last inbound date as the inbound date for Latest WAC', () => {
+  const rows = [{
+    sku_code:'NT03U326N-008G-20PN', brand:'Netac', country:'印度尼西亚',
+    warehouse:'Bekasi Warehouse', version_no:1, confirmed_at:'2026-11-03 07:13:07',
+    last_inbound_date:'2026-11-02', new_avg_cost:45995.4254, local_currency:'IDR'
+  }];
+  const model = vm.runInNewContext(
+    fnSource + String.fromCharCode(10) + '_wacHistoryMatrixExportModel(' + JSON.stringify(rows) + ', {});',
+    testContext
+  );
+  assert.equal(model.headers[6], 'Latest WAC 对应入库日期');
+});
+
+test('WAC matrix date filter is explicitly named as a last-inbound-date range in all languages', () => {
+  assert.match(appSource, /wac\.matrix\.inbound_date_range/);
+  assert.match(appSource, /wac\.matrix\.inbound_date_short/);
+  assert.match(i18nSource, /I18N\.dict\.en\['wac\.matrix\.inbound_date_range'\] = 'Last Inbound Date Range'/);
+  assert.match(i18nSource, /I18N\.dict\.id\['wac\.matrix\.inbound_date_range'\] = 'Rentang Tanggal Masuk Terakhir'/);
+  assert.match(i18nSource, /I18N\.dict\.en\['wac\.matrix\.latest_wac_inbound_date'\] = 'Inbound Date for Latest WAC'/);
 });

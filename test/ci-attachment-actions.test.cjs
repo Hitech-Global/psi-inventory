@@ -31,10 +31,11 @@ assert.ok(server.includes("app.get('/api/commercial-invoices/:id/shipping-attach
 assert.ok(server.includes("app.post('/api/commercial-invoices/:id/shipping-attachments'"));
 assert.ok(server.includes("app.delete('/api/commercial-invoices/:id/shipping-attachments/:fileId'"));
 
-const appIndex = index.indexOf('app.js?v=');
+const appIndex = index.indexOf('<script src="app.js"></script>');
 const newScriptIndex = index.indexOf('assets/ci-attachment-actions.js?v=20261113-1');
 const lastCiModuleIndex = index.indexOf('assets/ci-summary-compact.js');
 assert.ok(appIndex >= 0 && newScriptIndex > appIndex, 'attachment override must load after app.js');
+assert.ok(server.includes('const cacheBust = APP_COMMIT ? APP_COMMIT.slice(0, 12)'), 'app.js must receive the current deployment commit as its cache key');
 assert.ok(lastCiModuleIndex >= 0 && newScriptIndex > lastCiModuleIndex, 'attachment override must load after other CI modules');
 assert.ok(pkg.scripts.postinstall.includes('node test/ci-attachment-actions.test.cjs'));
 assert.ok(pkg.scripts.postinstall.includes('node --check assets/ci-attachment-actions.js'));

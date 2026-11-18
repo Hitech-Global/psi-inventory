@@ -1,4 +1,4 @@
-name: PSI regression tests
+﻿name: PSI regression tests
 
 on:
   pull_request:
@@ -13,6 +13,11 @@ on:
       - 'scripts/ci-historical-clearance-hotfix.cjs'
       - 'scripts/ci-detail-loading-hotfix.cjs'
       - 'test/ci-detail-loading-hotfix.test.cjs'
+      - 'scripts/logistics-detail-loading-hotfix.cjs'
+      - 'test/logistics-detail-loading-hotfix.test.cjs'
+      - 'index.html'
+      - 'test/frontend-asset-cache-busting.test.cjs'
+      - 'package.json'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-historical-full-edit.test.cjs'
@@ -182,6 +187,8 @@ jobs:
           node --check test/ci-single-date-filter.test.cjs
           node --check scripts/ci-detail-loading-hotfix.cjs
           node --check test/ci-detail-loading-hotfix.test.cjs
+          node --check scripts/logistics-detail-loading-hotfix.cjs
+          node --check test/logistics-detail-loading-hotfix.test.cjs
           node --check assets/ci-expense-modal-mac.js
           node --check test/ci-expense-modal-mac.test.cjs
           node --check assets/ci-attachment-actions.js
@@ -266,12 +273,18 @@ jobs:
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test WAC history matrix selects latest confirmation chronologically
+        run: node --test test/wac-history-matrix-latest-order.test.cjs
+      - name: Test frontend core asset cache-busting
+        run: node test/frontend-asset-cache-busting.test.cjs
       - name: Test page-scoped modal cleanup on navigation
         run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test payment multi-item allocation after deductions
         run: node --test test/pay-multi.test.cjs test/payment-approval-rounding-existing-deduction.test.cjs test/payment-allocation-deduction-balance.test.cjs
+      - name: Test logistics detail loading state and retry behavior
+        run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test compact CI procurement summary layout
         run: node test/ci-summary-compact.test.cjs
       - name: Test compact CI single-date filter and synced procurement totals
@@ -362,8 +375,6 @@ jobs:
         run: node --test test/wac-cost-change-notification.test.cjs
       - name: Test WAC settlement date remains separate from actual inbound date
         run: node --test test/wac-settlement-date-semantics.test.cjs
-      - name: Test WAC history matrix selects latest confirmation chronologically
-        run: node --test test/wac-history-matrix-latest-order.test.cjs
       - name: Test Listing Feishu notification table cards
         run: node --test test/listing-notification-card.test.cjs
       - name: Test suggested purchase quantity wheel behavior

@@ -49,7 +49,8 @@ assert.ok(!fn.includes("cell(srcTable,sourceRow,['币种','Currency'])"),'source
 assert.ok(fn.includes('fmtMoney(c.goods_amount,c.currency)'),'operational CI amount must include its currency code');
 assert.ok(fn.includes('fmtMoney(h.gross_goods_amount,h.currency)'),'historical CI amount must include its currency code');
 assert.ok(fn.includes("['物流状态','ci.col.logistics_status']"));
-assert.ok(fn.includes("['入库状态','ci.col.inbound_status']"));
+assert.ok(!fn.includes("['入库状态','ci.col.inbound_status']"),'redundant inbound status must stay out of the unified CI table');
+assert.ok(fn.includes("['物流状态','ci.col.logistics_status']"),'unified CI table must retain logistics status');
 assert.ok(fn.includes("wrap.className='table-container ci-unified-scroll-container'"),'CI table must use its own two-axis scroll container');
 assert.ok(fn.includes('return wrap.outerHTML;'),'CI table wrapper must be rendered so horizontal scrolling stays within the table');
 assert.ok(!fn.includes('col-sticky'),'CI table must not freeze any data columns');

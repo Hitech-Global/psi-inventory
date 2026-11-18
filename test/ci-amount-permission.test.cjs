@@ -145,8 +145,9 @@ must(app, /sub\.onmouseenter=function\(\)\{clearWacCalcHideTimer\(\);clearWacCal
 must(app, /function hideWacCalcSubTooltip\(event\)[\s\S]*related===sub[\s\S]*scheduleWacCalcSubHide\(\)/, 'WAC second-level tooltip must accept pointer entry and defer close');
 
 // Updated CI money helper and FX tooltip translations must not be served from stale browser caches.
-assert.ok(index.includes('i18n.js?v=20261118-2'), 'CI FX tooltip translations must use the current i18n asset');
-assert.ok(index.includes('app.js?v=20261118-3'), 'CI detail money formatter must use the current app asset');
+assert.ok(index.includes('<script src="i18n.js"></script>'), 'i18n.js must use deployment-time cache busting');
+assert.ok(index.includes('<script src="app.js"></script>'), 'app.js must use deployment-time cache busting');
+must(server, /const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/, 'server must inject the deployed commit into core frontend asset URLs');
 
 // Role UI label and script ordering.
 must(i18n, /permission\.label\.ci_amount_view/, 'permission i18n label missing');
