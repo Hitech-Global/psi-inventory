@@ -14979,8 +14979,8 @@ function payableItemRemainingMinor(item) {
   return Math.max(0, Number(item.payable_amount_minor || 0) - settled);
 }
 
-// 最大允许抹零阈值：仅允许小额尾差（< 1 元），杜绝以抹零抵消未付款金额
-const MAX_ROUND_OFF_AMOUNT = 1;
+// 每笔付款按单据原币最多允许抹零 0.20；必须精确等于本次未结差额。
+const MAX_ROUND_OFF_AMOUNT = 0.20;
 
 function finalPaymentApprovalInput(payment, body = {}) {
   // PAY-CORE Phase 2：读取付款账户，透传至 applyPaymentSettlement（与 confirm-paid 路径一致）
@@ -15016,14 +15016,10 @@ function finalPaymentApprovalInput(payment, body = {}) {
     if (Math.abs(submittedRounding - expectedRounding) > 0.005) {
       throw new SettlementError(400, '抹零金额必须等于当前未结金额减实际付款金额');
     }
-    // A final round-off can ONLY cover cents below the current outstanding's integer part.
-    if (expectedRounding > 0 && Math.abs(actualPaidAmount - Math.floor(currentOutstanding)) > 0.005) {
-      throw new SettlementError(400, '现有付款核心仅支持小数尾差抹零');
-    }
     roundingAmount = settlementMoney(submittedRounding);
-    // 明确最大抹零阈值：尾差必须 < 1 元，禁止以抹零抵消未付款金额
-    if (roundingAmount >= MAX_ROUND_OFF_AMOUNT) {
-      throw new SettlementError(400, '抹零金额仅支持小于 1 元的小额尾差，不能通过扩大抹零抵消未付款');
+    // 抹零必须精确等于当前未结金额减实际付款金额，且不得超过 0.20；不再要求实际付款必须是整数。
+    if (roundingAmount > MAX_ROUND_OFF_AMOUNT) {
+      throw new SettlementError(400, '抹零金额不能超过 0.20，且必须等于当前未结金额减实际付款金额');
     }
     applyRoundOff = roundingAmount > 0;
   }
