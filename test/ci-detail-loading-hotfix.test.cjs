@@ -33,14 +33,18 @@ assert.match(htmlOnce, /CI-DETAIL-LOADING-STYLE-V1/);
 assert.match(htmlOnce, /ciDetailSpin/);
 assert.match(htmlOnce, /prefers-reduced-motion/);
 assert.match(htmlOnce, /ci-detail-error-card/);
-assert.match(htmlOnce, /app\.js\?v=20261118-4/, 'app.js URL must be cache-busted for the patched frontend');
+assert.match(htmlOnce, /<script src="app\.js"><\/script>/, 'app.js must remain unversioned for deployment-time cache busting');
+assert.doesNotMatch(htmlOnce, /app\.js\?v=/, 'the CI loading patch must not pin a stale app.js version');
 
 const repoRoot = path.join(__dirname, '..');
 const liveApp = fs.readFileSync(path.join(repoRoot, 'app.js'), 'utf8');
 const liveIndex = fs.readFileSync(path.join(repoRoot, 'index.html'), 'utf8');
+const liveServer = fs.readFileSync(path.join(repoRoot, 'server.js'), 'utf8');
 assert.ok(liveApp.includes(APP_MARKER), 'the immediate loading state must be installed in the live CI detail handler');
 assert.match(liveApp, /window\.__ciDetailRetry=/, 'the live handler must retain a retry target');
 assert.ok(liveIndex.includes('CI-DETAIL-LOADING-STYLE-V1'), 'the live loading skeleton styles must be installed');
-assert.match(liveIndex, /app\.js\?v=20261118-4/, 'the live CI detail handler must be cache-busted');
+assert.match(liveIndex, /<script src="app\.js"><\/script>/, 'the live CI detail handler must use deployment-time cache busting');
+assert.doesNotMatch(liveIndex, /app\.js\?v=/, 'the live app script must not pin a stale version');
+assert.match(liveServer, /const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/, 'server must inject the deployed commit into app.js URLs');
 
 console.log('ci-detail-loading hotfix: PASS');

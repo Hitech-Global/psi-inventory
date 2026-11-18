@@ -1,4 +1,4 @@
-name: PSI regression tests
+﻿name: PSI regression tests
 
 on:
   pull_request:
@@ -88,6 +88,9 @@ on:
       - 'assets/finance-payment-calendar.js'
       - 'test/finance-payment-calendar.test.cjs'
       - 'test/manual-payable-item.test.cjs'
+      - 'test/pay-multi.test.cjs'
+      - 'test/payment-approval-rounding-existing-deduction.test.cjs'
+      - 'test/payment-allocation-deduction-balance.test.cjs'
       - 'test/customs-duty-local-currency.test.cjs'
       - 'test/finance-payment-overview-integration.test.cjs'
       - 'po-plan-server.js'
@@ -278,6 +281,8 @@ jobs:
         run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
+      - name: Test payment multi-item allocation after deductions
+        run: node --test test/pay-multi.test.cjs test/payment-approval-rounding-existing-deduction.test.cjs test/payment-allocation-deduction-balance.test.cjs
       - name: Test logistics detail loading state and retry behavior
         run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test compact CI procurement summary layout

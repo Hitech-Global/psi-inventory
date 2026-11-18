@@ -7,6 +7,7 @@ const root=path.join(__dirname,'..');
 const app=fs.readFileSync(path.join(root,'app.js'),'utf8');
 const summary=fs.readFileSync(path.join(root,'assets/ci-summary-compact.js'),'utf8');
 const index=fs.readFileSync(path.join(root,'index.html'),'utf8');
+const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
 const patched=patchAppSource(app);
 assert.ok(patched.includes(MARKER));
 assert.ok(patched.includes('textCell(unifiedCICountryLabel(c.country))'));
@@ -21,7 +22,9 @@ assert.ok(patched.includes("clearanceSelect.setAttribute('data-ci-id',String(c.i
 assert.ok(!patched.includes("if(['formal','non_formal'].indexOf(clearanceValue)<0)clearanceValue=''"),'unknown original clearance values must not be silently coerced to unset');
 assert.ok(patched.includes("clearanceOptions.push([clearanceValue,t('ci.clearance.unknown','原值待核对')+' ('+clearanceValue+')'])"),'unknown clearance values must remain visible in the selector');
 assert.ok(patched.includes("raw?t('ci.clearance.unknown','原值待核对')+' ('+raw+')'"),'unknown clearance values must remain visible in CI details');
-assert.match(index,/app\.js\?v=20261118-4/,'app.js must be cache-busted after selected-option rendering changes');
+assert.match(index,/<script src="app\.js"><\/script>/,'app.js must remain unversioned for deployment-time cache busting');
+assert.doesNotMatch(index,/app\.js\?v=/,'app.js must not pin a stale version in source HTML');
+assert.match(server,/const cacheBust = APP_COMMIT \? APP_COMMIT\.slice\(0, 12\)/,'server must inject the deployed commit into app.js URLs');
 assert.ok(patched.includes("if(clearanceValue===option[0])node.setAttribute('selected','selected')"),'selected clearance option must survive outerHTML serialization');
 assert.ok(!patched.includes('node.selected=clearanceValue===option[0]'),'serialized selector must not rely on the transient selected property');
 assert.ok(!patched.includes('clearanceSelect.onchange='),'serialized rows must not rely on DOM property change handlers');

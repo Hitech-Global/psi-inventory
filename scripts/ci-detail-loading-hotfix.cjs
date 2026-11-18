@@ -7,7 +7,6 @@ const APP_JS = path.join(__dirname, '..', 'app.js');
 const INDEX_HTML = path.join(__dirname, '..', 'index.html');
 const APP_MARKER = '// CI-DETAIL-LOADING-STATE-V1';
 const CSS_MARKER = '/* CI-DETAIL-LOADING-STYLE-V1 */';
-const APP_CACHE_VERSION = '20261118-4';
 const VIEW_CI_ANCHOR = "async function viewCI(id, backPay, backMode){\n  try{const ci=await api('/api/commercial-invoices/'+id);";
 const NEXT_SECTION_MARKER = '// ==================== CI/PL × 物流合并 PHASE A（前端）====================';
 const CATCH_ANCHOR = "  }catch(e){showToast(e.message,'danger')}";
@@ -115,9 +114,10 @@ function patchIndexSource(src) {
     if (pos < 0) throw new Error('[CI-DETAIL-LOADING] index style anchor missing');
     out = out.slice(0, pos) + cssPatch() + '\n' + out.slice(pos);
   }
-  const appScriptPattern = /<script src=(['"])app\.js\?v=[^'"]+\1><\/script>/;
-  if (!appScriptPattern.test(out)) throw new Error('[CI-DETAIL-LOADING] app.js cache version anchor missing');
-  out = out.replace(appScriptPattern, '<script src="app.js?v=' + APP_CACHE_VERSION + '"></script>');
+  const appScriptPattern = /<script src=(['"])app\.js(?:\?v=[^'"]+)?\1><\/script>/;
+  if (!appScriptPattern.test(out)) throw new Error('[CI-DETAIL-LOADING] deployment-versioned app.js script anchor missing');
+  // Keep app.js unversioned in source HTML; server.js injects the deployed commit hash.
+  out = out.replace(appScriptPattern, '<script src="app.js"></script>');
   return out;
 }
 

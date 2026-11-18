@@ -7,11 +7,25 @@ const serverPath = path.join(__dirname, '..', 'server.js');
 let source = fs.readFileSync(serverPath, 'utf8');
 
 function replaceOnce(oldText, newText, label) {
-  const count = source.split(oldText).length - 1;
-  if (count !== 1) {
-    throw new Error('[CI-WAC-SUMMARY] ' + label + ': expected exactly one source match, found ' + count);
+  // Match LF and CRLF files without normalizing the whole file (Windows checkouts
+  // can contain mixed line endings after earlier source hotfixes).
+  const patternText = oldText
+    .replace(/([\\^$.*+?()[\]{}|])/g, '\\$1')
+    .replace(/\r?\n/g, '\\r?\\n');
+  const pattern = new RegExp(patternText, 'g');
+  const matches = Array.from(source.matchAll(pattern));
+  if (matches.length !== 1) {
+    throw new Error('[CI-WAC-SUMMARY] ' + label + ': expected exactly one source match, found ' + matches.length);
   }
-  source = source.replace(oldText, newText);
+  const match = matches[0];
+  const eol = match[0].includes('\r\n') ? '\r\n' : '\n';
+  source = source.slice(0, match.index)
+    + newText.replace(/\r?\n/g, eol)
+    + source.slice(match.index + match[0].length);
+}
+
+function includesSource(text) {
+  return source.replace(/\r\n/g, '\n').includes(String(text).replace(/\r\n/g, '\n'));
 }
 
 const statusMarker = '/* CI-WAC-STATUS-IN-CI-LOGISTICS-20261110 */';
@@ -93,7 +107,7 @@ const oldConfirmProjection =
   "      // WAC history remains the source of truth; keep the CI summary flag synchronized as a projection.\n" +
   "      run(\"UPDATE commercial_invoices SET wac_confirmed=1, wac_confirmed_at=datetime('now'), wac_confirmed_by=? WHERE id=?\",\n" +
   "        [req.currentUserId || userName, ci.id]);";
-if (source.includes(oldConfirmProjection)) {
+if (includesSource(oldConfirmProjection)) {
   replaceOnce(oldConfirmProjection,
     "      // WAC history remains the source of truth; project completion across all relevant CI batches.\n" +
     "      refreshCIWacSummary(meta.ci_id || ci.id);",
@@ -102,7 +116,7 @@ if (source.includes(oldConfirmProjection)) {
 }
 
 const excludeResponse = "  res.json({success:true,excluded_count:batchIds.length});";
-if (source.includes(excludeResponse) && !source.includes('CI-WAC-EXCLUSION-SUMMARY-20261110')) {
+if (includesSource(excludeResponse) && !source.includes('CI-WAC-EXCLUSION-SUMMARY-20261110')) {
   replaceOnce(excludeResponse,
     "  // CI-WAC-EXCLUSION-SUMMARY-20261110: recalculate each affected CI after the atomic exclusion commit.\n" +
     "  const affectedCiRows = query('SELECT DISTINCT related_ci_id FROM logistics_batches WHERE id IN (' + batchIds.map(() => '?').join(',') + ')', batchIds).rows;\n" +
@@ -113,7 +127,7 @@ if (source.includes(excludeResponse) && !source.includes('CI-WAC-EXCLUSION-SUMMA
 }
 
 const restoreResponse = "  if(failure)return res.status(failure.status).json({error:failure.message});\n  res.json({success:true,restored:true,logistics_batch_id:batchId});";
-if (source.includes(restoreResponse) && !source.includes('CI-WAC-RESTORE-SUMMARY-20261110')) {
+if (includesSource(restoreResponse) && !source.includes('CI-WAC-RESTORE-SUMMARY-20261110')) {
   replaceOnce(restoreResponse,
     "  if(failure)return res.status(failure.status).json({error:failure.message});\n" +
     "  // CI-WAC-RESTORE-SUMMARY-20261110: a restored batch is unresolved again until confirmed.\n" +
@@ -129,7 +143,7 @@ const opsGetStart =
   "  try {\n" +
   "    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);\n" +
   "    if (!ci) return res.status(404).json({ error: 'CI 不存在' });";
-if (source.includes(opsGetStart) && !source.includes('CI-WAC-OPS-GET-SUMMARY-20261110')) {
+if (includesSource(opsGetStart) && !source.includes('CI-WAC-OPS-GET-SUMMARY-20261110')) {
   replaceOnce(opsGetStart,
     opsGetStart + "\n" +
     "    // CI-WAC-OPS-GET-SUMMARY-20261110: refresh the projection before exposing the ops gate.\n" +
@@ -146,7 +160,7 @@ if (source.includes(opsGetStart) && !source.includes('CI-WAC-OPS-GET-SUMMARY-202
 
 const opsPostGuard =
   "    if (ci.wac_confirmed !== 1) return res.status(400).json({ error: 'CI 尚未确认（wac_confirmed=1），无法安排上架准备' });";
-if (source.includes(opsPostGuard) && !source.includes('CI-WAC-OPS-POST-SUMMARY-20261110')) {
+if (includesSource(opsPostGuard) && !source.includes('CI-WAC-OPS-POST-SUMMARY-20261110')) {
   replaceOnce(opsPostGuard,
     "    // CI-WAC-OPS-POST-SUMMARY-20261110: enforce the latest batch-level WAC completion state.\n" +
     "    const wacSummary = refreshCIWacSummary(ci.id);\n" +
@@ -158,7 +172,7 @@ if (source.includes(opsPostGuard) && !source.includes('CI-WAC-OPS-POST-SUMMARY-2
 
 const opsReadyGuard =
   "    if (ci.wac_confirmed !== 1) return res.status(400).json({ error: 'CI 尚未确认，无法标记上架准备' });";
-if (source.includes(opsReadyGuard) && !source.includes('CI-WAC-OPS-READY-SUMMARY-20261110')) {
+if (includesSource(opsReadyGuard) && !source.includes('CI-WAC-OPS-READY-SUMMARY-20261110')) {
   replaceOnce(opsReadyGuard,
     "    // CI-WAC-OPS-READY-SUMMARY-20261110: recheck all logistics batches before marking Ready.\n" +
     "    const wacSummary = refreshCIWacSummary(ci.id);\n" +

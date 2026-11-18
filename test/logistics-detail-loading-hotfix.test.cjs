@@ -5,8 +5,7 @@ const path = require('node:path');
 const {
   patchAppSource,
   patchIndexSource,
-  APP_MARKER,
-  APP_CACHE_VERSION
+  APP_MARKER
 } = require('../scripts/logistics-detail-loading-hotfix.cjs');
 
 const app = [
@@ -49,8 +48,8 @@ const html = '<!doctype html><html><head><script src="app.js?v=old"></script></h
 const htmlOnce = patchIndexSource(html);
 const htmlTwice = patchIndexSource(htmlOnce);
 assert.equal(htmlTwice, htmlOnce, 'cache-bust patch must be idempotent');
-assert.ok(htmlOnce.includes('app.js?v=' + APP_CACHE_VERSION), 'cache version must be present');
-assert.match(htmlOnce, /app\.js\?v=20261118-4/, 'frontend cache version must be bumped');
+assert.ok(htmlOnce.includes('<script src="app.js"></script>'), 'app.js must remain unversioned for deployment-time cache busting');
+assert.doesNotMatch(htmlOnce, /app\.js\?v=/, 'the logistics loading patch must not pin a stale app.js version');
 
 const repoRoot = path.join(__dirname, '..');
 const liveApp = fs.readFileSync(path.join(repoRoot, 'app.js'), 'utf8');

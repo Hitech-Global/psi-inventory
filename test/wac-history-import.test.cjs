@@ -606,7 +606,7 @@ test('WAC history export mirrors the filtered matrix and keeps every historical 
   const helperStart = appSource.indexOf('function _wacHistoryMatrixExportModel');
   const helperEnd = appSource.indexOf('\nasync function exportWacHistoryMatrix', helperStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart, 'WAC export model helper must exist');
-  const sandbox = {};
+  const sandbox = { t: (key, fallback) => fallback };
   vm.runInNewContext(appSource.slice(helperStart, helperEnd) + '\nthis.buildExportModel = _wacHistoryMatrixExportModel;', sandbox);
 
   const rows = [
@@ -631,7 +631,7 @@ test('WAC history export mirrors the filtered matrix and keeps every historical 
   assert.equal(model.selectedCount,2);
   assert.deepEqual(JSON.parse(JSON.stringify(model.dates)),['2026-10-29','2026-09-28']);
   assert.deepEqual(JSON.parse(JSON.stringify(model.headers.slice(0,7))),
-    ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','最后入库日期']);
+    ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化','Latest WAC 对应入库日期']);
   assert.match(model.headers[7],/1 RMB = 2,500\.00 IDR[\s\S]*2026-10-29/);
   assert.equal(model.rows[0][0],'M724');
   assert.equal(model.rows[0][4],'120,000.00 IDR');
@@ -679,7 +679,8 @@ test('WAC history export button sits beside import and exports the current filte
       book_append_sheet:function(wb,ws,name){sheets.push({ws:ws,name:name});wb.sheets.push(ws);},
       encode_range:function(range){return 'A1:'+String.fromCharCode(64+range.e.c+1)+(range.e.r+1);}
     },writeFile:function(wb,name){writes.push({wb:wb,name:name});}},
-    showToast:function(message,type){notices.push({message:message,type:type});}
+    showToast:function(message,type){notices.push({message:message,type:type});},
+    t:function(key,fallback){return fallback;}
   };
   vm.runInNewContext(source + '\nthis.runExport = exportWacHistoryMatrix;',ctx);
   await ctx.runExport();

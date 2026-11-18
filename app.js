@@ -19462,7 +19462,7 @@ async function viewPayment(id, mode, backCtx){
         +'<div class="form-group"><label>'+t("payment.deduction_amount","抵扣金额")+'</label>'
         +(Number(p.deduction_amount||0)>0
             ? '<input type="number" class="is-disabled" disabled value="'+Number(p.deduction_amount||0).toFixed(2)+'">'
-            : '<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="recalcFinalPay()">')+'</div>'
+            : '<input type="number" min="0" step="0.01" id="pay-final-ded-amt" placeholder="'+t("payment.deduction_placeholder","选填，无抵扣请留空")+'" oninput="onPayDeductionChanged()">')+'</div>'
         +'<div class="form-group"><label>'+t("payment.deduction_source_type","抵扣来源类型")+'</label>'
         +(Number(p.deduction_amount||0)>0
             ? '<input type="text" class="is-disabled" disabled value="'+esc(p.deduction_source_type||'—')+'">'
@@ -19503,7 +19503,7 @@ async function viewPayment(id, mode, backCtx){
     openModal(t('modal.title.viewPayment', '付款申请详情 - {v1}', {v1: esc(p.request_no)}), body, footer);
     if(backCtx && backCtx.id){ window._modalBack = function(){ if(backCtx.type==='historical'){ return viewHistoricalCI(backCtx.id); } return viewCI(backCtx.id); }; }
     // 渲染后校正"预估未结金额"初始值（实际付款默认=当前未结，故初始未结应为0）
-    if(paymentFormHtml){ try{ recalcFinalPay(); }catch(_){} }
+    if(paymentFormHtml){ try{ onPayAmountChanged(); }catch(_){} }
     if(paymentFormHtml){ setTimeout(function(){ onPayDateChanged(); }, 0); }
   }catch(e){showToast(e.message,'danger')}
 }
@@ -19596,35 +19596,124 @@ function onPayRemarkPaste(e){
 // 最终付款信息区：抵扣/抹零为独立结算事实，实时预览未结（前端展示用，不改后端逻辑）
 // 抵扣不自动改写“实际付款金额”（银行流水金额 = 系统付款金额）
 // 预估未结 = 当前未结基准 − 实际付款 − 抵扣 − 抹零（与后端 paymentSettlementFacts 口径一致）
+// Multi-payment allocation preview mirrors the backend integer-cent allocation rule.
+function allocatePayMinorByWeights(totalMinor, items, weightOf, fallbackWeightOf){
+  const total=Math.max(0,Math.round(Number(totalMinor)||0));
+  const list=Array.isArray(items)?items:[];
+  const result=new Map(list.map(item=>[String(item.id),0]));
+  if(!total||!list.length)return result;
+  let weights=list.map(item=>Math.max(0,Math.round(Number(weightOf(item))||0)));
+  let weightTotal=weights.reduce((sum,value)=>sum+value,0);
+  if(total>weightTotal&&typeof fallbackWeightOf==='function'){
+    weights=list.map(item=>Math.max(0,Math.round(Number(fallbackWeightOf(item))||0)));
+    weightTotal=weights.reduce((sum,value)=>sum+value,0);
+  }
+  if(!weightTotal)return result;
+  if(total>weightTotal){weights=list.map(()=>1);weightTotal=list.length;}
+  const shares=list.map((item,index)=>{
+    const exact=total*weights[index]/weightTotal;
+    const floor=Math.floor(exact);
+    return {id:String(item.id),amount:floor,remainder:exact-floor,index};
+  });
+  const remainder=total-shares.reduce((sum,item)=>sum+item.amount,0);
+  shares.slice().sort((a,b)=>b.remainder-a.remainder||a.id.localeCompare(b.id)||a.index-b.index)
+    .slice(0,remainder).forEach(item=>{item.amount+=1;});
+  shares.forEach(item=>result.set(item.id,item.amount));
+  return result;
+}
+
+// Preview item-level balances after allocating the proposed deduction using backend weights.
+function calculatePayAllocationPreview(items,deductionMinor,paidMinor){
+  const deductionShares=allocatePayMinorByWeights(deductionMinor,items,
+    item=>item.deductionWeightMinor,item=>item.requestedMinor);
+  const adjusted=items.map(item=>{
+    const deductionShareMinor=deductionShares.get(String(item.id))||0;
+    return {...item,deductionShareMinor,remainingMinor:Number(item.baseRemainingMinor||0)-deductionShareMinor};
+  });
+  const totalAvailableMinor=adjusted.reduce((sum,item)=>sum+Math.max(0,item.remainingMinor),0);
+  const targetPaidMinor=Math.min(Math.max(0,Math.round(Number(paidMinor)||0)),totalAvailableMinor);
+  const paymentShares=allocatePayMinorByWeights(targetPaidMinor,adjusted,
+    item=>Math.max(0,item.remainingMinor),item=>Math.max(0,item.remainingMinor));
+  const previewItems=adjusted.map(item=>({...item,paymentAllocationMinor:paymentShares.get(String(item.id))||0}));
+  return {items:previewItems,totalAvailableMinor,invalidDeduction:adjusted.some(item=>item.remainingMinor<0)};
+}
+
+function getPayAllocationInputs(){
+  return Array.prototype.slice.call(document.querySelectorAll('.pay-alloc-input'));
+}
+function getPayAllocationEntries(inputs){
+  return inputs.map(inp=>({
+    id:String(inp.getAttribute('data-pri')||''),
+    requestedMinor:Number(inp.getAttribute('data-requested-minor'))||0,
+    baseRemainingMinor:Number(inp.getAttribute('data-base-remain-minor'))||0,
+    deductionWeightMinor:Number(inp.getAttribute('data-deduction-weight-minor'))||0
+  }));
+}
+function getPayProposedDeductionMinor(){
+  const el=document.getElementById('pay-final-ded-amt');
+  return el&&!el.disabled?Math.max(0,Math.round((parseFloat(el.value)||0)*100)):0;
+}
+function renderPayAllocationBalances(preview,inputs){
+  const byId=new Map(preview.items.map(item=>[String(item.id),item]));
+  inputs.forEach(inp=>{
+    const item=byId.get(String(inp.getAttribute('data-pri')||''));
+    if(!item)return;
+    inp.setAttribute('data-remain-minor',String(item.remainingMinor));
+    inp.max=(Math.max(0,item.remainingMinor)/100).toFixed(2);
+    const remainCell=document.getElementById('pay-alloc-remain-'+String(item.id));
+    if(remainCell)remainCell.textContent=fmtMoney(Math.max(0,item.remainingMinor)/100,inp.getAttribute('data-currency')||'');
+  });
+}
+function refreshPayAllocationBalances(){
+  const inputs=getPayAllocationInputs();
+  if(!inputs.length)return {items:[],totalAvailableMinor:0,invalidDeduction:false};
+  const preview=calculatePayAllocationPreview(getPayAllocationEntries(inputs),getPayProposedDeductionMinor(),0);
+  renderPayAllocationBalances(preview,inputs);
+  return preview;
+}
+
+// Deduction and payment remain separate facts, but deduction changes must refresh each item's allocatable balance.
 function recalcFinalPay(){
   try{
     const base=(window._finalPayCtx&&Number.isFinite(window._finalPayCtx.outstanding))?window._finalPayCtx.outstanding:0;
     const amtEl=document.getElementById('pay-final-amount')||document.getElementById('pay-settle-amount');
     const ded=parseFloat(document.getElementById('pay-final-ded-amt')?document.getElementById('pay-final-ded-amt').value:0)||0;
     const rnd=parseFloat(document.getElementById('pay-final-rounding')?document.getElementById('pay-final-rounding').value:0)||0;
-    // 实际付款金额由用户独立填写，抵扣仅作独立结算事实，互不改写
     const paid=parseFloat(amtEl?amtEl.value:0)||0;
     const out=Math.max(0,base-paid-ded-rnd);
     const outEl=document.getElementById('pay-final-est-outstanding');
-    if(outEl) outEl.textContent=out.toFixed(2);
-    // 合并付款人工分摊：实时算已分配合计与差额（剩余未分配 / 超出），差额不为 0 则禁用确认按钮
-    const allocInputs=document.querySelectorAll('.pay-alloc-input');
-    if(allocInputs&&allocInputs.length){
-      let sumMinor=0;
-      allocInputs.forEach(function(inp){ sumMinor+=Math.round((parseFloat(inp.value)||0)*100); });
+    if(outEl)outEl.textContent=out.toFixed(2);
+    const allocInputs=getPayAllocationInputs();
+    if(allocInputs.length){
+      const preview=refreshPayAllocationBalances();
+      let sumMinor=0,overCap=false;
+      allocInputs.forEach(function(inp){
+        const allocatedMinor=Math.round((parseFloat(inp.value)||0)*100);
+        const remainMinor=Number(inp.getAttribute('data-remain-minor'))||0;
+        sumMinor+=allocatedMinor;
+        if(allocatedMinor>remainMinor)overCap=true;
+      });
       const paidMinor=Math.round(paid*100);
-      const diffMinor=paidMinor-sumMinor; // >0 剩余未分配；<0 超出实际付款金额
+      const diffMinor=paidMinor-sumMinor;
       const totalEl=document.getElementById('pay-alloc-total');
-      if(totalEl) totalEl.textContent=(sumMinor/100).toFixed(2);
+      if(totalEl)totalEl.textContent=(sumMinor/100).toFixed(2);
       const diffEl=document.getElementById('pay-alloc-diff');
       if(diffEl){
-        if(diffMinor>0){ diffEl.innerHTML=t('payment.alloc_unassigned','剩余未分配')+': <b>'+(diffMinor/100).toFixed(2)+'</b>'; diffEl.style.color='#b26a00'; }
-        else if(diffMinor<0){ diffEl.innerHTML=t('payment.alloc_over','超出实际付款金额')+': <b>'+(-diffMinor/100).toFixed(2)+'</b>'; diffEl.style.color='#c0392b'; }
-        else { diffEl.innerHTML=t('payment.alloc_ok','✓ 分摊合计与实际付款金额一致'); diffEl.style.color='#1a7f37'; }
+        if(preview.invalidDeduction){diffEl.textContent='\u62b5\u6263\u5206\u644a\u8d85\u8fc7\u8d39\u7528\u9879\u5269\u4f59\u4f59\u989d\uff0c\u8bf7\u68c0\u67e5\u62b5\u6263\u91d1\u989d';diffEl.style.color='#c0392b';}
+        else if(overCap){diffEl.textContent='\u6709\u8d39\u7528\u9879\u7684\u672c\u6b21\u5206\u644a\u8d85\u8fc7\u62b5\u6263\u540e\u7684\u5269\u4f59\u672a\u4ed8';diffEl.style.color='#c0392b';}
+        else if(paidMinor>preview.totalAvailableMinor){diffEl.textContent='\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d\u8d85\u8fc7\u8d39\u7528\u9879\u53ef\u5206\u644a\u4f59\u989d';diffEl.style.color='#c0392b';}
+        else if(diffMinor>0){diffEl.innerHTML=t('payment.alloc_unassigned','\u5269\u4f59\u672a\u5206\u914d')+': <b>'+(diffMinor/100).toFixed(2)+'</b>';diffEl.style.color='#b26a00';}
+        else if(diffMinor<0){diffEl.innerHTML=t('payment.alloc_over','\u8d85\u51fa\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d')+': <b>'+(-diffMinor/100).toFixed(2)+'</b>';diffEl.style.color='#c0392b';}
+        else{diffEl.innerHTML=t('payment.alloc_ok','\u2713 \u5206\u644a\u5408\u8ba1\u4e0e\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d\u4e00\u81f4');diffEl.style.color='#1a7f37';}
       }
-      ['pay-final-confirm-btn','pay-settle-save'].forEach(function(id){ const b=document.getElementById(id); if(b) b.disabled=(diffMinor!==0); });
+      const invalid=preview.invalidDeduction||overCap||paidMinor>preview.totalAvailableMinor||diffMinor!==0;
+      ['pay-final-confirm-btn','pay-settle-save'].forEach(function(id){const b=document.getElementById(id);if(b)b.disabled=invalid;});
     }
   }catch(_){}
+}
+function onPayDeductionChanged(){
+  try{autoDistributePayAllocations();}catch(_){}
+  recalcFinalPay();
 }
 
 // PAY-SOURCE-TRACE-01：付款申请「付款来源明细」只读表格
@@ -19673,49 +19762,47 @@ function buildPaymentSourceTraceSection(p, currency){
 // 合并付款确认付款：渲染各费用单人工分摊表（费用单 / 剩余未付 / 本次分摊 / 已分配 / 差额提示）
 // items: GET /api/payment-requests/:id 返回的 items[]（含 id(pri.id), payable_item_id, fee_no, requested_amount_minor）
 // 初始化不填默认分摊金额：分摊在用户输入「实际付款金额」后由 autoDistributePayAllocations 按剩余未付比例生成
+// Multi-payment table displays live payable-item balances returned by the backend.
 function buildMultiAllocationTable(items, currency){
-  if(!items||!items.length) return '';
+  if(!items||!items.length)return '';
   const rows=items.map(function(it){
-    const remainMinor=Number(it.requested_amount_minor||0);
+    const remainMinor=Number(it.remaining_amount_minor!=null?it.remaining_amount_minor:it.requested_amount_minor)||0;
+    const requestedMinor=Number(it.requested_amount_minor)||0;
+    const deductionWeightMinor=Number(it.deduction_weight_minor!=null?it.deduction_weight_minor:requestedMinor)||0;
+    const feeNo=it.fee_no||it.payable_item_id||'';
     return '<tr>'
-      +'<td>'+esc(it.fee_no||it.payable_item_id)+'</td>'
-      +'<td class="text-right">'+fmtMoney(remainMinor/100, currency||'')+'</td>'
-      +'<td><input type="number" min="0" step="0.01" class="pay-alloc-input" data-pri="'+esc(it.id)+'" data-remain-minor="'+remainMinor+'" placeholder="'+t('payment.alloc_placeholder','填写实际付款金额后自动分摊')+'" oninput="recalcFinalPay()"></td>'
+      +'<td>'+esc(feeNo)+'</td>'
+      +'<td class="text-right" id="pay-alloc-remain-'+esc(it.id)+'">'+fmtMoney(Math.max(0,remainMinor)/100,currency||'')+'</td>'
+      +'<td><input type="number" min="0" step="0.01" class="pay-alloc-input" data-pri="'+esc(it.id)+'" data-fee-no="'+esc(feeNo)+'" data-currency="'+esc(currency||'')+'" data-requested-minor="'+requestedMinor+'" data-base-remain-minor="'+remainMinor+'" data-remain-minor="'+remainMinor+'" data-deduction-weight-minor="'+deductionWeightMinor+'" placeholder="'+t('payment.alloc_placeholder','\u586b\u5199\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d\u540e\u81ea\u52a8\u5206\u644a')+'" oninput="recalcFinalPay()"></td>'
       +'</tr>';
   }).join('');
-  return '<div class="detail-section" style="grid-column:1/-1"><h3>'+t('payment.alloc_title','合并付款明细（人工分摊）')+'</h3>'
+  return '<div class="detail-section" style="grid-column:1/-1"><h3>'+t('payment.alloc_title','\u5408\u5e76\u4ed8\u6b3e\u660e\u7ec6\uff08\u4eba\u5de5\u5206\u644a\uff09')+'</h3>'
     +'<div class="table-container" style="box-shadow:none;border:1px solid #eee"><table class="data-table"><thead><tr>'
-    +'<th>'+t('payment.alloc_fee','费用单')+'</th>'
-    +'<th class="text-right">'+t('payment.alloc_remain','剩余未付')+'</th>'
-    +'<th>'+t('payment.alloc_this','本次分摊')+'</th>'
+    +'<th>'+t('payment.alloc_fee','\u8d39\u7528\u5355')+'</th>'
+    +'<th class="text-right">'+t('payment.alloc_remain','\u5269\u4f59\u672a\u4ed8')+'</th>'
+    +'<th>'+t('payment.alloc_this','\u672c\u6b21\u5206\u644a')+'</th>'
     +'</tr></thead><tbody>'+rows+'</tbody></table></div>'
     +'<div style="font-size:12px;margin-top:6px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
-    +'<span>'+t('payment.alloc_total','已分配')+': <b id="pay-alloc-total">0.00</b></span>'
+    +'<span>'+t('payment.alloc_total','\u5df2\u5206\u914d')+': <b id="pay-alloc-total">0.00</b></span>'
     +'<span id="pay-alloc-diff"></span>'
     +'</div></div>';
 }
-// 实际付款金额变化时：按各费用单「剩余未付」比例自动生成默认分摊，尾差归最大项（与后端自动分摊口径一致）
-// 生成后用户可手工修改任意一项；金额清空或为 0 时清空全部分摊
+
+// Recalculate automatic splits from each item's remaining balance after any proposed deduction.
 function autoDistributePayAllocations(){
-  const list=Array.prototype.slice.call(document.querySelectorAll('.pay-alloc-input'));
-  if(!list.length) return;
+  const inputs=getPayAllocationInputs();
+  if(!inputs.length)return;
   const amtEl=document.getElementById('pay-final-amount')||document.getElementById('pay-settle-amount');
   const paidMinor=Math.round((parseFloat(amtEl?amtEl.value:'')||0)*100);
-  if(!(paidMinor>0)){ list.forEach(function(inp){ inp.value=''; }); return; }
-  const remainOf=function(inp){ return Number(inp.getAttribute('data-remain-minor'))||0; };
-  const totalRemain=list.reduce(function(s,inp){ return s+remainOf(inp); },0);
-  if(!(totalRemain>0)) return;
-  const sorted=list.slice().sort(function(a,b){ return remainOf(b)-remainOf(a); });
-  let othersSum=0;
-  for(let i=1;i<sorted.length;i++){
-    const m=Math.floor(paidMinor*remainOf(sorted[i])/totalRemain);
-    sorted[i].value=(m/100).toFixed(2);
-    othersSum+=m;
-  }
-  const topMinor=paidMinor-othersSum;
-  sorted[0].value=((topMinor>0?topMinor:0)/100).toFixed(2);
+  const preview=calculatePayAllocationPreview(getPayAllocationEntries(inputs),getPayProposedDeductionMinor(),paidMinor);
+  renderPayAllocationBalances(preview,inputs);
+  const byId=new Map(preview.items.map(item=>[String(item.id),item]));
+  inputs.forEach(function(inp){
+    const item=byId.get(String(inp.getAttribute('data-pri')||''));
+    if(!item)return;
+    inp.value=paidMinor>0?(item.paymentAllocationMinor/100).toFixed(2):'';
+  });
 }
-// 实际付款金额输入框专用：先重算默认分摊，再刷新合计/差额与未结预览
 function onPayAmountChanged(){
   try{ autoDistributePayAllocations(); }catch(_){}
   recalcFinalPay();
@@ -19724,24 +19811,34 @@ function onPayAmountChanged(){
 // 合并付款人工分摊：收集 .pay-alloc-input 并校验（financeApprove / financeConfirmPay 共用同一套逻辑）
 // 返回 {ok:false} 表示校验不通过（已 toast 提示）；{ok:true,allocations:null} 表示无分摊表（走后端原自动分摊）
 function collectPayAllocations(amount){
-  const inputs=document.querySelectorAll('.pay-alloc-input');
-  if(!inputs||!inputs.length) return {ok:true, allocations:null};
+  const inputs=getPayAllocationInputs();
+  if(!inputs.length)return {ok:true,allocations:null};
+  const preview=refreshPayAllocationBalances();
+  if(preview.invalidDeduction){showToast('\u62b5\u6263\u5206\u644a\u8d85\u8fc7\u8d39\u7528\u9879\u5269\u4f59\u4f59\u989d\uff0c\u4e0d\u80fd\u63d0\u4ea4','warning');return {ok:false};}
   const allocations=[];
-  let sum=0;
+  let sumMinor=0;
   for(let i=0;i<inputs.length;i++){
     const inp=inputs[i];
     const raw=(inp.value||'').trim();
-    if(raw===''){showToast(t('payment.alloc_required','请填写每个费用单的本次分摊金额'),'warning');inp.focus();return {ok:false}}
+    if(raw===''){showToast(t('payment.alloc_required','\u8bf7\u586b\u5199\u6bcf\u4e2a\u8d39\u7528\u5355\u7684\u672c\u6b21\u5206\u644a\u91d1\u989d'),'warning');inp.focus();return {ok:false};}
     const v=parseFloat(raw);
-    if(!Number.isFinite(v)||v<0){showToast(t('payment.alloc_negative','分摊金额不能为负数'),'warning');inp.focus();return {ok:false}}
-    allocations.push({payment_request_item_id:inp.getAttribute('data-pri'), amount:v});
-    sum+=v;
+    if(!Number.isFinite(v)||v<0){showToast(t('payment.alloc_negative','\u5206\u644a\u91d1\u989d\u4e0d\u80fd\u4e3a\u8d1f\u6570'),'warning');inp.focus();return {ok:false};}
+    const allocMinor=Math.round(v*100);
+    const remainMinor=Number(inp.getAttribute('data-remain-minor'))||0;
+    if(allocMinor>remainMinor){
+      const feeNo=inp.getAttribute('data-fee-no')||inp.getAttribute('data-pri')||'';
+      showToast('\u8d39\u7528 '+feeNo+' \u672c\u6b21\u5206\u644a '+(allocMinor/100).toFixed(2)+' \u8d85\u8fc7\u62b5\u6263\u540e\u7684\u5269\u4f59\u672a\u4ed8 '+(Math.max(0,remainMinor)/100).toFixed(2),'danger');
+      inp.focus();return {ok:false};
+    }
+    allocations.push({payment_request_item_id:inp.getAttribute('data-pri'),amount:allocMinor/100});
+    sumMinor+=allocMinor;
   }
-  if(!allocations.length){showToast(t('payment.alloc_empty','合并付款必须填写分摊明细'),'warning');return {ok:false}}
-  if(Math.abs(sum-(Number(amount)||0))>0.001){showToast(t('payment.alloc_mismatch','分摊合计必须等于实际付款金额'),'warning');return {ok:false}}
-  return {ok:true, allocations:allocations};
+  if(!allocations.length){showToast(t('payment.alloc_empty','\u5408\u5e76\u4ed8\u6b3e\u5fc5\u987b\u586b\u5199\u5206\u644a\u660e\u7ec6'),'warning');return {ok:false};}
+  const paidMinor=Math.round((Number(amount)||0)*100);
+  if(paidMinor>preview.totalAvailableMinor){showToast('\u672c\u6b21\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d\u8d85\u8fc7\u8d39\u7528\u9879\u62b5\u6263\u540e\u7684\u53ef\u5206\u644a\u4f59\u989d','danger');return {ok:false};}
+  if(sumMinor!==paidMinor){showToast(t('payment.alloc_mismatch','\u5206\u644a\u5408\u8ba1\u5fc5\u987b\u7b49\u4e8e\u5b9e\u9645\u4ed8\u6b3e\u91d1\u989d'),'warning');return {ok:false};}
+  return {ok:true,allocations:allocations};
 }
-// 财务类审批：通过 / 驳回（复用后端 POST /api/payment-requests/:id/approve，审批意见存 approval_remark）
 async function financeApprove(id, action){
   const ta=document.getElementById('pay-appr-remark');
   const remark=ta?ta.value.trim():'';
@@ -19897,6 +19994,7 @@ async function confirmPaid(id){
       t('modal.footer.confirmPaid', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" id="pay-settle-save" onclick="saveConfirmedPayment('{v1}')">确认付款</button>`, {v1: id}));
     const roundingInput=document.getElementById('pay-settle-rounding');if(roundingInput)roundingInput.max='0.99';
     window._finalPayCtx={outstanding:Number(p.outstanding||0),prId:id,paymentCategory:p.payment_category||'',dateInputId:'pay-settle-date',amountInputId:'pay-settle-amount'};
+    try{onPayAmountChanged();}catch(_){}
     setTimeout(function(){onPayDateChanged();},0);
   }catch(e){showToast(e.message,'danger')}
 }

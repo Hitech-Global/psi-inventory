@@ -6,7 +6,6 @@ const { execFileSync } = require('node:child_process');
 const APP_JS = path.join(__dirname, '..', 'app.js');
 const INDEX_HTML = path.join(__dirname, '..', 'index.html');
 const APP_MARKER = '// LOGISTICS-DETAIL-LOADING-STATE-V1';
-const APP_CACHE_VERSION = '20261118-4';
 const VIEW_LOG_DETAIL_ANCHOR = "async function viewLogDetail(id){\n  try{\n    const l=await api('/api/logistics-batches/'+id);\n    let plData=null;\n    if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}";
 const NEXT_SECTION_MARKER = 'async function backfillArrival(batchId){';
 const CATCH_ANCHOR = "  }catch(e){showToast(e.message,'danger')}\n}";
@@ -91,9 +90,10 @@ function patchAppSource(src) {
 
 function patchIndexSource(src) {
   let out = src.replace(/\r\n/g, '\n');
-  const appScriptPattern = /<script src=(['"])app\.js\?v=[^'"]+\1><\/script>/;
-  if (!appScriptPattern.test(out)) throw new Error('[LOGISTICS-DETAIL-LOADING] app.js cache version anchor missing');
-  out = out.replace(appScriptPattern, '<script src="app.js?v=' + APP_CACHE_VERSION + '"></script>');
+  const appScriptPattern = /<script src=(['"])app\.js(?:\?v=[^'"]+)?\1><\/script>/;
+  if (!appScriptPattern.test(out)) throw new Error('[LOGISTICS-DETAIL-LOADING] deployment-versioned app.js script anchor missing');
+  // Keep app.js unversioned in source HTML; server.js injects the deployed commit hash.
+  out = out.replace(appScriptPattern, '<script src="app.js"></script>');
   return preserveEol(src, out);
 }
 
@@ -111,4 +111,4 @@ function apply() {
 }
 
 if (require.main === module) apply();
-module.exports = { APP_MARKER, APP_CACHE_VERSION, appStartPatch, appCatchPatch, patchAppSource, patchIndexSource };
+module.exports = { APP_MARKER, appStartPatch, appCatchPatch, patchAppSource, patchIndexSource };
