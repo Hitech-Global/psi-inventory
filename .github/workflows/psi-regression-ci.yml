@@ -273,6 +273,8 @@ jobs:
         run: node --test test/modal-page-navigation.test.cjs
       - name: Test supplier PI import preview table alignment
         run: node --test test/supplier-pi-preview-alignment.test.cjs
+      - name: Test logistics detail loading state and retry behavior
+        run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test compact CI procurement summary layout
         run: node test/ci-summary-compact.test.cjs
       - name: Test compact CI single-date filter and synced procurement totals
@@ -297,8 +299,6 @@ jobs:
         run: node test/ci-historical-full-edit.test.cjs
       - name: Test CI detail loading state and retry behavior
         run: node test/ci-detail-loading-hotfix.test.cjs
-      - name: Test logistics detail loading state and retry behavior
-        run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test CI attachment online Excel preview
         run: node test/ci-attachment-online-preview.test.cjs
       - name: Test unified CI attachment menu and customs documents
