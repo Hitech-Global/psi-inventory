@@ -1174,6 +1174,18 @@ describe('computeWacCostFacts - duty', () => {
     assert.ok(Math.abs(dutyTotal - 500) < 1, `duty allocation sum=${dutyTotal}, expected ~500`);
   });
 
+
+  test('CUSTOMS_RATE_MISSING when duty > 0 but customs rate is null', () => {
+    const db = require('./db').getDB();
+    db.exec('DELETE FROM commercial_invoice_items');
+
+    seedCIItem('cii_d3', 'ci_duty', 'SKU-D1', 100, 50, 0, null);
+    seedCIItem('cii_d4', 'ci_duty', 'SKU-D2', 100, 50, 0, 0.10);
+
+    const result = computeWacCostFacts('lb_duty');
+    const codes = result.blockers.map(b => b.code);
+    assert.ok(codes.includes('CUSTOMS_RATE_MISSING'), `Expected CUSTOMS_RATE_MISSING, got: ${codes}`);
+  });
   test('legacy foreign-currency batch duty cannot use inbound-date FX without a payment date', () => {
     const db = require('./db').getDB();
     for (const table of [
@@ -1200,17 +1212,6 @@ describe('computeWacCostFacts - duty', () => {
     assert.equal(result.meta.duty_payment_date, '');
   });
 
-  test('CUSTOMS_RATE_MISSING when duty > 0 but customs rate is null', () => {
-    const db = require('./db').getDB();
-    db.exec('DELETE FROM commercial_invoice_items');
-
-    seedCIItem('cii_d3', 'ci_duty', 'SKU-D1', 100, 50, 0, null);
-    seedCIItem('cii_d4', 'ci_duty', 'SKU-D2', 100, 50, 0, 0.10);
-
-    const result = computeWacCostFacts('lb_duty');
-    const codes = result.blockers.map(b => b.code);
-    assert.ok(codes.includes('CUSTOMS_RATE_MISSING'), `Expected CUSTOMS_RATE_MISSING, got: ${codes}`);
-  });
 });
 
 describe('computeWacCostFacts - CI-level duty source', () => {
@@ -2037,13 +2038,13 @@ describe('Preview/Confirm parity', () => {
     seedCIItem('cii_par', 'ci_par', 'SKU-PARITY', 100, 100, 90, 0.05);
 
     seedBatch('lb_par', 'BATCH-PARITY', 'ci_par', {
-      arrivalDate: '2026-03-01', totalFreight: 2000, customsDuty: 500, vatGst: 0, otherFees: 0, transportMode: 'sea'
+      arrivalDate: '2026-03-01', totalFreight: 2000, customsDuty: 0, vatGst: 0, otherFees: 0, transportMode: 'sea'
     });
     seedPL('pl_par', 'PL-PARITY', 'ci_par', 'lb_par', { status: 'confirmed', totalQty: 100 });
     seedPLItem('pli_par', 'pl_par', 'SKU-PARITY', 100, 2, 200);
 
-    // Product FX: USD→IDR on arrival date
-    seedExchangeRate('USD', 'IDR', '2026-03-01', 15000);
+    // Product FX: USD→IDR on the actual freight-payment settlement date.
+    seedExchangeRate('USD', 'IDR', '2026-02-15', 15000);
 
     // Inventory row exists
     seedInventory('SKU-PARITY', 'Indonesia', 'WH-JKT', 50, 200);
@@ -2052,6 +2053,10 @@ describe('Preview/Confirm parity', () => {
     seedPaymentRequest('pr_par', 'PR-PARITY', 'USD', 2000, 'ci_par', 'warehouse_arrival', 'freight');
     seedCiCostItem('cci_par', 'ci_par', 'pr_par', 'warehouse_arrival', 'freight', 2000, 'USD', 'lb_par');
     seedPaymentLog('psl_par', 'pr_par', 2000, 2000 * 15000, 15000, '2026-02-15', 'IDR');
+    seedCustomsDutyPayment('pr_par_duty', 'PR-PARITY-DUTY', 'ci_par', 500, 'USD', {
+      paidDate: '2026-02-15', localCurrency: 'IDR', localRate: 15000,
+      localRateType: 'realtime', localRateDirection: 'direct', localAmount: 7500000
+    });
 
     // ── 1. Preview: computeWacCostFacts ──
     const preview = computeWacCostFacts('lb_par');
@@ -2410,7 +2415,7 @@ test('WAC confirmation persists the actual freight-payment FX date and matrix sh
   assert.ok(!confirmRoute.includes('resolveExactRmbToLocalRate(localCurrency, inboundDate'),
     'WAC confirmation must not resolve FX by inbound date');
   const matrixStart = server.indexOf("app.get('/api/wac/history-matrix'");
-  const matrixEnd = server.indexOf('/* WAC-BATCH-EXCLUSION', matrixStart);
+  const matrixEnd = server.indexOf("app.get('/api/wac/excluded-batches'", matrixStart);
   assert.ok(matrixStart >= 0 && matrixEnd > matrixStart, 'WAC history matrix API must exist');
   const matrixRoute = server.slice(matrixStart, matrixEnd);
   assert.ok(matrixRoute.includes("const fxDate = normalizeWacHistoryDate(r.fx_rate_date) || ''"),
