@@ -38,11 +38,12 @@ test('WAC history matrix Latest WAC follows newest confirmation timestamp, not l
   assert.equal(model.rows.length, 1);
   assert.match(model.rows[0][4], /^79,816\.81 IDR$/);
   assert.equal(model.rows[0][6], '2026-11-02');
-  assert.deepEqual(Array.from(model.dates), ['2026-11-09','__missing_fx_date__']);
+  assert.deepEqual(Array.from(model.dates), ['2026-11-09','__missing_fx_date__|2026-08-12']);
   const latestDateHeader = model.headers.find(header => String(header).includes('2026-11-09'));
   assert.ok(latestDateHeader.includes('1 RMB = 5.01 IDR'));
   assert.ok(latestDateHeader.includes('汇率结算日 2026-11-09'));
   assert.ok(model.headers[8].includes('汇率日期未记录'));
+  assert.ok(model.headers[8].includes('入库日期 2026-08-12'), 'inbound date may distinguish undated history but is never presented as FX date');
   assert.equal(model.rows[0][7], '79,816.81 IDR');
   assert.equal(model.rows[0][8], '76,854.00 IDR');
   assert.equal(model.rows[0][6], '2026-11-02');
