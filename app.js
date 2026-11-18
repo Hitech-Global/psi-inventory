@@ -15688,17 +15688,30 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (!from || date >= from) && (!to || date <= to);
   });
   const missingFxDateKey = '__missing_fx_date__';
+  const isMissingFxDate = function(d) {
+    return d === missingFxDateKey || String(d || '').indexOf(missingFxDateKey + '|') === 0;
+  };
   const fxDateKey = function(r) {
-    return String(r && r.fx_rate_date || '').slice(0,10) || missingFxDateKey;
+    const fxDate = String(r && r.fx_rate_date || '').slice(0,10);
+    if (fxDate) return fxDate;
+    const inboundDate = String(r && r.last_inbound_date || '').slice(0,10);
+    return inboundDate ? missingFxDateKey + '|' + inboundDate : missingFxDateKey;
   };
   const fxDateLabel = function(d) {
-    return d === missingFxDateKey
-      ? t('wac.matrix.fx_date_missing', '汇率日期未记录')
-      : t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
+    if (d === missingFxDateKey) return t('wac.matrix.fx_date_missing', '汇率日期未记录');
+    if (String(d || '').indexOf(missingFxDateKey + '|') === 0) {
+      return t('wac.matrix.fx_date_missing', '汇率日期未记录') + ' · ' +
+        t('wac.matrix.inbound_date', '入库日期') + ' ' + String(d).slice(missingFxDateKey.length + 1);
+    }
+    return t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
   };
   const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
-    if (a === missingFxDateKey) return 1;
-    if (b === missingFxDateKey) return -1;
+    const aMissing = isMissingFxDate(a), bMissing = isMissingFxDate(b);
+    if (aMissing && !bMissing) return 1;
+    if (!aMissing && bMissing) return -1;
+    if (aMissing && bMissing) {
+      return String(b).slice(missingFxDateKey.length + 1).localeCompare(String(a).slice(missingFxDateKey.length + 1));
+    }
     return b.localeCompare(a);
   });
   const groupMap = new Map();
@@ -15872,17 +15885,30 @@ async function loadWacHistoryMatrix(refresh) {
         (!from || date >= from) && (!to || date <= to);
     });
     const missingFxDateKey = '__missing_fx_date__';
+  const isMissingFxDate = function(d) {
+    return d === missingFxDateKey || String(d || '').indexOf(missingFxDateKey + '|') === 0;
+  };
   const fxDateKey = function(r) {
-    return String(r && r.fx_rate_date || '').slice(0,10) || missingFxDateKey;
+    const fxDate = String(r && r.fx_rate_date || '').slice(0,10);
+    if (fxDate) return fxDate;
+    const inboundDate = String(r && r.last_inbound_date || '').slice(0,10);
+    return inboundDate ? missingFxDateKey + '|' + inboundDate : missingFxDateKey;
   };
   const fxDateLabel = function(d) {
-    return d === missingFxDateKey
-      ? t('wac.matrix.fx_date_missing', '汇率日期未记录')
-      : t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
+    if (d === missingFxDateKey) return t('wac.matrix.fx_date_missing', '汇率日期未记录');
+    if (String(d || '').indexOf(missingFxDateKey + '|') === 0) {
+      return t('wac.matrix.fx_date_missing', '汇率日期未记录') + ' · ' +
+        t('wac.matrix.inbound_date', '入库日期') + ' ' + String(d).slice(missingFxDateKey.length + 1);
+    }
+    return t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
   };
   const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
-    if (a === missingFxDateKey) return 1;
-    if (b === missingFxDateKey) return -1;
+    const aMissing = isMissingFxDate(a), bMissing = isMissingFxDate(b);
+    if (aMissing && !bMissing) return 1;
+    if (!aMissing && bMissing) return -1;
+    if (aMissing && bMissing) {
+      return String(b).slice(missingFxDateKey.length + 1).localeCompare(String(a).slice(missingFxDateKey.length + 1));
+    }
     return b.localeCompare(a);
   });
     const groupMap = new Map();
@@ -15990,7 +16016,7 @@ async function loadWacHistoryMatrix(refresh) {
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；“Latest WAC 对应入库日期”取物流批次实际到货日期。历史成本列按汇率结算日期分组，汇率日期取运费实际付款完成日；关税按关税实际付款完成日换算。缺少实际汇率日期的记录单独归入“汇率日期未记录”，不使用到货日期代替，也不使用当前汇率替代。横向滚动可查看全部历史汇率列。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；“Latest WAC 对应入库日期”取物流批次实际到货日期。历史成本列按汇率结算日期分组，汇率日期取运费实际付款完成日；关税按关税实际付款完成日换算。缺少实际汇率日期的记录按入库日期区分，并标记“汇率日期未记录”；入库日期仅用于区分历史记录，不作为汇率日期，也不用于汇率查询。横向滚动可查看全部历史汇率列。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
