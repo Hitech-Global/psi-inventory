@@ -15687,7 +15687,20 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
       (!from || date >= from) && (!to || date <= to);
   });
-  const dates = Array.from(new Set(selected.map(r => String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
+  const missingFxDateKey = '__missing_fx_date__';
+  const fxDateKey = function(r) {
+    return String(r && r.fx_rate_date || '').slice(0,10) || missingFxDateKey;
+  };
+  const fxDateLabel = function(d) {
+    return d === missingFxDateKey
+      ? t('wac.matrix.fx_date_missing', '汇率日期未记录')
+      : t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
+  };
+  const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
+    if (a === missingFxDateKey) return 1;
+    if (b === missingFxDateKey) return -1;
+    return b.localeCompare(a);
+  });
   const groupMap = new Map();
   selected.forEach(function(r) {
     const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15706,7 +15719,6 @@ function _wacHistoryMatrixExportModel(rows, filters) {
     if (!r) return '';
     const currency = String(r.local_currency || '').trim().toUpperCase();
     const rate = Number(r.rmb_to_local_rate);
-    const rateDate = String(r.fx_rate_date || '').slice(0,10);
     if (Number.isFinite(rate) && rate > 0 && currency) {
       return '1 RMB = ' + Number(rate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ' + currency;
     }
@@ -15716,7 +15728,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   groups.forEach(function(g) {
     const latestByDate = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
+      const d = fxDateKey(r);
       if (!d) return;
       const old = latestByDate.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
@@ -15733,7 +15745,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
   const headers = ['SKU','品牌','国家','仓库','Latest WAC','较上次 WAC 变化',t('wac.matrix.latest_wac_inbound_date', 'Latest WAC 对应入库日期')].concat(
     dates.map(function(d) {
       const rates = Array.from(dateFxLabels.get(d) || []).filter(Boolean);
-      return (rates.length ? rates.join(' / ') + '\n' : '') + d;
+      return (rates.length ? rates.join(' / ') + '\n' : '') + fxDateLabel(d);
     })
   );
   const matrixRows = groups.map(function(g) {
@@ -15750,7 +15762,7 @@ function _wacHistoryMatrixExportModel(rows, filters) {
       (delta === null ? '' : '\n' + (delta > 0 ? '+' : '') + money(delta) + currency);
     const dateValues = new Map();
     g.records.forEach(function(r) {
-      const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
+      const d = fxDateKey(r);
       const old = dateValues.get(d);
       if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
         (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) {
@@ -15859,7 +15871,20 @@ async function loadWacHistoryMatrix(refresh) {
         (!search || String(r.sku_code || '').toLowerCase().includes(search) || String(r.model || '').toLowerCase().includes(search)) &&
         (!from || date >= from) && (!to || date <= to);
     });
-    const dates = Array.from(new Set(selected.map(r => String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10)).filter(Boolean))).sort().reverse();
+    const missingFxDateKey = '__missing_fx_date__';
+  const fxDateKey = function(r) {
+    return String(r && r.fx_rate_date || '').slice(0,10) || missingFxDateKey;
+  };
+  const fxDateLabel = function(d) {
+    return d === missingFxDateKey
+      ? t('wac.matrix.fx_date_missing', '汇率日期未记录')
+      : t('wac.matrix.fx_settlement_date', '汇率结算日') + ' ' + d;
+  };
+  const dates = Array.from(new Set(selected.map(fxDateKey))).sort(function(a,b) {
+    if (a === missingFxDateKey) return 1;
+    if (b === missingFxDateKey) return -1;
+    return b.localeCompare(a);
+  });
     const groupMap = new Map();
     selected.forEach(function(r) {
       const key = [r.sku_code,r.brand,r.country,r.warehouse].join('¦');
@@ -15880,8 +15905,7 @@ async function loadWacHistoryMatrix(refresh) {
       if (!r) return '';
       const currency = String(r.local_currency || '').trim().toUpperCase();
       const rate = Number(r.rmb_to_local_rate);
-      const rateDate = String(r.fx_rate_date || '').slice(0,10);
-      if (Number.isFinite(rate) && rate > 0 && currency) {
+        if (Number.isFinite(rate) && rate > 0 && currency) {
         return '1 RMB = ' + Number(rate).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' ' + currency;
       }
       return currency ? currency + ' 历史汇率缺失' : '未配置本币币种';
@@ -15891,7 +15915,7 @@ async function loadWacHistoryMatrix(refresh) {
     groups.forEach(function(g) {
       const latestByDate = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
+        const d = fxDateKey(r);
         if (!d) return;
         const old = latestByDate.get(d);
         if (!old || Number(r.version_no||0) > Number(old.version_no||0) ||
@@ -15909,10 +15933,10 @@ async function loadWacHistoryMatrix(refresh) {
       const fxHtml = rates.map(function(rate) {
         return '<div class="wac-history-date-fx">' + esc(rate) + '</div>';
       }).join('');
-      return '<th style="min-width:150px">' + fxHtml + '<div class="wac-history-date-label">' + esc(d) + '</div></th>';
+      return '<th style="min-width:150px">' + fxHtml + '<div class="wac-history-date-label">' + esc(fxDateLabel(d)) + '</div></th>'; 
     };
     const countEl = document.getElementById('wac-matrix-count');
-    if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史日期';
+    if (countEl) countEl.textContent = groups.length + ' 个 SKU/仓库组合 · ' + dates.length + ' 个历史汇率列';
     if (!groups.length) {
       target.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div>暂无符合条件的WAC历史记录</div>';
       return;
@@ -15925,7 +15949,7 @@ async function loadWacHistoryMatrix(refresh) {
       '<th class="wac-sticky" style="left:380px;min-width:160px">仓库</th>' +
       '<th class="wac-sticky" style="left:540px;min-width:140px">Latest WAC</th>' +
       '<th class="wac-sticky" style="left:680px;min-width:160px">较上次 WAC 变化</th>' +
-      '<th class="wac-sticky" style="left:840px;min-width:125px">最后入库日期</th>' +
+      '<th class="wac-sticky" style="left:840px;min-width:125px">' + esc(t('wac.matrix.latest_wac_inbound_date', 'Latest WAC 对应入库日期')) + '</th>' +
       dates.map(dateHeader).join('') +
       '</tr></thead><tbody>';
 
@@ -15940,7 +15964,7 @@ async function loadWacHistoryMatrix(refresh) {
       const trendColor = pct === null ? 'var(--text-secondary)' : (pct > 0 ? '#16a34a' : pct < 0 ? '#dc2626' : 'var(--text-secondary)');
       const dateVals = new Map();
       g.records.forEach(function(r) {
-        const d = String(r.fx_rate_date || r.last_inbound_date || '').slice(0,10);
+        const d = fxDateKey(r);
         const old = dateVals.get(d);
         if (!old || String(r.confirmed_at) > String(old.confirmed_at) ||
           (String(r.confirmed_at) === String(old.confirmed_at) && Number(r.version_no||0) > Number(old.version_no||0))) dateVals.set(d,r);
@@ -15966,7 +15990,7 @@ async function loadWacHistoryMatrix(refresh) {
       '</tr>';
     });
     html += '</tbody></table></div>' +
-      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；同一确认时间再按版本号排序。日期列按最后入库日期显示，同一入库日显示该日最新确认记录。历史导入记录如有有效期，会在成本下方显示结束日期。汇率日期按实际运费付款结算日显示；日期列仍按最后入库日期显示。历史汇率缺失时不使用当前汇率替代。横向滚动可查看全部历史日期。</div>';
+      '<div style="padding:8px 2px;font-size:11px;color:var(--text-secondary)">Latest WAC及变化按WAC实际确认时间最新的记录计算；“Latest WAC 对应入库日期”取物流批次实际到货日期。历史成本列按汇率结算日期分组，汇率日期取运费实际付款完成日；关税按关税实际付款完成日换算。缺少实际汇率日期的记录单独归入“汇率日期未记录”，不使用到货日期代替，也不使用当前汇率替代。横向滚动可查看全部历史汇率列。</div>';
     target.innerHTML = html;
   } catch(e) {
     target.innerHTML = '<div class="empty-state">' + esc(e.message || '加载失败') + '</div>';
