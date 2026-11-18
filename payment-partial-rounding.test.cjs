@@ -93,15 +93,9 @@ describe('部分付款 vs 尾差抹零 — 核心判断（finalPaymentApprovalIn
     );
   });
 
-  test('回归：抹零最多 0.20，必须精确匹配当前未结差额', () => {
-    // 应付 57435.21，实际付款 57435，抹零 0.21：虽完全匹配差额，但超过 0.20 上限，应拦截
-    assert.throws(
-      () => finalPaymentApprovalInput(
-        payment(57435.21),
-        baseBody({ actual_paid_amount: 57435, rounding_amount: 0.21 })
-      ),
-      /抹零金额不能超过 0.20/
-    );
+  test('回归：0.46 可抹零，且抹零金额必须小于 1.00', () => {
+    assert.doesNotThrow(() => finalPaymentApprovalInput(payment(57435.46), baseBody({ actual_paid_amount: 57435, rounding_amount: 0.46 })));
+    assert.throws(() => finalPaymentApprovalInput(payment(57436), baseBody({ actual_paid_amount: 57435, rounding_amount: 1 })), /抹零金额必须小于 1.00/);
   });
 
   test('案例5（拒绝）：应付 57435.20，付款 0，抹零 57435.20 → 抹零不能当作付款抵扣', () => {
@@ -127,8 +121,8 @@ describe('部分付款 vs 尾差抹零 — 核心判断（finalPaymentApprovalIn
     );
   });
 
-  test('防御：明确定义的最大抹零阈值 MAX_ROUND_OFF_AMOUNT = 0.20，超过阈值即拦截', () => {
-    // 验证任何超过 0.20 的抹零都必须被拦截，包括恰好 1 元及更大金额；
+  test('防御：明确定义的最大抹零阈值 MAX_ROUND_OFF_AMOUNT = 0.99，达到 1.00 即拦截', () => {
+    // 验证达到 1.00 的抹零必须被拦截；
     // 不允许用抹零替代正常付款。
     for (const [payable, paid, rounding] of [
       [1000, 999, 1],      // 抹零恰好 1 元 → 超过上限
