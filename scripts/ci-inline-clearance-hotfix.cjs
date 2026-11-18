@@ -4,8 +4,8 @@ const path=require('node:path');
 const {execFileSync}=require('node:child_process');
 const APP_PERF=path.join(__dirname,'..','app-perf.js');
 const SERVER_JS=path.join(__dirname,'..','server.js');
-const UI_MARKER='// CI-INLINE-CLEARANCE-UI-V2';
-const LEGACY_UI_MARKER='// CI-INLINE-CLEARANCE-UI-V1';
+const UI_MARKER='// CI-INLINE-CLEARANCE-UI-V3';
+const LEGACY_UI_MARKERS=['// CI-INLINE-CLEARANCE-UI-V1','// CI-INLINE-CLEARANCE-UI-V2'];
 const SERVER_MARKER='// CI-INLINE-CLEARANCE-SERVER-V1';
 
 function uiPatch(){
@@ -13,6 +13,23 @@ return "\n\n"+UI_MARKER+"\n"+String.raw`
 (function(global){
 'use strict';
 if(!global||typeof global.addEventListener!=='function')return;
+// Unified CI rows are serialized through outerHTML, which drops DOM property handlers.
+// Delegate click/change from document so the selector remains functional after serialization.
+var doc=global.document;
+if(doc&&typeof doc.addEventListener==='function'&&!global.__ciClearanceDelegated){
+  global.__ciClearanceDelegated=true;
+  function findOperationalClearance(event){
+    var target=event&&event.target;
+    return target&&typeof target.closest==='function'?target.closest('select.ci-clearance-inline[data-ci-id]'):null;
+  }
+  doc.addEventListener('click',function(event){
+    if(findOperationalClearance(event)&&event&&typeof event.stopPropagation==='function')event.stopPropagation();
+  },true);
+  doc.addEventListener('change',function(event){
+    var select=findOperationalClearance(event);
+    if(select&&typeof global.updateCIClearanceInline==='function')global.updateCIClearanceInline(select,select.getAttribute('data-ci-id'));
+  },true);
+}
 function esc(v){return typeof global.esc==='function'?global.esc(v):String(v==null?'':v).replace(/[&<>"']/g,function(c){return({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]);});}
 function selectHtml(ci){
 var v=ci.clearance_type||'',disabled=!(typeof global.hasPermission==='function'&&global.hasPermission('ci_edit'));
@@ -75,7 +92,7 @@ wrapped.__ciInlineClearanceWrapped=true;wrapped.__original=original;global.rende
 }
 function patchAppPerfSource(src){
 if(src.includes(UI_MARKER))return src;
-const legacyAt=src.lastIndexOf(LEGACY_UI_MARKER);
+const legacyAt=Math.max.apply(null,LEGACY_UI_MARKERS.map(function(marker){return src.lastIndexOf(marker);}));
 if(legacyAt>=0)return src.slice(0,legacyAt)+uiPatch();
 return src.replace(/\s*$/,'')+uiPatch();
 }
