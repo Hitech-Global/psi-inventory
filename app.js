@@ -14602,11 +14602,35 @@ function populateLogFacets(){
   }catch(e){}
 }
 
+function retryLogDetail(){
+  const retry=window.__logDetailRetry;
+  if(retry) viewLogDetail(retry.id);
+}
 async function viewLogDetail(id){
+  // LOGISTICS-DETAIL-LOADING-STATE-V1
+  const __logRequestId=(window.__logDetailRequestSeq||0)+1;
+  window.__logDetailRequestSeq=__logRequestId;
+  window.__logDetailRetry={id:id};
+  const __logLang=typeof getLang==='function'?getLang():'zh';
+  const __logLoadingText=__logLang==='en'?'Loading logistics details…':__logLang==='id'?'Memuat detail logistik…':'正在加载物流详情…';
+  const __logLoadingTitle=__logLang==='en'?'Logistics Details':__logLang==='id'?'Detail Logistik':'物流详情';
+  const __logLoadingBody='<div class="ci-detail-loading log-detail-loading" data-request-id="'+__logRequestId+'" role="status" aria-live="polite" aria-busy="true">'
+    +'<div class="ci-detail-loading-banner"><span class="ci-detail-spinner" aria-hidden="true"></span><span>'+__logLoadingText+'</span></div>'
+    +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-grid">'+new Array(8).fill('<div class="ci-skeleton-field"></div>').join('')+'</div></div>'
+    +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-line ci-skeleton-line-wide"></div><div class="ci-skeleton-line"></div><div class="ci-skeleton-line ci-skeleton-line-short"></div></div>'
+    +'<div class="ci-loading-card"><div class="ci-skeleton-title"></div><div class="ci-skeleton-grid">'+new Array(4).fill('<div class="ci-skeleton-field"></div>').join('')+'</div></div></div>';
+  openModal(__logLoadingTitle,__logLoadingBody,
+    '<button class="btn btn-secondary" onclick="closeModal()">'+(__logLang==='en'?'Close':__logLang==='id'?'Tutup':'关闭')+'</button>','modal-ci-create');
   try{
     const l=await api('/api/logistics-batches/'+id);
+    const __logLoadingNode=document.querySelector('#modal-content .log-detail-loading[data-request-id="'+__logRequestId+'"]');
+    const __logLoadingOverlay=document.getElementById('modal-overlay');
+    if(!__logLoadingNode||!__logLoadingOverlay||!__logLoadingOverlay.classList.contains('show'))return;
     let plData=null;
     if(l.pl_id){plData=await api('/api/packing-lists/'+l.pl_id);}
+    const __logCurrentNode=document.querySelector('#modal-content .log-detail-loading[data-request-id="'+__logRequestId+'"]');
+    if(!__logCurrentNode||!__logLoadingOverlay.classList.contains('show'))return;
+    window.__logDetailRetry=null;
     const plItems=(plData&&plData.items)||[];
     const plItemsHTML=plItems.length?'<div class="table-container" style="box-shadow:none;border-radius:0;overflow-x:auto;margin-top:8px"><table class="data-table" style="table-layout:fixed;width:100%;min-width:0"><colgroup><col style="width:25%"><col style="width:15%"><col style="width:15%"><col style="width:15%"><col style="width:15%"><col style="width:15%"></colgroup><thead><tr><th>'+t('logistics.pl.sku','SKU')+'</th><th>'+t('logistics.pl.cartons','CTN数量')+'</th><th>'+t('logistics.pl.total_qty','总数量')+'</th><th>'+t('logistics.pl.gross_weight','总毛重')+'</th><th>'+t('logistics.pl.net_weight','总净重')+'</th><th>'+t('logistics.pl.cbm','总体积')+'</th></tr></thead><tbody>'+plItems.map(it=>'<tr><td class="cell-id" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(it.sku_code)+'</td><td style="white-space:nowrap">'+(it.cartons||0)+'</td><td style="white-space:nowrap">'+(it.total_qty||0)+'</td><td style="white-space:nowrap">'+(it.gross_weight||0)+'</td><td style="white-space:nowrap">'+(it.net_weight||0)+'</td><td style="white-space:nowrap">'+(it.cbm||0)+'</td></tr>').join('')+'</tbody></table></div>':'<div style="padding:12px;color:#999">'+t('logistics.detail.no_pl_items','无PL明细')+'</div>';
     const plSummary=plData?'<div style="display:flex;gap:16px;margin-top:8px;font-size:13px;color:#666"><span>'+t('logistics.pl.summary_pl_no','PL单号')+': <b>'+esc(plData.pl_no||'')+'</b></span><span>'+t('logistics.pl.summary_total_cartons','总CTN数量')+': <b>'+(l.total_cartons||plData.total_cartons||0)+'</b></span><span>'+t('logistics.pl.summary_total_qty','总数量')+': <b>'+(plData.total_qty||0)+'</b></span><span>'+t('logistics.pl.summary_gross_weight','总毛重')+': <b>'+(plData.total_gross_weight||0)+'</b>kg</span><span>'+t('logistics.pl.summary_cbm','总体积')+': <b>'+(Number(plData.total_cbm||0).toFixed(2))+'</b>CBM</span><span>'+t('logistics.pl.summary_status','状态')+': <b>'+esc(plData.status||'')+'</b></span></div>':'';
@@ -14677,7 +14701,23 @@ async function viewLogDetail(id){
       (hasPermission('logistics_edit')?'<button class="btn btn-secondary" onclick="backfillArrival(\''+id+'\')">'+t('wac.backfill_btn_arrival','历史到货日期补录')+'</button>':'')+
       (hasPermission('payment_create')?'<button class="btn btn-secondary" onclick="backfillFreightPayment(\''+id+'\')">'+t('wac.backfill_btn_freight','补录运费付款')+'</button>':'')+
       (hasPermission('logistics_edit')?'<button class="btn btn-primary" onclick="closeModal();editLog(\''+id+'\')">'+t('common.edit','编辑')+'</button>':''),'modal-ci-create');
-  }catch(e){showToast(e.message,'danger')}
+  }catch(e){
+    const __logLoadingNode=document.querySelector('#modal-content .log-detail-loading[data-request-id="'+__logRequestId+'"]');
+    const __logLoadingOverlay=document.getElementById('modal-overlay');
+    if(__logLoadingNode&&__logLoadingOverlay&&__logLoadingOverlay.classList.contains('show')){
+      const __logErrorLang=typeof getLang==='function'?getLang():'zh';
+      const __logErrorTitle=__logErrorLang==='en'?'Unable to load logistics details':__logErrorLang==='id'?'Gagal memuat detail logistik':'物流详情加载失败';
+      const __logErrorText=esc(e&&e.message?e.message:(__logErrorLang==='en'?'Please try again.':__logErrorLang==='id'?'Silakan coba lagi.':'请稍后重试。'));
+      __logLoadingNode.className='ci-detail-loading ci-detail-error-state log-detail-loading log-detail-error-state';
+      __logLoadingNode.setAttribute('role','alert');
+      __logLoadingNode.setAttribute('aria-busy','false');
+      __logLoadingNode.innerHTML='<div class="ci-detail-error-card"><div class="ci-detail-error-icon">!</div>'
+        +'<div class="ci-detail-error-title">'+__logErrorTitle+'</div>'
+        +'<div class="ci-detail-error-message">'+__logErrorText+'</div>'
+        +'<div class="ci-detail-error-actions"><button class="btn btn-primary" onclick="retryLogDetail()">'+(__logErrorLang==='en'?'Try again':__logErrorLang==='id'?'Coba lagi':'重试')+'</button>'
+        +'<button class="btn btn-secondary" onclick="closeModal()">'+(__logErrorLang==='en'?'Close':__logErrorLang==='id'?'Tutup':'关闭')+'</button></div></div>';
+    }
+  }
 }
 
 // ==================== 历史事实补录 (Historical Backfill) ====================

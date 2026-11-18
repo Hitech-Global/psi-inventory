@@ -13,6 +13,10 @@ on:
       - 'scripts/ci-historical-clearance-hotfix.cjs'
       - 'scripts/ci-detail-loading-hotfix.cjs'
       - 'test/ci-detail-loading-hotfix.test.cjs'
+      - 'scripts/logistics-detail-loading-hotfix.cjs'
+      - 'test/logistics-detail-loading-hotfix.test.cjs'
+      - 'index.html'
+      - 'package.json'
       - 'migrations/historical-ci-clearance.js'
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-historical-full-edit.test.cjs'
@@ -179,6 +183,8 @@ jobs:
           node --check test/ci-single-date-filter.test.cjs
           node --check scripts/ci-detail-loading-hotfix.cjs
           node --check test/ci-detail-loading-hotfix.test.cjs
+          node --check scripts/logistics-detail-loading-hotfix.cjs
+          node --check test/logistics-detail-loading-hotfix.test.cjs
           node --check assets/ci-expense-modal-mac.js
           node --check test/ci-expense-modal-mac.test.cjs
           node --check assets/ci-attachment-actions.js
@@ -291,6 +297,8 @@ jobs:
         run: node test/ci-historical-full-edit.test.cjs
       - name: Test CI detail loading state and retry behavior
         run: node test/ci-detail-loading-hotfix.test.cjs
+      - name: Test logistics detail loading state and retry behavior
+        run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test CI attachment online Excel preview
         run: node test/ci-attachment-online-preview.test.cjs
       - name: Test unified CI attachment menu and customs documents
