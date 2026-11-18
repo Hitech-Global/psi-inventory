@@ -13157,20 +13157,20 @@ async function viewHistoricalCI(id,backPay,backMode){
     var itemsSection='';
     if(h.items&&h.items.length>0){
       itemsSection='<div class="detail-section"><h3>'+t('hci.items_title','SKU 成交价格明细')+'</h3>'+
-        '<table class="data-table" style="box-shadow:none;font-size:12px">'+
-        '<thead><tr><th>SKU</th><th class="ci-col-right">'+t('ci.col.ci_qty','数量')+'</th>'+
-        '<th class="ci-col-right">'+t('field.original_unit_price','原单价')+'</th>'+
-        '<th class="ci-col-right">'+t('field.discount','折扣')+'</th>'+
-        '<th class="ci-col-right">'+t('field.net_unit_price','折后单价')+'</th>'+
-        '<th class="ci-col-right">'+t('ci.col.amount','金额')+'</th></tr></thead><tbody>'+
+        '<table class="data-table" style="box-shadow:none;font-size:12px;text-align:left">'+
+        '<thead><tr><th>SKU</th><th>'+t('ci.col.ci_qty','数量')+'</th>'+
+        '<th>'+t('field.original_unit_price','原单价')+'</th>'+
+        '<th>'+t('field.discount','折扣')+'</th>'+
+        '<th>'+t('field.net_unit_price','折后单价')+'</th>'+
+        '<th>'+t('ci.col.amount','金额')+'</th></tr></thead><tbody>'+
         h.items.map(function(it){
           var disc=it.discount||0;
           return '<tr><td>'+esc(it.sku_code)+'</td>'+
-            '<td class="ci-col-right">'+(it.shipped_qty||0)+'</td>'+
-            '<td class="ci-col-right">'+fmtMoney(it.unit_price)+'</td>'+
-            '<td class="ci-col-right">'+(disc>0?(disc*100).toFixed(1)+'%':'—')+'</td>'+
-            '<td class="ci-col-right">'+fmtMoney(it.net_unit_price)+'</td>'+
-            '<td class="ci-col-right" style="font-weight:bold">'+fmtMoney(it.ci_amount)+'</td></tr>';
+            '<td>'+(it.shipped_qty||0)+'</td>'+
+            '<td>'+fmtMoney(it.unit_price,h.currency)+'</td>'+
+            '<td>'+(disc>0?(disc*100).toFixed(1)+'%':'—')+'</td>'+
+            '<td>'+fmtMoney(it.net_unit_price,h.currency)+'</td>'+
+            '<td style="font-weight:bold">'+fmtMoney(it.ci_amount,h.currency)+'</td></tr>';
         }).join('')+
         '</tbody></table>'+
         '<div style="font-size:12px;color:#999;margin-top:8px">'+t('hci.items_note','SKU 级成交价格快照，创建时锁定，不可编辑')+'</div></div>';

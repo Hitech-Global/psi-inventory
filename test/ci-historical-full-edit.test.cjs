@@ -26,4 +26,11 @@ const historicalList = app.slice(
 assert.ok(historicalList.includes("hasPermission('ci_edit')?'<button class=\"action-btn\" onclick=\"event.stopPropagation();editHistoricalCI"), 'historical CI list must expose an edit action to users with ci_edit permission');
 assert.ok(app.includes("tr.appendChild(cell(srcTable,sourceRow,['操作','Actions']))"), 'the unified CI list must preserve the historical row action cell including edit');
 
+
+const historicalDetail = app.slice(app.indexOf("async function viewHistoricalCI(id,backPay,backMode)"), app.indexOf("async function editHistoricalCI(id)"));
+const skuDetail = historicalDetail.slice(historicalDetail.indexOf("var itemsSection=''"), historicalDetail.indexOf("openModal("));
+for (const field of ['unit_price','net_unit_price','ci_amount']) assert.ok(skuDetail.includes('fmtMoney(it.'+field+',h.currency)'), field+' must display the historical CI currency');
+assert.ok(!skuDetail.includes('ci-col-right'), 'historical CI SKU detail table must not right-align columns');
+assert.ok(skuDetail.includes('font-size:12px;text-align:left'), 'historical CI SKU detail table must be left-aligned without changing its size');
+
 console.log('Historical CI full edit regression: PASS');
