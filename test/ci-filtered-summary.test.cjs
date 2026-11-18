@@ -10,7 +10,7 @@ assert.ok(start>=0&&end>start,'CI summary renderer exists');
 const source=app.slice(start,end);
 const context={t:(key,fallback)=>fallback,esc:value=>String(value==null?'':value)};
 vm.runInNewContext(source+'; this.renderPurchaseAmountSummary=renderPurchaseAmountSummary;',context);
-test('CI summary cards use filtered CI rows, currency grouping and actual-paid-only totals',()=>{
+test('CI summary cards show settled total as cash plus deductions and rounding, grouped by currency',()=>{
  const html=context.renderPurchaseAmountSummary(
   [
    {ci_status:'shipped',currency:'RMB',goods_amount:100,actual_deducted_deposit:10,balance_paid_amount:20,balance_deduction_amount:5,balance_rounding_amount:0.5,balance_unpaid_amount:64.5},
@@ -24,7 +24,8 @@ test('CI summary cards use filtered CI rows, currency grouping and actual-paid-o
  assert.match(html,/已付款总金额/);
  assert.match(html,/剩余未付款总金额/);
  assert.match(html,/未结金额合计/);
- assert.match(html,/已付款：RMB 20\.00 · USD 15\.00/);
+ assert.match(html,/现金付款金额：RMB 20\.00 · USD 15\.00/);
+ assert.match(html,/RMB 35\.50 · USD 18\.20/);
  assert.match(html,/抵扣：RMB 15\.00 · USD 3\.00/);
  assert.match(html,/抹零：RMB 0\.50 · USD 0\.20/);
  assert.match(html,/RMB 100\.00/);

@@ -12588,6 +12588,7 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
   const metrics={
     total:{label:t('app.979','采购金额合计'),byCurrency:new Map()},
     paid:{label:t('ci.summary.paid_total','已付款总金额'),byCurrency:new Map()},
+    cash:{label:t('ci.summary.breakdown_cash','现金付款金额'),byCurrency:new Map()},
     deduction:{label:t('ci.summary.breakdown_deduction','抵扣'),byCurrency:new Map()},
     rounding:{label:t('ci.summary.breakdown_rounding','抹零'),byCurrency:new Map()},
     unpaid:{label:t('ci.summary.unpaid_total','剩余未付款总金额'),byCurrency:new Map()}
@@ -12604,10 +12605,14 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     const cur=row.currency||'';
     if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
     add(metrics.total,cur,row.goods_amount);
-    // 现金实付只统计尾款实际付款；已抵扣定金与后续付款抵扣单独列为抵扣。
-    add(metrics.paid,cur,Number(row.balance_paid_amount||0));
-    add(metrics.deduction,cur,Number(row.actual_deducted_deposit||0)+Number(row.balance_deduction_amount||0));
-    add(metrics.rounding,cur,row.balance_rounding_amount);
+    // 汇总金额 = 现金付款 + 抵扣 + 抹零；各构成项单独展示，不混淆现金付款。
+    const cashAmount=Number(row.balance_paid_amount||0);
+    const deductionAmount=Number(row.actual_deducted_deposit||0)+Number(row.balance_deduction_amount||0);
+    const roundingAmount=Number(row.balance_rounding_amount||0);
+    add(metrics.cash,cur,cashAmount);
+    add(metrics.deduction,cur,deductionAmount);
+    add(metrics.rounding,cur,roundingAmount);
+    add(metrics.paid,cur,cashAmount+deductionAmount+roundingAmount);
     add(metrics.unpaid,cur,row.balance_unpaid_amount);
   });
   (historicalData||[]).forEach(function(row){
@@ -12615,9 +12620,13 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     const cur=row.currency||'';
     if(String(cur).trim().toUpperCase()!=='RMB')rmbPendingCount++;
     add(metrics.total,cur,row.gross_goods_amount);
-    add(metrics.paid,cur,Number(row.historical_paid_amount||0)+Number(row.subsequent_paid_amount||0));
-    add(metrics.deduction,cur,row.deduction_amount);
-    add(metrics.rounding,cur,row.rounding_amount);
+    const cashAmount=Number(row.historical_paid_amount||0)+Number(row.subsequent_paid_amount||0);
+    const deductionAmount=Number(row.deduction_amount||0);
+    const roundingAmount=Number(row.rounding_amount||0);
+    add(metrics.cash,cur,cashAmount);
+    add(metrics.deduction,cur,deductionAmount);
+    add(metrics.rounding,cur,roundingAmount);
+    add(metrics.paid,cur,cashAmount+deductionAmount+roundingAmount);
     add(metrics.unpaid,cur,row.unpaid_amount);
   });
   function amountText(map){
@@ -12628,7 +12637,7 @@ function renderPurchaseAmountSummary(operationalData,historicalData){
     return '<div class="stat-card"><div class="stat-label">'+metric.label+'</div><div class="stat-number" style="font-size:17px">'+amountText(metric.byCurrency)+'</div><div style="font-size:12px;color:#999;margin-top:4px;line-height:1.45">'+sub+'</div></div>';
   }
   const paidBreakdown='<div style="font-size:11px;line-height:1.45">'+[
-    '<div>'+esc(t('ci.summary.breakdown_paid','已付款'))+'：'+amountText(metrics.paid.byCurrency)+'</div>',
+    '<div>'+esc(t('ci.summary.breakdown_cash','现金付款金额'))+'：'+amountText(metrics.cash.byCurrency)+'</div>',
     '<div title="'+esc(t('ci.summary.breakdown_deduction_hint','含已抵扣定金及付款抵扣'))+'">'+esc(t('ci.summary.breakdown_deduction','抵扣'))+'：'+amountText(metrics.deduction.byCurrency)+'</div>',
     '<div>'+esc(t('ci.summary.breakdown_rounding','抹零'))+'：'+amountText(metrics.rounding.byCurrency)+'</div>'
   ].join('')+'</div>';
