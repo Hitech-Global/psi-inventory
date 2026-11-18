@@ -8,7 +8,9 @@ assert.ok(src.includes('<label>CI类型</label><select id="ci-source-mode"'));
 assert.ok(src.includes('<option value="all" selected>全部</option>'));
 assert.ok(src.includes('function renderUnifiedCITable(operationalData,historicalData)'));
 
-assert.ok(src.includes('table.innerHTML=renderUnifiedCITable(results[0]||[],results[1]||[])'));
+assert.ok(src.includes('const operationalRows=results[0]||[],historicalRows=results[1]||[];'));
+assert.ok(src.includes('table.innerHTML=renderUnifiedCITable(operationalRows,historicalRows)'));
+assert.ok(src.includes('renderPurchaseAmountSummary(operationalRows,historicalRows)'),'filtered CI summary cards must render from the same result rows');
 assert.ok(!src.includes("运营 CI</h3>{v1}"));
 assert.ok(!src.includes("历史 CI</h3>{v2}"));
 assert.ok(src.includes('function toggleHistoricalCIDetail'));
