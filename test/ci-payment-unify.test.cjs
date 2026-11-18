@@ -33,6 +33,7 @@ const { run, getDB } = dbMod;
 const {
   computeHistoricalCIPaymentFacts,
   computeOperatingCIBalancePaymentFacts,
+  payableItemsSettlementBreakdown,
 } = require('../server');
 
 createSchema();
@@ -376,7 +377,7 @@ test('HCI-4 (CASE 9 核心): PAY-HCI cancelled（带 legacy log）+ PAY-MULTI pa
   void importPriId;
 });
 
-test('HCI-5 (防双算核心): 新导入形态 —— 导入 PR active + is_legacy=1 导入付款经 PRI 挂在 hci balance item 上 → subsequent 必须为 0', () => {
+test('HCI-5 (旧版本兼容): 旧导入形态 —— PAY-HCI active + is_legacy=1 导入付款经 PRI 挂在 hci balance item 上 → subsequent 必须为 0', () => {
   clearAll();
   // createHistoricalCI 真实写入形态：导入 PR approved + legacy settlement log（金额=historical_paid_amount）+ PRI→hci balance item。
   // 若不排除 legacy，imported(300) 会通过 settlement 再计入 subsequent → 双算 600。
@@ -440,3 +441,29 @@ test('HCI-9 (CASE 回归): h.payment_request_id 指向已取消 PAY-HCI 时 help
   assert.equal(f.unpaid_amount, 1000);
   assert.equal(f.payment_status, 'unpaid');
 });
+
+test('HCI-10: 新导入历史 CI 无 PAY-HCI 申请时，导入前已付款仍计入应付项已付金额', () => {
+  clearAll();
+  const hciId = uniq('hci');
+  run("INSERT INTO historical_commercial_invoices (id, historical_ci_no, historical_paid_amount, gross_goods_amount, payment_request_id) VALUES (?, ?, ?, ?, '')", [hciId, 'HCI-OPENING-PAID', 300, 1000]);
+  const itemId = seedPayableItem({ source_type: 'historical_ci', source_id: hciId, fee_type: 'balance', payable_amount_minor: minor(1000) });
+  const itemFacts = payableItemsSettlementBreakdown([itemId]).get(itemId);
+  assert.equal(itemFacts.paidMinor, minor(300), '应付费用列表要显示导入前已付 300');
+  const hciFacts = computeHistoricalCIPaymentFacts(hciId);
+  assert.equal(hciFacts.subsequent_paid_amount, 0, '导入前已付不能重复算作后续付款');
+  assert.equal(hciFacts.unpaid_amount, 700, '历史 CI 未结金额仍为 700');
+});
+
+test('HCI-11: 已取消的旧 PAY-HCI 不应让导入前已付款从应付项中消失', () => {
+  clearAll();
+  const hciId = uniq('hci');
+  const prId = seedPR({ payment_status: 'cancelled', approval_status: 'cancelled' });
+  run("INSERT INTO historical_commercial_invoices (id, historical_ci_no, historical_paid_amount, gross_goods_amount, payment_request_id) VALUES (?, ?, ?, ?, ?)", [hciId, 'HCI-CANCELLED-OPENING', 300, 1000, prId]);
+  const itemId = seedPayableItem({ source_type: 'historical_ci', source_id: hciId, fee_type: 'balance', payable_amount_minor: minor(1000) });
+  seedPRI(itemId, prId, minor(1000));
+  seedLegacyPaymentLog(prId, 300);
+  const itemFacts = payableItemsSettlementBreakdown([itemId]).get(itemId);
+  assert.equal(itemFacts.paidMinor, minor(300), '取消的旧 PAY-HCI 不参与 settlement log，改从 HCI 快照计入一次');
+  const hciFacts = computeHistoricalCIPaymentFacts(hciId);
+  assert.equal(hciFacts.unpaid_amount, 700, 'HCI 汇总仍单独扣减历史已付款，不重复计算');
+});\n

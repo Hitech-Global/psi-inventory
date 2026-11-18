@@ -14882,12 +14882,25 @@ function payableItemsSettledMinor(itemIds) {
 function payableItemsSettlementBreakdown(itemIds, opts) {
   // CI/PAYMENT UNIFY：opts.excludeLegacy=true 时排除 is_legacy=1 导入期付款。
   // 仅历史 CI 读取路径使用（导入历史已付已在 historical_paid_amount 展示，legacy 再计入会双算）；
-  // 不传 opts 时行为与旧版完全一致（财务既有调用零影响）。
+  // 默认财务应付视图会把未绑定有效付款申请的历史 CI 导入前已付款计入已付；HCI 汇总使用 excludeHistoricalOpening 单独展示。
   const excludeLegacy = !!(opts && opts.excludeLegacy);
+  const excludeHistoricalOpening = !!(opts && opts.excludeHistoricalOpening);
   const result = new Map();
   const ids = [...new Set((itemIds || []).filter(Boolean))];
   ids.forEach(id => result.set(id, { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 }));
   if (!ids.length) return result;
+  // 新历史 CI 不再创建 PAY-HCI 付款申请；其导入前已付款直接从 HCI 快照计入应付项已付金额。
+  // 旧记录仍有 payment_request_id，继续由 is_legacy settlement log 计算，避免重复计入。
+  if (!excludeHistoricalOpening) {
+    try {
+      query("SELECT pi.id, h.historical_paid_amount FROM payable_items pi JOIN historical_commercial_invoices h ON h.id = pi.source_id WHERE pi.id IN (" + ids.map(() => '?').join(',') + ") AND pi.source_type = 'historical_ci' AND COALESCE(h.historical_paid_amount, 0) > 0 AND NOT EXISTS (SELECT 1 FROM payment_requests pr WHERE pr.id = h.payment_request_id AND pr.approval_status NOT IN ('cancelled','rejected') AND pr.payment_status NOT IN ('cancelled','rejected'))", ids).rows.forEach(r => {
+        const item = result.get(r.id);
+        if (item) item.paidMinor += amountToMinor(r.historical_paid_amount);
+      });
+    } catch (e) {
+      if (!/no such table|does not exist/i.test(String(e && e.message || e))) throw e;
+    }
+  }
   const priRows = query(
     `SELECT pri.id, pri.payable_item_id, pri.payment_request_id, pri.requested_amount_minor
      FROM payment_request_items pri
@@ -15867,8 +15880,6 @@ async function createHistoricalCI(body, req) {
 
     const operator = settlementOperator(req);
     const historicalId = genId('hci');
-    const paymentRequestId = genId('pay');
-    const paymentRequestNo = `PAY-HCI-${String(paymentRequestId).replace(/^pay_/, '').toUpperCase()}`;
     // PAY-CREDIT-DUE-01（修复）：优先使用录入的 due_date（历史CI已录业务事实），否则按出货日+Credit天数推算
     const historicalPayableDate = resolvePayableDate({ dueDate: normalized.due_date, creditDays: normalized.credit_days, baseDate: normalized.actual_ship_date });
     // HCI-DEPOSIT-DEDUCT: 历史CI尾款 = CI货值 − 关联PI当前可抵扣定金余额(available_deduct_deposit)
@@ -15901,20 +15912,9 @@ async function createHistoricalCI(body, req) {
     // PAY-CORE Phase 1.5 Task 2：派生 payee_key/payee_name_snapshot（格式 ${payee_type}:${identity}，与 payable_items 一致）
     const historicalPayeeKey = `supplier:${normalized.supplier_id || normalized.supplier_name}`;
     const historicalPayeeNameSnapshot = normalized.supplier_name || '';
-    run(`INSERT INTO payment_requests
-         (id, request_no, payment_category, payment_subcategory, source_type, source_id, source_no,
-          payee_type, payee_key, payee_name_snapshot, supplier_name, payable_amount, paid_amount, unpaid_amount, currency, payment_terms,
-          payable_date, approval_status, approver_name, approved_at, remark, expense_country)
-         VALUES (?, ?, 'goods', 'balance', 'historical_ci', ?, ?, 'factory', ?, ?, ?, ?, 0, ?, ?, ?, ?,
-                 'approved', ?, datetime('now'), ?, ?)`,
-      [paymentRequestId, paymentRequestNo, historicalId, normalized.historical_ci_no,
-        historicalPayeeKey, historicalPayeeNameSnapshot, normalized.supplier_name,
-        hciBalanceAmount, hciBalanceAmount, normalized.currency, normalized.payment_terms,
-        historicalPayableDate, operator.name, normalized.source_note, normalized.country]);
-
-    // PAY-CORE CI→付款事实闭环：Historical CI 补 payable_items（active + 关联 + reserve，与标准 PR 创建口径对齐）
-    // 复用 createPayableItemFromSource；不改变历史付款事实（is_legacy settlement_logs 不动）
-    const hciPayableItem = createPayableItemFromSource({
+    // 历史 CI 导入只创建采购应付项目并保持 active；历史已付款保存在 historical_paid_amount 快照中。
+    // 财务主动创建付款申请时，系统才会建立 payment_request_items 关联并 reserve 应付项目。
+    createPayableItemFromSource({
       sourceType: 'historical_ci', sourceId: historicalId, sourceNo: normalized.historical_ci_no,
       feeType: 'balance', categoryCode: 'goods', subcategoryCode: 'balance',
       payeeType: 'factory', payeeKey: historicalPayeeKey, payeeName: historicalPayeeNameSnapshot,
@@ -15922,29 +15922,10 @@ async function createHistoricalCI(body, req) {
       payableDate: historicalPayableDate,
       createdBy: operator.id
     });
-    if (hciPayableItem && hciPayableItem.id && hciPayableItem.lifecycle_status === 'active') {
-      run(
-        `INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) VALUES (?, ?, ?, ?)`,
-        [genId('pri'), paymentRequestId, hciPayableItem.id, hciPayableItem.payable_amount_minor || hciBalanceMinor]
-      );
-      reservePayableItem(hciPayableItem.id, paymentRequestId);
-    }
+    // 应付项目保持 active；仅财务主动创建付款申请时才 reserve。
+    // 历史已付款仅保存在 historical_paid_amount 快照，不伪造付款申请或结算流水。
 
-    run('UPDATE historical_commercial_invoices SET payment_request_id = ?, updated_at = datetime(\'now\') WHERE id = ?',
-      [paymentRequestId, historicalId]);
 
-    if (normalized.historical_paid_amount > 0) {
-      run(`INSERT INTO payment_settlement_logs
-           (id, payment_request_id, event_type, amount, status, reason, paid_date, original_currency,
-            operator_id, operator_name, idempotency_key, is_legacy)
-           VALUES (?, ?, 'payment', ?, 'applied', ?, ?, ?, ?, ?, ?, 1)`,
-        [genId('settle'), paymentRequestId, normalized.historical_paid_amount,
-          normalized.source_note || `历史 CI ${normalized.historical_ci_no} 已付款导入`,
-          normalized.historical_paid_date, normalized.currency, operator.id,
-          operator.name || 'historical_import', `historical-ci-payment:${normalized.idempotency_key}`]);
-    }
-
-    // Historical CI with PI linkage: update PI shipped/unshipped quantities and ship status
     const hciItems = Array.isArray(body.items) ? body.items : [];
     // HCI-PI-LINK-01: 关联 PI 但无 CI 明细时禁止静默创建（避免 PI shipped_qty 不回写）
     const linkedPiIds = Array.isArray(body.related_pi_ids) ? body.related_pi_ids : [];
@@ -16016,14 +15997,15 @@ async function createHistoricalCI(body, req) {
       }
     }
 
-    const settlement = recalculatePaymentSettlement(paymentRequestId);
+    const outstanding = settlementMoney(Math.max(0, hciBalanceAmount - normalized.historical_paid_amount));
+    const paymentStatus = outstanding <= 0 ? 'paid' : (normalized.historical_paid_amount > 0 ? 'partial_paid' : 'unpaid');
     return {
       idempotent: false,
       id: historicalId,
       historical_ci_no: normalized.historical_ci_no,
-      payment_request_id: paymentRequestId,
-      outstanding: settlement.outstanding,
-      payment_status: settlement.payment_status
+      payment_request_id: '',
+      outstanding,
+      payment_status: paymentStatus
     };
   });
   updateInventoryTransitDataAsync().catch(err => console.warn('[createHistoricalCI] 在途数据刷新失败（事务已提交）:', err && err.message));
@@ -16063,12 +16045,21 @@ function hasPendingApprovalOnPayableItems(ids) {
 //              createHistoricalCI 是 hci legacy payment 的唯一写入点，运费补录 legacy 走 logistics_batch 不经过此链路）。
 // 应付基数   = Σ payable_items.payable_amount_minor（财务冻结口径 = gross − PI 定金抵扣）；
 //              无 payable item 时防御性回退 gross_goods_amount。
+  // 历史 CI 原始已付款与后续付款均参与金额锁定；不再依赖导入时生成的 PAY-HCI 申请。
+function historicalCIHasSettlement(hciId, historicalPaidAmount) {
+  if (Number(historicalPaidAmount || 0) > 0) return true;
+  const items = query("SELECT id FROM payable_items WHERE source_type = 'historical_ci' AND source_id = ?", [hciId]).rows;
+  if (!items.length) return false;
+  const breakdown = payableItemsSettlementBreakdown(items.map(i => i.id), { excludeLegacy: true, excludeHistoricalOpening: true });
+  return items.some(item => { const f = breakdown.get(item.id) || {}; return Number(f.paidMinor||0)>0 || Number(f.deductionMinor||0)>0 || Number(f.roundingMinor||0)>0; });
+}
+
 function computeHistoricalCIPaymentFacts(hciId) {
   const hci = queryOne('SELECT id, historical_ci_no, historical_paid_amount, gross_goods_amount FROM historical_commercial_invoices WHERE id = ?', [hciId]);
   if (!hci) return null;
   const items = query("SELECT id, payable_amount_minor FROM payable_items WHERE source_type = 'historical_ci' AND source_id = ?", [hciId]).rows;
   const ids = items.map(i => i.id);
-  const bd = payableItemsSettlementBreakdown(ids, { excludeLegacy: true });
+  const bd = payableItemsSettlementBreakdown(ids, { excludeLegacy: true, excludeHistoricalOpening: true });
   let paidMinor = 0, dedMinor = 0, rndMinor = 0;
   ids.forEach(id => {
     const b = bd.get(id) || { paidMinor: 0, deductionMinor: 0, roundingMinor: 0 };
@@ -16112,7 +16103,7 @@ function computeHistoricalCIPaymentFactsBulk(hciIds) {
   for (const it of itemRows) { if (!itemsByHci.has(it.source_id)) itemsByHci.set(it.source_id, []); itemsByHci.get(it.source_id).push(it); }
   // 3) settlement 批量（复用 SSOT payableItemsSettlementBreakdown，一次集合查询）
   const allItemIds = itemRows.map(i => i.id);
-  const bd = payableItemsSettlementBreakdown(allItemIds, { excludeLegacy: true });
+  const bd = payableItemsSettlementBreakdown(allItemIds, { excludeLegacy: true, excludeHistoricalOpening: true });
   // 4) pending 审批批量（与 hasPendingApprovalOnPayableItems 同口径，按 payable_item 归还各 hci）
   const pendingSet = new Set();
   if (allItemIds.length) {
@@ -16510,11 +16501,10 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
       `SELECT id FROM payable_items WHERE source_type = 'historical_ci' AND source_id = ?`,
       [historical.id]
     ).rows;
-    historical.payment_records = ciPaymentRecords(hciPayItems.map(i => i.id), { excludeLegacy: true });
+    historical.payment_records = ciPaymentRecords(hciPayItems.map(i => i.id), { excludeLegacy: true, excludeHistoricalOpening: true });
     historical.items = query('SELECT sku_code, shipped_qty, unit_price, discount, net_unit_price, ci_amount FROM historical_commercial_invoice_items WHERE hci_id = ? ORDER BY created_at, id', [req.params.id]).rows;
     const hciLinkedItems = query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [req.params.id]).rows;
-    const hciSettlementCount = historical.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [historical.payment_request_id]).rows.length : 0;
-    historical.edit_goods_allowed = hciLinkedItems.length === 0 && hciSettlementCount === 0;
+    historical.edit_goods_allowed = hciLinkedItems.length === 0 && !historicalCIHasSettlement(historical.id, historical.historical_paid_amount);
     if (!ciCanViewAmounts(req)) ciRedactHistorical(historical, true);
     else historical.amount_view_allowed = true;
     res.json(historical);
@@ -16522,7 +16512,7 @@ app.get('/api/historical-commercial-invoices/:id', requireApiPermission('ci_view
 }));
 
 app.post('/api/historical-commercial-invoices',
-  requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
+  requireApiPermission('ci_create'),
   asyncHandler(async (req, res) => {
     try {
       const result = await createHistoricalCI(req.body || {}, req);
@@ -16531,7 +16521,7 @@ app.post('/api/historical-commercial-invoices',
   }));
 
 app.post('/api/historical-commercial-invoices/batch-import',
-  requireApiPermission('ci_create'), requireApiPermission('payment_create'), requireApiPermission('payment_approve'),
+  requireApiPermission('ci_create'),
   asyncHandler(async (req, res) => {
     try {
       const items = Array.isArray(req.body.items) ? req.body.items : [];
@@ -16566,8 +16556,7 @@ app.post('/api/historical-commercial-invoices/batch-import',
       const amountFields=['gross_goods_amount','freight_amount','freight_currency','customs_duty_idr','customs_duty_rmb'];
       if(!ciCanViewAmounts(req) && amountFields.some(k=>Object.prototype.hasOwnProperty.call(d,k)))return res.status(403).json({error:'没有金额查看/编辑权限'});
       const linkedItems=query('SELECT id FROM historical_commercial_invoice_items WHERE hci_id = ?', [id]).rows;
-      const settlementCount=hci.payment_request_id ? query("SELECT id FROM payment_settlement_logs WHERE payment_request_id = ? AND status = 'applied'", [hci.payment_request_id]).rows.length : 0;
-      const editGoodsAllowed=linkedItems.length===0 && settlementCount===0;
+      const editGoodsAllowed=linkedItems.length===0 && !historicalCIHasSettlement(id,hci.historical_paid_amount);
       const nextNo=String(d.historical_ci_no===undefined?hci.historical_ci_no:d.historical_ci_no||'').trim();
       const supplierName=String(d.supplier_name===undefined?hci.supplier_name:d.supplier_name||'').trim();
       if(d.supplier_name!==undefined && String(d.supplier_name||'').trim()!==String(hci.supplier_name||'').trim())return res.status(409).json({error:'供应商需要通过供应商主数据重新关联，当前编辑窗口不支持更换供应商'});
@@ -23457,6 +23446,7 @@ if (require.main === module) {
 module.exports = {
   syncLogisticsCostFactsCore,
   createPayableItemFromSource,
+  payableItemsSettlementBreakdown,
   syncPiDepositPayableDate,
   backfillPiDepositPayableDates,
   findActivePayableItem,
