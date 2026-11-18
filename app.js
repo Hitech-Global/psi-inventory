@@ -15473,7 +15473,7 @@ function updateWacHistoryDateRangeLabel() {
   const rangeTitle = t('wac.matrix.inbound_date_range', '最后入库日期范围');
   const rangeText = from && to ? from + ' 至 ' + to : (from ? from + ' 起' : '');
   const label = rangeText
-    ? t('wac.matrix.inbound_date_short', '入库日期') + ' ' + rangeText
+    ? t('wac.matrix.inbound_date_short', '最后入库') + ' ' + rangeText
     : rangeTitle;
   const title = rangeText ? rangeTitle + '：' + rangeText : rangeTitle;
   const el = document.getElementById('wac-matrix-date-label');
