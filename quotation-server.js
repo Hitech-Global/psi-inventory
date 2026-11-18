@@ -9,6 +9,7 @@ module.exports = function installQuotationManagement(deps) {
     : query('PRAGMA table_info(quotation_prices)').rows;
   const quotationColumns = new Set(quotationColumnRows.map(r => String(r.column_name || r.name || '')));
   const quotationAddColumns = [
+    ['brand', "TEXT NOT NULL DEFAULT ''"],
     ['supplier_id', "TEXT NOT NULL DEFAULT ''"],
     ['supplier_part_no', "TEXT NOT NULL DEFAULT ''"],
     ['supplier_part_no_key', "TEXT NOT NULL DEFAULT ''"],
