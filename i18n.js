@@ -2864,6 +2864,9 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en['col.inventory_qty'] = 'Inventory'; I18N.dict.id['col.inventory_qty'] = 'Persediaan';
   I18N.dict.en['col.is_new'] = 'New'; I18N.dict.id['col.is_new'] = 'Baru';
   I18N.dict.en['col.last_inbound_date'] = 'Last Inbound Date'; I18N.dict.id['col.last_inbound_date'] = 'Tanggal Masuk Terakhir';
+  I18N.dict.en['wac.matrix.inbound_date_range'] = 'Last Inbound Date Range'; I18N.dict.id['wac.matrix.inbound_date_range'] = 'Rentang Tanggal Masuk Terakhir';
+  I18N.dict.en['wac.matrix.inbound_date_short'] = 'Inbound'; I18N.dict.id['wac.matrix.inbound_date_short'] = 'Tanggal Masuk';
+  I18N.dict.en['wac.matrix.latest_wac_inbound_date'] = 'Inbound Date for Latest WAC'; I18N.dict.id['wac.matrix.latest_wac_inbound_date'] = 'Tanggal Masuk untuk Latest WAC';
   I18N.dict.en['col.last_sale'] = 'Last Sale Date'; I18N.dict.id['col.last_sale'] = 'Tanggal Penjualan Terakhir';
   I18N.dict.en['col.level'] = 'Level'; I18N.dict.id['col.level'] = 'Level';
   I18N.dict.en['col.model'] = 'Model'; I18N.dict.id['col.model'] = 'Model';
