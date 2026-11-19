@@ -84,4 +84,41 @@ assert.doesNotMatch(script, /\.innerText\s*=/);
 assert.doesNotMatch(script, /fetch\s*\(/);
 assert.doesNotMatch(script, /XMLHttpRequest/);
 
+
+const adapterContext = {};
+let adapterMarkup = [
+  '<div class="stats-grid mb-16">',
+  '<div class="stat-card"><div class="stat-number" style="font-size:17px">RMB 5,304,702.08 · USD 218,692.65</div><div>31 张</div></div>',
+  '<div class="stat-card"><div class="stat-number" style="font-size:17px">RMB 5,059,922.16 · USD 218,692.65</div><div>',
+  '<div>现金付款金额：RMB 4,823,711.23 · USD 218,692.65</div>',
+  '<div>抵扣：RMB 236,207.41 · USD 0.00</div>',
+  '<div>抹零：RMB 3.52 · USD 0.00</div>',
+  '</div></div>',
+  '<div class="stat-card"><div class="stat-number" style="font-size:17px">RMB 174,564.42 · USD 0.00</div></div>',
+  '</div>'
+].join('');
+adapterContext.renderPurchaseAmountSummary = () => adapterMarkup;
+adapterContext.window = adapterContext;
+vm.runInNewContext(script, {
+  window: adapterContext,
+  document: { readyState: 'loading', addEventListener: () => {} }
+});
+const formattedSummary = adapterContext.renderPurchaseAmountSummary();
+assert.match(formattedSummary, /RMB 5,304,702\.08<br>USD 218,692\.65/);
+assert.match(formattedSummary, /RMB 5,059,922\.16<br>USD 218,692\.65/);
+assert.match(formattedSummary, /现金付款金额：RMB 4,823,711\.23<br>USD 218,692\.65/);
+assert.match(formattedSummary, /抵扣：RMB 236,207\.41<br>USD 0\.00/);
+assert.match(formattedSummary, /抹零：RMB 3\.52<br>USD 0\.00/);
+assert.match(formattedSummary, /class="stat-number" style="font-size:17px">RMB 174,564\.42<\/div>/);
+assert.doesNotMatch(formattedSummary, /RMB 174,564\.42<br>USD 0\.00/);
+
+adapterMarkup = '<div class="stat-card"><div class="stat-number">RMB 1.00</div></div>' +
+  '<div class="stat-card"><div class="stat-number">RMB 1.00</div></div>' +
+  '<div class="stat-card"><div class="stat-number">USD 0.00</div></div>';
+const zeroOnlyUnpaid = adapterContext.renderPurchaseAmountSummary();
+assert.match(zeroOnlyUnpaid, /class="stat-number">—<\/div>/);
+assert.doesNotMatch(zeroOnlyUnpaid, /USD 0\.00/);
+assert.match(script, /CI-SUMMARY-CURRENCY-LINES-20261119/);
+assert.match(script, /installCurrencyLineRenderer/);
+
 console.log('CI compact procurement summary source contract: PASS');
