@@ -14504,11 +14504,10 @@ function _syncOneFeeCategory(batch, ci, cat, currency, defaultPayee, createdBy, 
       `SELECT 1 FROM payment_request_items pri
        JOIN payment_requests pr ON pr.id = pri.payment_request_id
        WHERE pri.payable_item_id = ?
-         AND pr.payment_status NOT IN ('cancelled','rejected','paid','partial_paid',
-                                       'partial_payment_partial_deduction','deduction_settled','partial_rounding')
+         AND pr.payment_status IN (${BLOCKING_GOODS_PR_STATUSES.map(() => '?').join(',')})
          AND pr.approval_status NOT IN ('cancelled','rejected')
        LIMIT 1`,
-      [payable.id]
+      [payable.id, ...BLOCKING_GOODS_PR_STATUSES]
     );
     if (activePri) paymentFlowStarted = true;
     if (isPayableInPaymentFlow) paymentFlowStarted = true;
@@ -14733,10 +14732,9 @@ function releasePayableItemsByPR(prId) {
       `SELECT COUNT(*) AS cnt FROM payment_request_items pri
        JOIN payment_requests pr ON pr.id = pri.payment_request_id
        WHERE pri.payable_item_id = ? AND pri.payment_request_id != ?
-         AND pr.payment_status NOT IN ('cancelled','rejected','paid','partial_paid',
-                                       'partial_payment_partial_deduction','deduction_settled','partial_rounding')
+         AND pr.payment_status IN (${BLOCKING_GOODS_PR_STATUSES.map(() => '?').join(',')})
          AND pr.approval_status NOT IN ('cancelled','rejected')`,
-      [row.payable_item_id, prId]
+      [row.payable_item_id, prId, ...BLOCKING_GOODS_PR_STATUSES]
     );
     if (otherActivePRs.rows[0] && otherActivePRs.rows[0].cnt > 0) {
       throw new Error(`数据一致性错误：应付费用 ${row.payable_item_id} 被多个有效付款申请关联，不得释放`);
@@ -15874,12 +15872,13 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
           [operator.name || operator.id, reversalReason, log.id]
         );
 
-        // 分摊撤销后按剩余有效结算重算 payable_item 生命周期：
-        // 仍有有效结算 → partially_paid/paid；没有结算但付款申请仍获批 → reserved。
+        // 先重算付款申请状态，再同步应付项目生命周期。
+        // reversed 属于终态，不再占用应付；若仍有其他有效付款申请，则继续保持 reserved。
         const payableIds = [...new Set(query(
           'SELECT payable_item_id FROM payment_request_items WHERE payment_request_id = ?',
           [payment.id]
         ).rows.map(row => row.payable_item_id).filter(Boolean))];
+        const result = recalculatePaymentSettlement(payment.id);
         if (payableIds.length) {
           const settledMap = payableItemsSettledMinor(payableIds);
           const payableRows = query(
@@ -15890,11 +15889,18 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
           for (const item of payableRows) {
             const settled = Number(settledMap.get(item.id) || 0);
             const remaining = Number(item.payable_amount_minor || 0) - settled;
+            const activeRequest = queryOne(
+              `SELECT 1 AS active FROM payment_request_items pri
+               JOIN payment_requests pr ON pr.id = pri.payment_request_id
+               WHERE pri.payable_item_id = ?
+                 AND pr.payment_status IN (${BLOCKING_GOODS_PR_STATUSES.map(() => '?').join(',')})
+                 AND pr.approval_status NOT IN ('cancelled','rejected')
+               LIMIT 1`,
+              [item.id, ...BLOCKING_GOODS_PR_STATUSES]
+            );
             const nextLifecycle = remaining <= 0
               ? 'paid'
-              : (settled > 0
-                ? 'partially_paid'
-                : (payment.approval_status === 'approved' && !['cancelled', 'rejected'].includes(payment.payment_status) ? 'reserved' : 'active'));
+              : (activeRequest ? 'reserved' : (settled > 0 ? 'partially_paid' : 'active'));
             run(
               `UPDATE payable_items SET lifecycle_status = ?
                WHERE id = ? AND lifecycle_status <> 'cancelled'`,
@@ -15902,7 +15908,6 @@ async function reverseSettlementEvent(paymentRequestId, rawLogId, eventType, rea
             );
           }
         }
-        const result = recalculatePaymentSettlement(payment.id);
         return {
           reversed_log_id: log.id,
           reversed_transaction_id: tx.id,
