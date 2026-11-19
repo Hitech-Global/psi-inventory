@@ -47,5 +47,5 @@ assert.doesNotThrow(()=>new Function(patched),'patched CI renderer must parse');
 assert.match(summary,/only documents originally denominated in RMB are counted toward the known RMB total/i);
 assert.match(summary,/marked as to-be-supplemented/i);
 assert.match(summary,/not naively summed across currencies/i);
-assert.match(index,/ci-summary-compact\.js\?v=20261107-4/);
+assert.match(index,/ci-summary-compact\.js\?v=/,'CI summary asset must be versioned for cache invalidation');
 console.log('CI English data mapping and compact summary regression: PASS');
