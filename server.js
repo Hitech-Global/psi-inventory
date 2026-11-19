@@ -15097,20 +15097,6 @@ function finalPaymentApprovalInput(payment, body = {}) {
 
   const attachmentValue = body.attachment !== undefined ? body.attachment : payment.attachment;
   const attachment = parseAttachment(attachmentValue);
-  let hasAttachment = Boolean(String(attachment || '').trim());
-  if (hasAttachment) {
-    try {
-      const parsed = JSON.parse(attachment);
-      if (Array.isArray(parsed)) hasAttachment = parsed.length > 0;
-      else if (parsed && typeof parsed === 'object') hasAttachment = Object.keys(parsed).length > 0;
-    } catch (e) {
-      // 历史字符串附件保持兼容，非空即视为已有付款凭证。
-    }
-  }
-  if (!hasAttachment) {
-    throw new SettlementError(400, '最终审批必须上传水单附件');
-  }
-  if (actualPaidAmount > 0 && !bankRefNo) throw new SettlementError(400, '最终审批必须填写银行流水号/交易参考号');
 
   return {
     actualPaidAmount,
@@ -15537,9 +15523,6 @@ function applyPaymentSettlementInTx(paymentRequestId, rawAmount, rawPaidDate, vo
     let logId = null, txId = null, transNo = null;
     let priRows = { rows: [] };
     if (actualPaidAmount > 0) {
-      if (!bankRefNo && options.allow_missing_bank_ref !== true) {
-        throw new SettlementError(400, '实际付款必须填写银行流水号/交易参考号');
-      }
       voucherFingerprint = paymentVoucherFingerprint(voucherAttachment);
       if (bankRefNo || voucherFingerprint) assertPaymentEvidenceNotDuplicated(bankRefNo, paymentAccount, voucherFingerprint);
       const snapshot = buildPaymentRateSnapshot(payment, actualPaidAmount, paidDate);
@@ -19234,9 +19217,6 @@ app.post('/api/payment-requests/:id/approve', requireApiPermission('payment_appr
       // 避免 pending 单子绕过一级审批直接结算。
       if (payment.approval_status !== 'approved') {
         return res.status(409).json({ error: '该付款申请尚未完成审批，不能确认付款' });
-      }
-      if (Number(req.body.paid_amount || 0) > 0 && !String(req.body.bank_ref_no || '').trim()) {
-        return res.status(400).json({ error: '实际付款必须填写银行流水号/交易参考号' });
       }
       const hasExecutePerm = (req.currentUserPermissions || []).some(p => p === 'payment_execute' || p === 'payment_approve' || p === '*');
       if (!hasExecutePerm) {
