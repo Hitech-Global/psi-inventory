@@ -144,7 +144,10 @@ test('PostgreSQL worker-thread migration creates voucher fingerprint before star
   assert.match(dbSource, /ix_tx_voucher_fingerprint/);
   assert.match(dbSource, /ix_tx_bank_ref_active/);
   const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
-  assert.match(serverSource, /实际付款必须填写银行流水号\/交易参考号/);
+  assert.doesNotMatch(serverSource, /最终审批必须上传水单附件|最终审批必须填写银行流水号\/交易参考号|实际付款必须填写银行流水号\/交易参考号/);
+  const appSource = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+  assert.doesNotMatch(appSource, /payment\.bank_ref_required/);
+  assert.doesNotMatch(appSource, /银行流水号\/交易参考号 <span class="required">\*/);
 });
 
 test('payment voucher fingerprint ignores upload metadata and filenames', () => {
@@ -273,17 +276,26 @@ test('payment confirmation rejects a duplicate bank reference when the historica
   assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_new_ref']).count, 0);
 });
 
-test('manual payment confirmation requires a bank transaction reference', async () => {
+test('manual payment confirmation allows missing bank reference and attachment', async () => {
   resetDb();
   seedRequest('pr_missing_ref', 'PAY-MISSING-REF', 100);
-  await assert.rejects(
-    applyPaymentSettlement('pr_missing_ref', 100, '2026-11-18', '', operator, 'idem-missing-ref', {
-      payment_account: 'Hitech',
-      voucher_attachment: JSON.stringify([{ name: 'proof.png', dataUrl: 'data:image/png;base64,QUJD' }])
-    }),
-    error => error && error.status === 400 && /银行流水号\/交易参考号/.test(error.message)
+  const result = await applyPaymentSettlement('pr_missing_ref', 100, '2026-11-18', '', operator, 'idem-missing-ref', {
+    payment_account: 'Hitech'
+  });
+  assert.equal(result.effectivePaid, 100);
+  const transaction = queryOne(
+    'SELECT bank_ref_no, voucher_attachment, voucher_fingerprint FROM payment_transactions WHERE payment_request_id = ?',
+    ['pr_missing_ref']
   );
-  assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_missing_ref']).count, 0);
+  assert.ok(transaction);
+  assert.equal(transaction.bank_ref_no, '');
+  assert.equal(transaction.voucher_attachment, '');
+  assert.equal(transaction.voucher_fingerprint, '');
+  const settlement = queryOne(
+    "SELECT payment_voucher FROM payment_settlement_logs WHERE payment_request_id = ? AND event_type = 'payment'",
+    ['pr_missing_ref']
+  );
+  assert.equal(settlement.payment_voucher, '');
 });
 
 test('legacy payment-result import remains compatible when bank reference is unavailable', async () => {
