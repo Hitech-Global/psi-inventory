@@ -182,7 +182,7 @@ test('reversing a payment transaction reverses allocation and restores historica
   assert.equal(Number(request.paid_amount), 0);
   assert.equal(Number(request.unpaid_amount), 163836.15);
   assert.equal(request.payment_status, 'reversed');
-  assert.equal(queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [ids.payableId]).lifecycle_status, 'reserved');
+  assert.equal(queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [ids.payableId]).lifecycle_status, 'active');
 
   const hciFacts = computeHistoricalCIPaymentFacts(ids.hciId);
   assert.equal(hciFacts.subsequent_paid_amount, 0);
@@ -192,6 +192,34 @@ test('reversing a payment transaction reverses allocation and restores historica
   await assert.rejects(
     reverseSettlementEvent(ids.prId, ids.logId, 'payment', '重复撤销测试', operator),
     error => error && error.status === 409
+  );
+});
+
+test('reversing a payment keeps payable reserved when another active request still owns it', async () => {
+  resetDb();
+  const ids = seedHciPayment();
+  seedRequest('pr_hci_reversal_other_active', 'PAY-HCI-REVERSAL-OTHER', 163836.15, 'approved');
+  run(
+    "INSERT INTO payment_request_items (id, payment_request_id, payable_item_id, requested_amount_minor) " +
+    "VALUES ('pri_hci_reversal_other_active', 'pr_hci_reversal_other_active', ?, 16383615)",
+    [ids.payableId]
+  );
+
+  await reverseSettlementEvent(
+    ids.prId,
+    ids.logId,
+    'payment',
+    '与 PI 定金付款凭证重复，纠正重复入账',
+    operator
+  );
+
+  assert.equal(
+    queryOne('SELECT payment_status FROM payment_requests WHERE id = ?', ['pr_hci_reversal_test']).payment_status,
+    'reversed'
+  );
+  assert.equal(
+    queryOne('SELECT lifecycle_status FROM payable_items WHERE id = ?', [ids.payableId]).lifecycle_status,
+    'reserved'
   );
 });
 
