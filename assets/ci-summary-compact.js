@@ -199,15 +199,15 @@
   } else {
     start();
   }
-}
+
   // CI-SUMMARY-CURRENCY-LINES-20261119:
   // Keep the existing totals/calculations unchanged; render each currency on its own line.
   // Only the unpaid-total card suppresses currencies whose aggregate is zero.
   function formatCurrencyAmounts(markup, omitZero) {
-    return String(markup || '').replace(/\\b[A-Z]{3}\\s+-?[\\d,]+\\.\\d{2}(?:\\s*·\\s*[A-Z]{3}\\s+-?[\\d,]+\\.\\d{2})*/g, function (group) {
-      var currencies = group.split(/\\s*·\\s*/).filter(function (part) {
+    return String(markup || '').replace(/\b[A-Z]{3}\s+-?[\d,]+\.\d{2}(?:\s*·\s*[A-Z]{3}\s+-?[\d,]+\.\d{2})*/g, function (group) {
+      var currencies = group.split(/\s*·\s*/).filter(function (part) {
         if (!omitZero) return true;
-        var match = part.match(/^[A-Z]{3}\\s+(-?[\\d,]+\\.\\d{2})$/);
+        var match = part.match(/^[A-Z]{3}\s+(-?[\d,]+\.\d{2})$/);
         if (!match) return true;
         return Math.abs(Number(match[1].replace(/,/g, ''))) > 0.000001;
       });
@@ -223,7 +223,7 @@
     var wrapped = function () {
       var html = String(original.apply(this, arguments) || '');
       var statNumberIndex = 0;
-      html = html.replace(/(<div class="stat-number"[^>]*>)([\\s\\S]*?)(<\\/div>)/g, function (match, opening, content, closing) {
+      html = html.replace(/(<div class="stat-number"[^>]*>)([\s\S]*?)(<\/div>)/g, function (match, opening, content, closing) {
         var omitZero = statNumberIndex === 2; // third card: remaining unpaid
         statNumberIndex++;
         return opening + formatCurrencyAmounts(content, omitZero) + closing;
