@@ -131,7 +131,7 @@ function seedExistingPayment(opts) {
     "trans_status, operator_id, operator_name, voucher_attachment, voucher_fingerprint, " +
     "settlement_log_id, currency) " +
     "VALUES (?, ?, ?, 10000, '2026-04-21', ?, ?, 'reconciled', 'tester', 'Tester', ?, '', ?, 'RMB')",
-    [opts.transactionId, opts.transNo, id, opts.account || 'Hitech', opts.bankRefNo || '', opts.attachment || '', logId]
+    [opts.transactionId, opts.transNo, id, opts.account !== undefined ? opts.account : 'Hitech', opts.bankRefNo || '', opts.attachment || '', logId]
   );
   return { id, logId, transactionId: opts.transactionId };
 }
@@ -143,6 +143,8 @@ test('PostgreSQL worker-thread migration creates voucher fingerprint before star
   assert.match(dbSource, /ALTER TABLE payment_transactions ADD COLUMN IF NOT EXISTS voucher_fingerprint/);
   assert.match(dbSource, /ix_tx_voucher_fingerprint/);
   assert.match(dbSource, /ix_tx_bank_ref_active/);
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(serverSource, /实际付款必须填写银行流水号\/交易参考号/);
 });
 
 test('payment voucher fingerprint ignores upload metadata and filenames', () => {
@@ -210,6 +212,7 @@ test('payment confirmation rejects a voucher already used by another active tran
   await assert.rejects(
     applyPaymentSettlement('pr_new_voucher', 100, '2026-11-18', '', operator, 'idem-new-voucher', {
       payment_account: 'Hitech',
+      bank_ref_no: 'BANK-REF-NEW-VOUCHER',
       voucher_attachment: JSON.stringify([{ name: 'new-name.png', dataUrl: 'data:image/png;base64,QUJDREVG' }])
     }),
     error => error && error.status === 409 && /付款凭证已用于付款单 PAY-EXISTING-VOUCHER/.test(error.message)
@@ -218,7 +221,7 @@ test('payment confirmation rejects a voucher already used by another active tran
   assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_new_voucher']).count, 0);
 });
 
-test('payment confirmation rejects a duplicate bank reference on the same payment account', async () => {
+test('payment confirmation rejects a duplicate bank reference when the historical account is blank', async () => {
   resetDb();
   seedExistingPayment({
     id: 'pr_existing_ref',
@@ -226,7 +229,7 @@ test('payment confirmation rejects a duplicate bank reference on the same paymen
     transactionId: 'txn_existing_ref',
     transNo: 'TXN-EXISTING-REF',
     bankRefNo: 'BANK-REF-20261118',
-    account: 'Hitech'
+    account: ''
   });
   seedRequest('pr_new_ref', 'PAY-NEW-REF', 100);
 
@@ -240,4 +243,27 @@ test('payment confirmation rejects a duplicate bank reference on the same paymen
   );
 
   assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_new_ref']).count, 0);
+});
+
+test('manual payment confirmation requires a bank transaction reference', async () => {
+  resetDb();
+  seedRequest('pr_missing_ref', 'PAY-MISSING-REF', 100);
+  await assert.rejects(
+    applyPaymentSettlement('pr_missing_ref', 100, '2026-11-18', '', operator, 'idem-missing-ref', {
+      payment_account: 'Hitech',
+      voucher_attachment: JSON.stringify([{ name: 'proof.png', dataUrl: 'data:image/png;base64,QUJD' }])
+    }),
+    error => error && error.status === 400 && /银行流水号\/交易参考号/.test(error.message)
+  );
+  assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_missing_ref']).count, 0);
+});
+
+test('legacy payment-result import remains compatible when bank reference is unavailable', async () => {
+  resetDb();
+  seedRequest('pr_legacy_import', 'PAY-LEGACY-IMPORT', 100);
+  const result = await applyPaymentSettlement('pr_legacy_import', 100, '2026-11-18', '', operator, 'idem-legacy-import', {
+    allow_missing_bank_ref: true
+  });
+  assert.equal(result.effectivePaid, 100);
+  assert.equal(queryOne('SELECT COUNT(*) AS count FROM payment_transactions WHERE payment_request_id = ?', ['pr_legacy_import']).count, 1);
 });

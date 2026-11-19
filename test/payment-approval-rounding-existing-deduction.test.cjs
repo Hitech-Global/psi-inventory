@@ -20,7 +20,7 @@ function createHarness({gross=42976.72,deduction=13792.52,paid=0,priorRound=0}={
  };
  vm.createContext(context);vm.runInContext(approvalCode+';globalThis.testFunction=finalPaymentApprovalInput;',context);
  const payment={id:'pay-1',payable_amount:gross,attachment:'bank-confirmation'};
- const body={actual_paid_date:'2026-10-19',actual_paid_amount:29184,rounding_amount:0.20};
+ const body={actual_paid_date:'2026-10-19',actual_paid_amount:29184,rounding_amount:0.20,bank_ref_no:'TEST-BANK-REF'};
  return {payment,body,snapshot,run:(patch={})=>context.testFunction(payment,{...body,...patch}),calls:()=>calls};
 }
 test('Netac PAY-MULTI-2026-297128: gross 42,976.72, prior deduction 13,792.52, pay 29,184 and round 0.20: fully settled',()=>{
@@ -93,6 +93,10 @@ test('negative/NaN inputs and missing voucher are rejected before settlement',()
  assert.throws(()=>h.run({actual_paid_amount:0}),e=>e.status===400);
  const noVoucher=createHarness();noVoucher.payment.attachment='';
  assert.throws(()=>noVoucher.run(),e=>e.status===400&&/上传水单附件/.test(e.message));
+});
+test('final approval rejects a missing bank transaction reference',()=>{
+ const h=createHarness();
+ assert.throws(()=>h.run({bank_ref_no:''}),e=>e.status===400&&/最终审批必须填写银行流水号\/交易参考号/.test(e.message));
 });
 test('transaction SSOT is used and not payment.unpaid_amount (which can be stale)',()=>{
  const h=createHarness(),p=h.payment;p.unpaid_amount=42976.72;
