@@ -287,6 +287,8 @@ jobs:
         run: node --test test/supplier-pi-preview-alignment.test.cjs
       - name: Test payment multi-item allocation after deductions
         run: node --test test/pay-multi.test.cjs test/payment-approval-rounding-existing-deduction.test.cjs test/payment-allocation-deduction-balance.test.cjs
+      - name: Test payment transaction reversal releases payable correctly
+        run: node --test test/payment-transaction-reversal.test.cjs
       - name: Test logistics detail loading state and retry behavior
         run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test compact CI procurement summary layout
