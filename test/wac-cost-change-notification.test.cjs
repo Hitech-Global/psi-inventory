@@ -182,7 +182,7 @@ test('WAC UI, retry API and both database adapters are wired',()=>{
   assert.match(app,/retryWacNotifications/);
   assert.match(ui,/wac-cc-add-group-cb/);
   assert.match(ui,/wac-cc-macos/);
-  assert.match(index,/<script src="wac-notification-ui\.js"><\/script>/);
+  assert.match(index,/<script src="wac-notification-ui\.js\?v=20261120-2"><\/script>/);
   assert.match(server,/\/api\/wac\/cc-candidates/);
   assert.match(server,/\/api\/wac\/cc-groups/);
   assert.match(server,/parseWacGroupRecipientId/);
