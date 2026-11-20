@@ -10,6 +10,7 @@ on:
       - 'test/price-system-*.test.cjs'
       - 'server.js'
       - 'app.js'
+      - 'quotation-management.js'
       - 'index.html'
 
 jobs:
@@ -28,5 +29,6 @@ jobs:
           node --check assets/price-system.js
           node --check server.js
           node --check app.js
+          node --check quotation-management.js
       - name: Price system unit tests
-        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs
+        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs test/price-system-sidebar-order.test.cjs
