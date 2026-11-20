@@ -510,6 +510,12 @@
       } else if (path === '/api/wac/cc-candidates') {
         timeoutMs = 10000;
         message = tr('wac.cc_timeout', '抄送人员列表加载超时，请稍后重试。');
+      } else if (path === '/api/wac/cc-groups') {
+        timeoutMs = 10000;
+        message = tr('wac.cc_groups_timeout', '飞书群组列表加载超时，不影响 WAC 确认；可稍后重试。');
+      } else if (/^\/api\/wac\/notifications\/[^/]+$/.test(path)) {
+        timeoutMs = 10000;
+        message = tr('wac.notifications_timeout', 'WAC通知记录加载超时，请稍后刷新重试。');
       } else if (/^\/api\/commercial-invoices\/[^/]+\/logistics-batches$/.test(path)) {
         timeoutMs = 15000;
         message = tr('wac.refresh_timeout', 'WAC已提交，物流批次列表刷新超时；可手动刷新页面查看最新状态。');

@@ -40,6 +40,10 @@ assert.ok(integrationSrc.includes('viewLogWacDetail'), 'combined logistics/WAC d
 assert.ok(integrationSrc.includes('installWacApiTimeouts'), 'WAC read requests must have timeout protection');
 assert.ok(integrationSrc.includes('__ciWacApiTimeoutWrapped'), 'WAC API timeout wrapper must install only once');
 assert.ok(integrationSrc.includes('WAC预览加载超时'), 'WAC preview timeout must explain that confirmation was not submitted');
+assert.ok(integrationSrc.includes("path === '/api/wac/cc-candidates'"), 'WAC CC candidate reads must have timeout protection');
+assert.ok(integrationSrc.includes("path === '/api/wac/cc-groups'"), 'WAC CC group reads must have timeout protection');
+assert.ok(integrationSrc.includes('wac.cc_groups_timeout'), 'WAC CC group timeout must explain that it does not block confirmation');
+assert.ok(integrationSrc.includes('wac.notifications_timeout'), 'WAC notification-history reads must have timeout protection');
 assert.ok(integrationSrc.includes('wacDetailBusy'), 'WAC detail loading must reject duplicate in-flight actions');
 const submitWrapperStart = integrationSrc.indexOf('var originalSubmitWacConfirm = global.submitWacConfirm;');
 const submitWrapperEnd = integrationSrc.indexOf('function hideLegacyWacPage()', submitWrapperStart);
@@ -51,7 +55,7 @@ assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confir
 assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
 assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
 assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261116-6'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-1'), 'WAC submit integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
