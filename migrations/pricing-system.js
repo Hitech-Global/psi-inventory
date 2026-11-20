@@ -7,13 +7,13 @@ const DEFAULT_FIELDS = [
   { key: 'FREIGHT', name: 'Freight', group: 'cost', value: 'percent', include: 0 },
   { key: 'OTHERS', name: 'Others', group: 'cost', value: 'percent', include: 0 },
   { key: 'LANDING_COST_CNY', name: 'Landing Cost/CNY', group: 'cost', value: 'currency', include: 0 },
-  { key: 'LANDING_COST_LOCAL', name: 'Landing Cost/本币', group: 'cost', value: 'currency', include: 1 },
-  { key: 'COMMISSION_FEE', name: 'Commission Fee', group: 'fee', value: 'percent', include: 1 },
-  { key: 'PAYMENT_FEE', name: 'Payment Fee', group: 'fee', value: 'percent', include: 1 },
-  { key: 'FREE_SHIPPING_XTRA', name: 'Free Shipping Xtra', group: 'fee', value: 'percent', include: 1 },
+  { key: 'LANDING_COST_LOCAL', name: 'Landing Cost/IDR', group: 'cost', value: 'currency', include: 1 },
+  { key: 'COMMISSION_FEE', name: 'Commission Fee', group: 'fee', value: 'currency', include: 1 },
+  { key: 'PAYMENT_FEE', name: 'Payment Fee', group: 'fee', value: 'currency', include: 1 },
+  { key: 'FREE_SHIPPING_XTRA', name: 'Free Shipping Xtra', group: 'fee', value: 'currency', include: 1 },
   { key: 'PPH_SALES', name: 'PPH（销售）', group: 'fee', value: 'currency', include: 1 },
   { key: 'ORDER_PROCESSING_FEE', name: 'Order Processing Fee', group: 'fee', value: 'currency', include: 1 },
-  { key: 'ADS_COST', name: 'Ads Cost', group: 'fee', value: 'percent', include: 1 }
+  { key: 'ADS_COST', name: 'Ads Cost', group: 'fee', value: 'currency', include: 1 }
 ];
 
 function ensurePricingTables(db) {
