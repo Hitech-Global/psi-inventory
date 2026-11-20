@@ -127,7 +127,10 @@ assert.doesNotMatch(blockedControlsSrc, /observer\.observe\(doc\.documentElement
 const validatorStart = appSrc.indexOf('function wacValidateInputs(){');
 const validatorEnd = appSrc.indexOf('// 导出旧库存模板', validatorStart);
 const validatorSrc = appSrc.slice(validatorStart, validatorEnd);
-assert.ok(validatorSrc.includes('const blocked=liveInvalid.length>0;'), 'WAC confirmation must validate final SKU inputs, not require a file import');
+assert.ok(validatorSrc.includes('const blocked=liveInvalid.length>0||contextInvalid.length>0;'), 'WAC confirmation must validate final SKU inputs and target-context cost requirements, not require a file import');
+assert.ok(validatorSrc.includes('contextInvalid.length>0'), 'positive opening stock must remain blocked when target-context WAC is missing');
+assert.ok(appSrc.includes('const warnings=p.warnings||[]'), 'WAC preview must display conditional inventory-context warnings');
+assert.ok(serverSrc.includes('findUnresolvedWacContextWarnings(warnings, oldQtyMap)'), 'WAC confirm API must validate target-context warnings against submitted opening quantities');
 assert.ok(!validatorSrc.includes('uploadMissing'), 'WAC input validation must not require an uploaded file');
 assert.ok(!appSrc.includes("if(!st||!st.uploaded){showToast('请先上传本次原库存数量文件'"), 'manual WAC entry must not be blocked when no file was imported');
 assert.ok(blockedControlsSrc.includes("recalcWacRow(' + index + ');wacValidateInputs()"), 'blocked-preview manual edits must refresh live validation');
