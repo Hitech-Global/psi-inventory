@@ -1,0 +1,32 @@
+name: Price System Checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'price-system-*.js'
+      - 'migrations/price-system.js'
+      - 'assets/price-system.js'
+      - 'test/price-system-*.test.cjs'
+      - 'server.js'
+      - 'app.js'
+      - 'index.html'
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax checks
+        run: |
+          node --check price-system-formula.js
+          node --check price-system-api.js
+          node --check migrations/price-system.js
+          node --check assets/price-system.js
+          node --check server.js
+          node --check app.js
+      - name: Price system unit tests
+        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs
