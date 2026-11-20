@@ -19,6 +19,7 @@ test('SRP formula rejects unknown variables, unsupported functions and code exec
   assert.throws(() => core.evaluateFormula('FOB_RMB * UNKNOWN_RATE', { FOB_RMB: 10 }), /未定义变量/);
   assert.throws(() => core.evaluateFormula('process.exit()', {}), /不支持的字符|未定义变量/);
   assert.throws(() => core.evaluateFormula('10 / 0', {}), /除数不能为 0/);
+  assert.throws(() => core.evaluateFormula('FOB_RMB * 2', { FOB_RMB: null }), /不是有效数字/);
 });
 
 test('pricing rules resolve SKU override before category before global default', () => {
@@ -45,6 +46,7 @@ test('fee calculations support percentage, cap, fixed amount and per-order alloc
   assert.equal(core.calculateRuleValue({ calculation_type: 'percentage', basis: 'SRP', rate: 7.2 }, { SRP: 469000 }), 33768);
   assert.equal(core.calculateRuleValue({ calculation_type: 'capped', basis: 'SRP', rate: 8.5, cap_amount: 30000, per_order: 1, items_per_order: 2 }, { SRP: 469000 }), 15000);
   assert.equal(core.calculateRuleValue({ calculation_type: 'fixed', fixed_amount: 1250 }, {}), 1250);
+  assert.equal(core.calculateRuleValue({ calculation_type: 'percentage', basis: 'SRP', rate: 2 }, { SRP: null }), null);
 });
 
 test('field keys are normalized into stable database-safe identifiers', () => {
