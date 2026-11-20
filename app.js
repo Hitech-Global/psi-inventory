@@ -443,7 +443,7 @@ const NAV_MODULES=[
   ]},
   {id:'procurement',key:'nav.procurement',label:t("nav.procurement", "\u91c7\u8d2d\u94fe"),items:[
     {id:'po',key:'nav.po',icon:'🛒',label:t("nav.po", "PO\u7ba1\u7406"),perm:'po_view'},
-    {id:'price-system',key:'nav.price_system',icon:'💹',label:t('nav.price_system','价格体系'),perm:'sku_view'},
+    {id:'price-system',key:'nav.price_system',icon:'💹',label:t('nav.price_system','价格体系'),perm:'ci_amount_view'},
     {id:'pi',key:'nav.pi',icon:'📄',label:t("nav.pi", "PI\u7ba1\u7406"),perm:'pi_view'},
     {id:'ci',key:'nav.ci',icon:'🚚',label:t("nav.ci", "CI/PL\u7ba1\u7406"),perm:'ci_view'},
     {id:'inbound',key:'nav.wac_confirm',icon:'💰',label:t("nav.wac_confirm", "WAC确认"),perm:'inbound_view'},
