@@ -52,7 +52,8 @@ function evaluateFormula(expression, variables) {
   const tokens = tokenizeFormula(expression);
   const values = Object.create(null);
   Object.keys(variables || {}).forEach(key => {
-    values[String(key).toUpperCase()] = Number(variables[key]);
+    const raw = variables[key];
+    values[String(key).toUpperCase()] = raw === null || raw === undefined || raw === '' ? NaN : Number(raw);
   });
   let cursor = 0;
   const peek = () => tokens[cursor];
@@ -175,6 +176,7 @@ function calculateRuleValue(rule, context) {
     value = Number(rule.fixed_amount);
   } else if (type === 'percentage' || type === 'capped') {
     const basisName = String(rule.basis || 'SRP').toUpperCase();
+    if (vars[basisName] === null || vars[basisName] === undefined || vars[basisName] === '') return null;
     const basis = Number(vars[basisName]);
     if (!Number.isFinite(basis)) return null;
     value = basis * Number(rule.rate || 0) / 100;
