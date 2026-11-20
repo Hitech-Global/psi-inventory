@@ -256,7 +256,7 @@
           rule.calculation_type === 'percentage' ? psFmt(rule.rate, 2) + '% × ' + rule.basis :
           rule.calculation_type === 'capped' ? psFmt(rule.rate, 2) + '% × ' + rule.basis + '，封顶 ' + psFmt(rule.cap_amount, 2) :
           rule.calculation_type === 'formula' ? rule.formula : psFmt(rule.fixed_amount, 2);
-        html += '<div class="ps-rule-row"><span class="ps-rule-scope">' + psEsc(scopeLabel) + '</span><span class="ps-rule-calc">' + psEsc(calc) + '</span><span class="ps-rule-status">' + psEsc(rule.status === 'active' ? psT('启用', 'Active', 'Aktif') : psT('停用', 'Disabled', 'Nonaktif')) + '</span><button class="btn btn-ghost btn-sm" onclick="psOpenRuleModal(' + psArg(field.id) + ',' + psArg(rule.id) + ')">' + psEsc(psT('编辑', 'Edit', 'Edit')) + '</button><button class="btn btn-ghost btn-sm" onclick="psDeactivateRule(' + psArg(rule.id) + ')">' + psEsc(psT('停用', 'Disable', 'Nonaktifkan')) + '</button></div>';
+        html += '<div class="ps-rule-row"><span class="ps-rule-scope">' + psEsc(scopeLabel) + '</span><span class="ps-rule-calc">' + psEsc(calc) + '</span><span class="ps-rule-status">' + psEsc(rule.status === 'active' ? psT('启用', 'Active', 'Aktif') : psT('停用', 'Disabled', 'Nonaktif')) + '</span><button class="btn btn-ghost btn-sm" onclick="psOpenRuleModal(' + psArg(field.id) + ',' + psArg(rule.id) + ')">' + psEsc(psT('编辑', 'Edit', 'Edit')) + '</button>' + (rule.status === 'active' ? '<button class="btn btn-ghost btn-sm" onclick="psDeactivateRule(' + psArg(rule.id) + ')">' + psEsc(psT('停用', 'Disable', 'Nonaktifkan')) + '</button>' : '<button class="btn btn-ghost btn-sm" onclick="psActivateRule(' + psArg(rule.id) + ')">' + psEsc(psT('启用', 'Enable', 'Aktifkan')) + '</button>') + '</div>';
       });
       html += '</div>';
     });
