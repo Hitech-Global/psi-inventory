@@ -44,8 +44,9 @@ assert.ok(!patched.slice(patched.indexOf('function addOpRow'),patched.indexOf('f
 assert.ok(!patched.includes("border:1pxpx solid"));
 assert.equal(patchAppSource(patched),patched,'data binding patch must be idempotent');
 assert.doesNotThrow(()=>new Function(patched),'patched CI renderer must parse');
-assert.match(summary,/only documents originally denominated in RMB are counted toward the known RMB total/i);
-assert.match(summary,/marked as to-be-supplemented/i);
-assert.match(summary,/not naively summed across currencies/i);
+assert.doesNotMatch(summary,/new\\s+MutationObserver/,'CI summary adapter must not install a page-wide observer');
+assert.doesNotMatch(summary,/only documents originally denominated in RMB are counted toward the known RMB total/i,'obsolete currency caveat text must not be injected by the adapter');
+assert.doesNotMatch(summary,/marked as to-be-supplemented/i,'obsolete currency caveat text must not be injected by the adapter');
+assert.doesNotMatch(summary,/not naively summed across currencies/i,'obsolete currency caveat text must not be injected by the adapter');
 assert.match(index,/ci-summary-compact\.js\?v=/,'CI summary asset must be versioned for cache invalidation');
 console.log('CI English data mapping and compact summary regression: PASS');
