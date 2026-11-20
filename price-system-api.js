@@ -29,8 +29,8 @@ function registerPriceSystemRoutes(app, deps) {
     return (req, res, next) => {
       const permissions = req.currentUserPermissions || [];
       const wildcard = permissions.includes('*');
-      if (!wildcard && (!permissions.includes('sku_view') || !permissions.includes('inventory_view') || (write && !permissions.includes('sku_edit')))) {
-        return res.status(403).json({ error: '价格体系需要 SKU 查看、库存查看' + (write ? '及 SKU 编辑' : '') + '权限' });
+      if (!wildcard && (!permissions.includes('sku_view') || !permissions.includes('inventory_view') || !permissions.includes('ci_amount_view') || (write && !permissions.includes('sku_edit')))) {
+        return res.status(403).json({ error: '价格体系需要 SKU 查看、库存查看、金额查看' + (write ? '及 SKU 编辑' : '') + '权限' });
       }
       next();
     };
@@ -45,9 +45,10 @@ function registerPriceSystemRoutes(app, deps) {
     }
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
       const scope = req.currentUserDataScope || {};
-      if (Array.isArray(scope.countries) && scope.countries.length) {
+      if (isCountryRestricted(req)) {
         const country = queryOne('SELECT id FROM countries WHERE name = ?', [scheme.country]);
-        if (!country || !scope.countries.includes(country.id)) {
+        const allowedCountryIds = scopedCountryIds(req);
+        if (!country || !allowedCountryIds.includes(country.id)) {
           res.status(403).json({ error: '没有查看该国家价格数据的权限' });
           return false;
         }
@@ -65,10 +66,12 @@ function registerPriceSystemRoutes(app, deps) {
     const params = [];
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
       const scope = req.currentUserDataScope || {};
-      if (Array.isArray(scope.countries) && scope.countries.length) {
+      if (isCountryRestricted(req)) {
+        const allowedCountryIds = scopedCountryIds(req);
+        if (!allowedCountryIds.length) return [];
         const names = query(
-          'SELECT name FROM countries WHERE id IN (' + scope.countries.map(() => '?').join(',') + ')',
-          scope.countries
+          'SELECT name FROM countries WHERE id IN (' + allowedCountryIds.map(() => '?').join(',') + ')',
+          allowedCountryIds
         ).rows.map(r => r.name).filter(Boolean);
         if (!names.length) return [];
         sql += ' AND country IN (' + names.map(() => '?').join(',') + ')';
@@ -85,6 +88,25 @@ function registerPriceSystemRoutes(app, deps) {
 
   function getSchemeOrNull(id) {
     return queryOne('SELECT * FROM price_system_schemes WHERE id = ?', [id]);
+  }
+
+  function scopedCountryIds(req) {
+    const scope = req.currentUserDataScope || {};
+    const ids = Array.isArray(scope.countries) ? scope.countries.slice() : [];
+    if (Array.isArray(scope.warehouses) && scope.warehouses.length) {
+      const rows = query(
+        "SELECT DISTINCT country_id FROM warehouses WHERE id IN (" + scope.warehouses.map(() => '?').join(',') + ") AND country_id != ''",
+        scope.warehouses
+      ).rows;
+      rows.forEach(row => { if (row.country_id && !ids.includes(row.country_id)) ids.push(row.country_id); });
+    }
+    return ids;
+  }
+
+  function isCountryRestricted(req) {
+    if (typeof needsDataScopeFilter !== 'function' || !needsDataScopeFilter(req)) return false;
+    const scope = req.currentUserDataScope || {};
+    return !!((scope.countries && scope.countries.length) || (scope.warehouses && scope.warehouses.length));
   }
 
   function createVersion(schemeId, user, note) {
@@ -255,7 +277,7 @@ function registerPriceSystemRoutes(app, deps) {
       if (!countryRow) return res.status(400).json({ error: '请选择有效国家' });
       if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
         const scope = req.currentUserDataScope || {};
-        if (Array.isArray(scope.countries) && scope.countries.length && !scope.countries.includes(countryRow.id)) {
+        if (isCountryRestricted(req) && !scopedCountryIds(req).includes(countryRow.id)) {
           return res.status(403).json({ error: '没有在该国家创建价格方案的权限' });
         }
         if (Array.isArray(scope.brands) && scope.brands.length && !scope.brands.includes(brand)) {
