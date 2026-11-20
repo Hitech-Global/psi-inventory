@@ -155,7 +155,7 @@ function registerPriceSystemRoutes(app, deps) {
       }
     }
     const skuRows = query(
-      'SELECT s.sku_code, s.product_name, s.brand, s.category, s.model, s.purchase_currency, ' +
+      'SELECT s.sku_code, s.brand, s.category, s.model, s.purchase_currency, ' +
       's.standard_purchase_price, s.purchase_price_rmb, s.purchase_price_usd, s.weighted_avg_cost, s.reference_customs_rate, ' +
       'COALESCE(i.stock_qty, 0) AS stock_qty, COALESCE(i.inventory_wac, 0) AS inventory_wac ' +
       'FROM skus s LEFT JOIN (' +
@@ -247,14 +247,15 @@ function registerPriceSystemRoutes(app, deps) {
       }
       return {
         sku_code: sku.sku_code,
-        product_name: sku.product_name || '',
         brand: sku.brand || '',
         category: sku.category || '',
         model: sku.model || '',
         stock_qty: Number(sku.stock_qty || 0),
         purchase_currency: sku.purchase_currency || '',
         values,
-        srp,
+        landing_cost: stored.__landing_cost == null ? null : Number(stored.__landing_cost),
+        landing_cost_currency: scheme.currency || '',
+        srp: stored.__srp_manual == null ? srp : Number(stored.__srp_manual),
         formula_errors: errors
       };
     });
@@ -385,6 +386,30 @@ function registerPriceSystemRoutes(app, deps) {
     res.json({ success: true });
   }));
 
+
+  app.get('/api/price-system/schemes/:id/wac/:sku', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const sku = String(req.params.sku || '').trim();
+    const skuRow = queryOne('SELECT sku_code, brand FROM skus WHERE sku_code = ? AND brand = ?', [sku, scheme.brand]);
+    if (!skuRow) return res.status(404).json({ error: 'SKU \u4e0d\u5b58\u5728\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u54c1\u724c' });
+    const params = [sku, scheme.country];
+    let warehouseFilter = '';
+    if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
+      const scope = req.currentUserDataScope || {};
+      if (Array.isArray(scope.warehouses) && scope.warehouses.length) {
+        const names = query('SELECT name FROM warehouses WHERE id IN (' + scope.warehouses.map(() => '?').join(',') + ')', scope.warehouses).rows.map(r => r.name).filter(Boolean);
+        if (!names.length) warehouseFilter = ' AND 1 = 0';
+        else { warehouseFilter = ' AND warehouse IN (' + names.map(() => '?').join(',') + ')'; params.push(...names); }
+      }
+    }
+    const rows = query(
+      "SELECT id, sku_code, country, warehouse, new_avg_cost, local_currency, confirmed_at, last_inbound_date, ci_no, version_no FROM wac_history WHERE sku_code = ? AND country = ? AND COALESCE(is_locked,0) = 1 AND COALESCE(confirmation_status,'confirmed') NOT IN ('reversed','void','cancelled') AND confirmed_at IS NOT NULL" + warehouseFilter + " ORDER BY confirmed_at DESC, version_no DESC LIMIT 100",
+      params
+    ).rows;
+    res.json(rows);
+  }));
+
   app.post('/api/price-system/schemes/:id/values', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
@@ -411,7 +436,10 @@ function registerPriceSystemRoutes(app, deps) {
         return;
       }
       const values = row && row.values && typeof row.values === 'object' ? row.values : {};
+      if (Object.prototype.hasOwnProperty.call(values, '__landing_cost_wac_id')) { const wac = queryOne("SELECT id, new_avg_cost, local_currency FROM wac_history WHERE id = ? AND sku_code = ? AND country = ? AND COALESCE(is_locked,0)=1 AND COALESCE(confirmation_status,'confirmed') NOT IN ('reversed','void','cancelled')", [values.__landing_cost_wac_id, skuCode, scheme.country]); if (!wac) errors.push({ sku_code: skuCode, reason: '\u6240\u9009 WAC \u5386\u53f2\u8bb0\u5f55\u4e0d\u5b58\u5728\u6216\u5df2\u5931\u6548' }); else { normalized.push({ sku_code: skuCode, field_key: '__landing_cost', value: Number(wac.new_avg_cost) }); } }
       Object.keys(values).forEach(key => {
+        if (key === '__srp_manual') { const v = values[key]; if (v === null || v === '') normalized.push({ sku_code: skuCode, field_key: key, value: null }); else if (Number.isFinite(Number(v)) && Number(v) >= 0) normalized.push({ sku_code: skuCode, field_key: key, value: Number(v) }); else errors.push({ sku_code: skuCode, reason: 'SRP \u5fc5\u987b\u4e3a\u5927\u4e8e\u7b49\u4e8e 0 \u7684\u6709\u6548\u6570\u5b57' }); return; }
+        if (key === '__landing_cost_wac_id' || key === '__landing_cost_currency' || key === '__landing_cost') return;
         const field = fieldMap.get(key);
         if (!field) { errors.push({ sku_code: skuCode, reason: '费用字段不存在：' + key }); return; }
         if (field.field_type === 'formula') { errors.push({ sku_code: skuCode, reason: '公式字段不能手动录入：' + field.field_name }); return; }
