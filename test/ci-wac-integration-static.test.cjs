@@ -118,7 +118,7 @@ const integrationPos = indexSrc.indexOf('assets/ci-wac-integration.js');
 assert.ok(notificationPos >= 0 && integrationPos > notificationPos,
   'CI WAC integration must load after WAC notification UI');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js'), 'CI logistics list module must remain loaded');
-assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261120-1'), 'blocked WAC import controls must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261120-2'), 'blocked WAC import controls must use the latest cache-busted asset');
 assert.match(blockedControlsSrc, /if \(!button\.disabled\) button\.disabled = true;/, 'blocked WAC button locking must be idempotent');
 assert.match(blockedControlsSrc, /if \(button\.textContent !== label\) button\.textContent = label;/, 'blocked WAC lock must not rewrite identical text and retrigger its observer');
 assert.match(blockedControlsSrc, /const modalRoot = doc\.getElementById\('modal-content'\)/, 'blocked WAC observer must be scoped to the modal');
