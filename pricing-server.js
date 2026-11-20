@@ -230,14 +230,19 @@ function registerPricingRoutes(app, deps) {
 
       let deductions = 0;
       let hasDeduction = false;
+      let requiredCostMissing = false;
       fields.forEach(field => {
         if (Number(field.include_in_profit) !== 1) return;
         const value = fieldValues[String(field.field_key)];
-        if (value === null || value === undefined || !Number.isFinite(Number(value))) return;
+        if (value === null || value === undefined || !Number.isFinite(Number(value))) {
+          if (Number(field.required_for_profit) === 1) requiredCostMissing = true;
+          return;
+        }
         deductions += Number(value);
         hasDeduction = true;
       });
-      const profit = srp === null || !hasDeduction ? null : Math.round((Number(srp) - deductions) * 10000) / 10000;
+      if (requiredCostMissing && !formulaError) formulaError = '利润计算所需成本字段尚未维护';
+      const profit = srp === null || !hasDeduction || requiredCostMissing ? null : Math.round((Number(srp) - deductions) * 10000) / 10000;
       const profitRate = profit !== null && srp && Number(srp) !== 0 ? Math.round((profit / Number(srp)) * 10000) / 100 : null;
       return {
         sku_code: sku.sku_code,
@@ -380,9 +385,10 @@ function registerPricingRoutes(app, deps) {
     const order = Number(queryOne('SELECT COALESCE(MAX(display_order),0) AS n FROM pricing_fields WHERE scheme_id = ?', [scheme.id]).n || 0) + 1;
     const id = genId('pfield');
     const now = new Date().toISOString();
-    run('INSERT INTO pricing_fields (id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, formula, currency, include_in_profit, is_active, display_order, created_at, updated_at) ' +
-      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)',
-      [id, scheme.id, fieldKey, fieldName, groupType, valueType, calculationType, String(body.formula || ''), String(body.currency || scheme.currency || ''), body.include_in_profit === false ? 0 : 1, order, now, now]);
+    if (calculationType === 'formula' && !String(body.formula || '').trim()) return res.status(400).json({ error: '公式计算字段必须填写公式' });
+    run('INSERT INTO pricing_fields (id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, formula, currency, include_in_profit, required_for_profit, is_active, display_order, created_at, updated_at) ' +
+      'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)',
+      [id, scheme.id, fieldKey, fieldName, groupType, valueType, calculationType, String(body.formula || ''), String(body.currency || scheme.currency || ''), body.include_in_profit === false ? 0 : 1, body.required_for_profit ? 1 : 0, order, now, now]);
     const version = createVersion(scheme.id, '新增字段：' + fieldName, req.currentUserId);
     res.status(201).json({ success: true, id: id, version: version });
   }));
@@ -398,9 +404,12 @@ function registerPricingRoutes(app, deps) {
     const groupType = ['cost', 'fee', 'other'].includes(String(body.group_type)) ? String(body.group_type) : field.group_type;
     const valueType = ['currency', 'percent', 'number'].includes(String(body.value_type)) ? String(body.value_type) : field.value_type;
     const calculationType = ['manual', 'formula'].includes(String(body.calculation_type)) ? String(body.calculation_type) : field.calculation_type;
-    run('UPDATE pricing_fields SET field_name = ?, group_type = ?, value_type = ?, calculation_type = ?, formula = ?, currency = ?, include_in_profit = ?, display_order = ?, updated_at = ? WHERE id = ? AND scheme_id = ?',
-      [fieldName, groupType, valueType, calculationType, String(body.formula === undefined ? field.formula : body.formula || ''),
+    const formula = String(body.formula === undefined ? field.formula : body.formula || '');
+    if (calculationType === 'formula' && !formula.trim()) return res.status(400).json({ error: '公式计算字段必须填写公式' });
+    run('UPDATE pricing_fields SET field_name = ?, group_type = ?, value_type = ?, calculation_type = ?, formula = ?, currency = ?, include_in_profit = ?, required_for_profit = ?, display_order = ?, updated_at = ? WHERE id = ? AND scheme_id = ?',
+      [fieldName, groupType, valueType, calculationType, formula,
         String(body.currency === undefined ? field.currency : body.currency || ''), body.include_in_profit === undefined ? Number(field.include_in_profit) : (body.include_in_profit ? 1 : 0),
+        body.required_for_profit === undefined ? Number(field.required_for_profit || 0) : (body.required_for_profit ? 1 : 0),
         safeNumber(body.display_order, Number(field.display_order || 0)), new Date().toISOString(), field.id, scheme.id]);
     const version = createVersion(scheme.id, '修改字段：' + fieldName, req.currentUserId);
     res.json({ success: true, version: version });
@@ -612,10 +621,10 @@ function registerPricingRoutes(app, deps) {
     run('DELETE FROM pricing_rules WHERE scheme_id = ?', [scheme.id]);
     run('DELETE FROM pricing_sku_values WHERE scheme_id = ?', [scheme.id]);
     (snapshot.fields || []).forEach(field => {
-      run('INSERT INTO pricing_fields (id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, formula, default_value, currency, include_in_profit, is_active, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      run('INSERT INTO pricing_fields (id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, formula, default_value, currency, include_in_profit, required_for_profit, is_active, display_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [field.id, scheme.id, field.field_key, field.field_name, field.group_type || 'fee', field.value_type || 'currency',
           field.calculation_type || 'manual', field.formula || '', safeNumber(field.default_value, null), field.currency || '',
-          Number(field.include_in_profit || 0), Number(field.is_active === undefined ? 1 : field.is_active),
+          Number(field.include_in_profit || 0), Number(field.required_for_profit || 0), Number(field.is_active === undefined ? 1 : field.is_active),
           Number(field.display_order || 0), field.created_at || new Date().toISOString(), new Date().toISOString()]);
     });
     (snapshot.rules || []).forEach(rule => {
