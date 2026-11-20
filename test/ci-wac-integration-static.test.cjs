@@ -13,6 +13,7 @@ const ciLogistics = path.join(root, 'ci-list-inline-logistics.js');
 const integration = path.join(root, 'assets', 'ci-wac-integration.js');
 const wacNotificationUi = path.join(root, 'wac-notification-ui.js');
 const wacBlockedImportControls = path.join(root, 'assets', 'wac-blocked-import-controls.js');
+const i18n = path.join(root, 'i18n.js');
 const patch = path.join(root, 'scripts', 'ci-wac-summary-hotfix.cjs');
 
 for (const file of [app, ciLogistics, integration, wacNotificationUi, wacBlockedImportControls, patch]) {
@@ -29,6 +30,7 @@ const ciSrc = fs.readFileSync(ciLogistics, 'utf8');
 const integrationSrc = fs.readFileSync(integration, 'utf8');
 const notificationUiSrc = fs.readFileSync(wacNotificationUi, 'utf8');
 const blockedControlsSrc = fs.readFileSync(wacBlockedImportControls, 'utf8');
+const i18nSrc = fs.readFileSync(i18n, 'utf8');
 const serverSrc = fs.readFileSync(server, 'utf8');
 const indexSrc = fs.readFileSync(index, 'utf8');
 
@@ -75,7 +77,8 @@ assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh 
 assert.ok(indexSrc.includes('<script src="app.js"></script>'), 'WAC preview must use the latest cache-busted app script');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js?v=20261120-2'), 'WAC row action must use the latest cache-busted CI logistics script');
 assert.ok(indexSrc.includes('wac-notification-ui.js?v=20261120-2'), 'WAC group loader must use the latest cache-busted notification script');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-3'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-4'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261120-2'), 'blocked WAC controls must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 const viewStart = integrationSrc.indexOf('async function viewLogWacDetail(batchId, ciId, wacStatus, exclusionReason)');
@@ -121,6 +124,16 @@ assert.match(blockedControlsSrc, /if \(button\.textContent !== label\) button\.t
 assert.match(blockedControlsSrc, /const modalRoot = doc\.getElementById\('modal-content'\)/, 'blocked WAC observer must be scoped to the modal');
 assert.match(blockedControlsSrc, /observer\.observe\(modalRoot, \{ childList: true, subtree: true \}\)/, 'blocked WAC observer must watch only modal content');
 assert.doesNotMatch(blockedControlsSrc, /observer\.observe\(doc\.documentElement/, 'blocked WAC observer must not watch the whole document');
+const validatorStart = appSrc.indexOf('function wacValidateInputs(){');
+const validatorEnd = appSrc.indexOf('// 导出旧库存模板', validatorStart);
+const validatorSrc = appSrc.slice(validatorStart, validatorEnd);
+assert.ok(validatorSrc.includes('const blocked=liveInvalid.length>0;'), 'WAC confirmation must validate final SKU inputs, not require a file import');
+assert.ok(!validatorSrc.includes('uploadMissing'), 'WAC input validation must not require an uploaded file');
+assert.ok(!appSrc.includes("if(!st||!st.uploaded){showToast('请先上传本次原库存数量文件'"), 'manual WAC entry must not be blocked when no file was imported');
+assert.ok(blockedControlsSrc.includes("recalcWacRow(' + index + ');wacValidateInputs()"), 'blocked-preview manual edits must refresh live validation');
+assert.ok(blockedControlsSrc.includes('可直接在下方手动填写原库存数量'), 'blocked-preview hint must explain manual entry');
+assert.ok(i18nSrc.includes('可直接在下方逐个填写每个 SKU 的原库存数量'), 'WAC help text must describe manual entry as an option');
+assert.ok(integrationSrc.includes('恢复后需要重新填写或导入原库存'), 'WAC restore guidance must allow manual entry');
 
 assert.ok(serverSrc.includes('CI-WAC-STATUS-IN-CI-LOGISTICS-20261110'), 'CI logistics endpoint WAC status projection missing');
 assert.ok(serverSrc.includes('CI-WAC-SUMMARY-PROJECTION-20261110'), 'CI WAC summary helper missing');

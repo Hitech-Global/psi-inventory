@@ -16967,7 +16967,7 @@ async function wacConfirm(batchId){
         const tips=wacCalcBuildTips(it,m,oldQty,oldWac,oldValue,newWac);
         const oldQtyCell=historical
           ? '<td class="wac-left-cell" style="text-align:left!important">'+(oldQty==null?'历史记录缺失':oldQty.toLocaleString())+'</td>'
-          : '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="请上传" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>';
+          : '<td><input type="number" id="wac-old-'+i+'" value="" placeholder="手动填写" min="0" step="1" style="width:100px;padding:4px;text-align:right;background:#fffbe6" oninput="recalcWacRow('+i+');wacValidateInputs()"></td>';
         return '<tr>' +
           '<td class="cell-id" style="position:sticky;left:0;background:var(--surface,#fff);z-index:1;text-align:left!important">'+esc(it.sku_code)+'</td>' +
           '<td class="wac-left-cell" style="text-align:left!important">'+(it.batch_qty||0).toLocaleString()+'</td>' +
@@ -17167,8 +17167,8 @@ function recalcWacRow(i){
   const oldValue=oldQty===null||!Number.isFinite(oldQty)?null:oldQty*oldWac;
   const newWac=valid?Math.round((oldQty*oldWac+batchQty*unitCost)/(oldQty+batchQty)*10000)/10000:null;
   const tips=wacCalcBuildTips(it,p.meta||{},oldQty,oldWac,oldValue,newWac);
-  if(oldValueCell)oldValueCell.innerHTML=oldValue===null?'待上传':wacCalcHover(wacCalcFmtMoney(oldValue),tips.oldValue);
-  if(newCell)newCell.innerHTML=newWac===null?'待上传':wacCalcHover(wacCalcFmtMoney(newWac),tips.newWac);
+  if(oldValueCell)oldValueCell.innerHTML=oldValue===null?'待填写':wacCalcHover(wacCalcFmtMoney(oldValue),tips.oldValue);
+  if(newCell)newCell.innerHTML=newWac===null?'待填写':wacCalcHover(wacCalcFmtMoney(newWac),tips.newWac);
   if(changeCell){
     if(newWac===null||oldWac<=0){changeCell.textContent='—';changeCell.style.color='';}
     else{const pct=(newWac-oldWac)/oldWac*100;changeCell.textContent=(pct>0?'+':'')+pct.toFixed(2)+'%';changeCell.style.color=pct>0?'#cf4444':(pct<0?'#269653':'');}
@@ -17186,7 +17186,7 @@ function readWacOldRaw(i){
   if(num<0) return {ok:false,reason:'negative'};
   return {ok:true,value:num};
 }
-// 实时校验：任何输入空白/非法 → 禁止确认；文件级 unknown/duplicate 永久阻断
+// 实时校验：只检查每个 SKU 最终输入的原库存数量；导入文件仅为可选的批量录入方式
 function wacValidateInputs(){
   const p=window._wacPreview; const st=window._wacImport;
   if(!p||!p.items) return;
@@ -17196,34 +17196,27 @@ function wacValidateInputs(){
     const r=readWacOldRaw(i);
     if(!r.ok) liveInvalid.push(it.sku_code);
   });
-  // 重新 reconcile：把已变为合法的 missing/invalid 从文件级列表中移除（支持手工修正后解禁）
+  // 文件缺失、重复或非法记录可以通过手动填写对应输入框修正，不再要求重新导入。
   if(st){
-    st.missing=st.missing.filter(s=>liveInvalid.includes(s));
-    st.invalid=st.invalid.filter(s=>liveInvalid.includes(s));
+    st.missing=(st.missing||[]).filter(s=>liveInvalid.includes(s));
+    st.invalid=(st.invalid||[]).filter(s=>liveInvalid.includes(s));
+    st.duplicate=(st.duplicate||[]).filter(s=>liveInvalid.includes(s));
   }
-  const unknownN=st?st.unknown.length:0;
-  const duplicateN=st?st.duplicate.length:0;
-  const uploadMissing=!!st&&!st.uploaded;
-  const blocked=uploadMissing||liveInvalid.length>0||unknownN>0||duplicateN>0;
+  const unknownArr=st&&Array.isArray(st.unknown)?st.unknown:[];
+  const duplicateArr=st&&Array.isArray(st.duplicate)?st.duplicate:[];
+  const filledN=items.length-liveInvalid.length;
+  // Unknown rows are outside this batch and are ignored; duplicate rows require a manual value.
+  // Confirmation is gated only by the final values for this batch's SKU rows.
+  const blocked=liveInvalid.length>0;
   const statusEl=document.getElementById('wac-import-status');
   const btn=document.getElementById('wac-confirm-btn');
   if(statusEl){
     const parts=[];
-    if(uploadMissing) parts.push('<span class="bad">请先上传本次原库存数量文件</span>');
-    const matchedN=st?st.matched.length:0;
-    const missingN=st?st.missing.length:0;
-    const unknownArr=st?st.unknown:[];
-    const duplicateArr=st?st.duplicate:[];
-    const invalidArr=st?st.invalid:[];
-    parts.push('<span class="'+(matchedN?'ok':'')+'">'+t('wac.import_matched','已匹配')+': '+matchedN+'</span>');
-    if(missingN) parts.push('<span class="bad">'+t('wac.import_missing','缺失SKU')+': '+missingN+' ('+st.missing.join(', ')+')</span>');
-    if(unknownArr.length) parts.push('<span class="bad">'+t('wac.import_unknown','未知SKU')+': '+unknownArr.length+' ('+unknownArr.join(', ')+')</span>');
-    if(duplicateArr.length) parts.push('<span class="bad">'+t('wac.import_duplicate','重复SKU')+': '+duplicateArr.length+' ('+duplicateArr.join(', ')+')</span>');
-    if(invalidArr.length) parts.push('<span class="bad">'+t('wac.import_invalid','非法数量')+': '+invalidArr.length+' ('+invalidArr.join(', ')+')</span>');
-    if(liveInvalid.length) parts.push('<span class="bad">'+t('wac.import_live_invalid','当前输入异常')+': '+liveInvalid.length+' ('+liveInvalid.join(', ')+')</span>');
-    if(!missingN&&!unknownArr.length&&!duplicateArr.length&&!invalidArr.length&&!liveInvalid.length){
-      parts.push('<span class="ok">'+t('wac.import_ok','就绪')+'</span>');
-    }
+    parts.push('<span class="'+(filledN?'ok':'')+'">'+t('wac.import_filled','已填写')+': '+filledN+'/'+items.length+'</span>');
+    if(liveInvalid.length) parts.push('<span class="bad">'+t('wac.import_live_invalid','待填写/输入异常')+': '+liveInvalid.length+' ('+liveInvalid.join(', ')+')</span>');
+    if(unknownArr.length) parts.push('<span class="warn">'+t('wac.import_unknown_ignored','非本批次SKU（已忽略）')+': '+unknownArr.join(', ')+'</span>');
+    if(duplicateArr.length) parts.push('<span class="warn">'+t('wac.import_duplicate_manual','重复SKU需手动填写')+': '+duplicateArr.join(', ')+'</span>');
+    if(!liveInvalid.length) parts.push('<span class="ok">'+t('wac.import_ok','就绪')+'</span>');
     statusEl.innerHTML=parts.join(' ');
   }
   if(btn) btn.disabled=blocked;
@@ -17603,7 +17596,12 @@ async function importWacOldInventory(){
             return;
           }
           const entries=fileMap[sku];
-          if(entries.length>1){ duplicate.push(sku); return; }
+          if(entries.length>1){
+            duplicate.push(sku);
+            const el=document.getElementById('wac-old-'+idx);
+            if(el){el.value='';recalcWacRow(idx);}
+            return;
+          }
           const e0=entries[0];
           if(e0.qtyKind==='blank'){
             missing.push(sku);
@@ -17611,7 +17609,12 @@ async function importWacOldInventory(){
             if(el){el.value=''; recalcWacRow(idx);}
             return;
           }
-          if(e0.qtyKind==='nan'||e0.qtyKind==='negative'){ invalid.push(sku); return; }
+          if(e0.qtyKind==='nan'||e0.qtyKind==='negative'){
+            invalid.push(sku);
+            const el=document.getElementById('wac-old-'+idx);
+            if(el){el.value='';recalcWacRow(idx);}
+            return;
+          }
           const el=document.getElementById('wac-old-'+idx);
           if(el){el.value=String(Number(String(e0.qtyRaw).trim())); recalcWacRow(idx);}
           matched.push(sku);
@@ -17647,15 +17650,8 @@ async function importWacOldInventory(){
 async function submitWacConfirm(batchId){
   const p=window._wacPreview;
   if(!p){closeModal();return}
-  // 每次确认都必须先上传本次原库存数量文件。
-  const st=window._wacImport;
-  if(!st||!st.uploaded){showToast('请先上传本次原库存数量文件','danger');return;}
-  // 提交前再次校验：文件结构错误（未知/重复 SKU）直接拦截
+  // 原库存数量允许手动填写或文件导入；提交时只校验当前批次每个 SKU 的最终输入值。
   wacValidateInputs();
-  if(st&&(st.unknown.length||st.duplicate.length)){
-    showToast(t('wac.confirm_blocked','存在缺失/异常 SKU，禁止确认 WAC：')+st.unknown.concat(st.duplicate).join(', '),'danger');
-    return;
-  }
   // 提交层独立安全：逐 SKU 读取；任何 blank/nan/negative/非法 立即拒绝，绝不 fallback 0
   const items=[];
   for(let i=0;i<(p.items||[]).length;i++){

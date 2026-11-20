@@ -75,7 +75,7 @@
         '<td><input id="wac-old-' + index + '" type="number" min="0" step="1" inputmode="numeric" ' +
           'style="width:150px;max-width:100%" placeholder="' +
           escapeHtml(english ? 'Enter original qty' : indonesian ? 'Isi stok awal' : '填写原库存数量') +
-          '" oninput="recalcWacRow(' + index + ')"></td>' +
+          '" oninput="recalcWacRow(' + index + ');wacValidateInputs()"></td>' +
         '<td hidden><span id="wac-old-value-' + index + '"></span>' +
           '<span id="wac-new-' + index + '"></span><span id="wac-change-' + index + '"></span></td>' +
       '</tr>';
@@ -98,10 +98,10 @@
       '</div>' +
       '<div style="font-size:12px;color:var(--text-secondary,#666);margin-bottom:8px">' +
         escapeHtml(english
-          ? 'You can import original stock quantities now. WAC confirmation stays disabled until all blockers above are resolved.'
+          ? 'Enter original stock quantities directly in the table below, or import a file. WAC confirmation stays disabled until all blockers above are resolved.'
           : indonesian
-            ? 'Stok awal dapat diimpor sekarang. Konfirmasi WAC tetap dinonaktifkan sampai semua masalah di atas diselesaikan.'
-            : '可以先导入原库存数量；上方所有阻断问题解决后，才能确认 WAC。') +
+            ? 'Isi jumlah stok awal langsung pada tabel di bawah, atau impor file. Konfirmasi WAC tetap dinonaktifkan sampai semua masalah di atas diselesaikan.'
+            : '可直接在下方手动填写原库存数量，也可导入文件；上方所有阻断问题解决后，才能确认 WAC。') +
       '</div>' +
       '<div style="overflow:auto;max-height:240px">' +
         '<table class="data-table" style="min-width:520px;width:100%"><thead><tr>' +

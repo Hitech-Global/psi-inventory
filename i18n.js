@@ -4887,7 +4887,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.zh["wac.arrival"]="到货日期"; I18N.dict.en["wac.arrival"]="Arrival Date"; I18N.dict.id["wac.arrival"]="Tanggal Tiba";
   I18N.dict.zh["wac.formula_hint"]="移动加权公式：新WAC = (旧库存数量 × 当前WAC + 本批次数量 × 单位落地成本) ÷ (旧库存数量 + 本批次数量)"; I18N.dict.en["wac.formula_hint"]="Moving Average Formula: New WAC = (Old Qty × Current WAC + Batch Qty × Unit Landing Cost) ÷ (Old Qty + Batch Qty)"; I18N.dict.id["wac.formula_hint"]="Rumus Rata-rata Bergerak: WAC Baru = (Qty Lama × WAC Saat Ini + Qty Batch × Biaya Pendarat per Unit) ÷ (Qty Lama + Qty Batch)";
   I18N.dict.zh["wac.landing_cost_hint"]="单位落地成本 = (产品货值 + 物流费用 + 清关费用 + 其他费用) ÷ SKU数量"; I18N.dict.en["wac.landing_cost_hint"]="Unit Landing Cost = (Product Cost + Freight + Customs + Other Fees) ÷ SKU Qty"; I18N.dict.id["wac.landing_cost_hint"]="Biaya Pendarat per Unit = (Biaya Produk + Pengiriman + Bea Cukai + Biaya Lain) ÷ Qty SKU";
-  I18N.dict.zh["wac.old_qty_hint"]="⚠️ 可直接导入 BigSeller 库存更新记录，按本批入库单自动识别入库前原库存；也可继续使用旧库存模板。"; I18N.dict.en["wac.old_qty_hint"]="⚠️ Import BigSeller inventory update history to identify pre-inbound stock from the matching receipt; the old-inventory template is also supported."; I18N.dict.id["wac.old_qty_hint"]="⚠️ Impor riwayat pembaruan stok BigSeller untuk mengenali stok sebelum penerimaan dari dokumen masuk yang cocok; template stok lama tetap didukung.";
+  I18N.dict.zh["wac.old_qty_hint"]="可直接在下方逐个填写每个 SKU 的原库存数量，也可以导入 Excel、BigSeller 或至速仓记录；导入不是必需步骤。"; I18N.dict.en["wac.old_qty_hint"]="Enter original stock quantities directly for each SKU below, or import an Excel, BigSeller, or Zhisu record. Importing is optional."; I18N.dict.id["wac.old_qty_hint"]="Isi jumlah stok awal setiap SKU langsung di bawah, atau impor file Excel, riwayat BigSeller, atau catatan Zhisu. Impor bersifat opsional.";
   // WAC 列标题
   I18N.dict.zh["wac.col_batch_no"]="物流单号"; I18N.dict.en["wac.col_batch_no"]="Batch No."; I18N.dict.id["wac.col_batch_no"]="No. Batch";
   I18N.dict.zh["wac.col_ci"]="关联CI"; I18N.dict.en["wac.col_ci"]="Related CI"; I18N.dict.id["wac.col_ci"]="CI Terkait";
@@ -4925,13 +4925,16 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   // WAC-MODEL-V2.2 旧库存导入（导出/导入/校验/状态）翻译键
   I18N.dict.zh["wac.btn_export_old"]="导出旧库存模板"; I18N.dict.en["wac.btn_export_old"]="Export Old Inventory Template"; I18N.dict.id["wac.btn_export_old"]="Ekspor Template Stok Lama";
   I18N.dict.zh["wac.btn_import_old"]="导入旧库存 / BigSeller记录"; I18N.dict.en["wac.btn_import_old"]="Import Old Inventory / BigSeller History"; I18N.dict.id["wac.btn_import_old"]="Impor Stok Lama / Riwayat BigSeller";
-  I18N.dict.zh["wac.import_not_imported"]="未导入"; I18N.dict.en["wac.import_not_imported"]="Not Imported"; I18N.dict.id["wac.import_not_imported"]="Belum Diimpor";
+  I18N.dict.zh["wac.import_not_imported"]="待填写或导入"; I18N.dict.en["wac.import_not_imported"]="Ready to enter or import"; I18N.dict.id["wac.import_not_imported"]="Siap diisi atau diimpor";
   I18N.dict.zh["wac.import_matched"]="已匹配"; I18N.dict.en["wac.import_matched"]="Matched"; I18N.dict.id["wac.import_matched"]="Cocok";
+  I18N.dict.zh["wac.import_filled"]="已填写"; I18N.dict.en["wac.import_filled"]="Filled"; I18N.dict.id["wac.import_filled"]="Terisi";
+  I18N.dict.zh["wac.import_unknown_ignored"]="非本批次SKU（已忽略）"; I18N.dict.en["wac.import_unknown_ignored"]="Out-of-batch SKUs (ignored)"; I18N.dict.id["wac.import_unknown_ignored"]="SKU di luar batch (diabaikan)";
+  I18N.dict.zh["wac.import_duplicate_manual"]="重复SKU需手动填写"; I18N.dict.en["wac.import_duplicate_manual"]="Duplicate SKUs need manual entry"; I18N.dict.id["wac.import_duplicate_manual"]="SKU duplikat perlu diisi manual";
   I18N.dict.zh["wac.import_missing"]="缺失SKU"; I18N.dict.en["wac.import_missing"]="Missing SKU"; I18N.dict.id["wac.import_missing"]="SKU Hilang";
   I18N.dict.zh["wac.import_unknown"]="未知SKU"; I18N.dict.en["wac.import_unknown"]="Unknown SKU"; I18N.dict.id["wac.import_unknown"]="SKU Tidak Dikenal";
   I18N.dict.zh["wac.import_duplicate"]="重复SKU"; I18N.dict.en["wac.import_duplicate"]="Duplicate SKU"; I18N.dict.id["wac.import_duplicate"]="SKU Duplikat";
   I18N.dict.zh["wac.import_invalid"]="非法数量"; I18N.dict.en["wac.import_invalid"]="Invalid Qty"; I18N.dict.id["wac.import_invalid"]="Jumlah Tidak Valid";
-  I18N.dict.zh["wac.import_live_invalid"]="当前输入异常"; I18N.dict.en["wac.import_live_invalid"]="Current Input Invalid"; I18N.dict.id["wac.import_live_invalid"]="Input Saat Ini Tidak Valid";
+  I18N.dict.zh["wac.import_live_invalid"]="待填写/输入异常"; I18N.dict.en["wac.import_live_invalid"]="Missing or invalid input"; I18N.dict.id["wac.import_live_invalid"]="Input kosong atau tidak valid";
   I18N.dict.zh["wac.import_ok"]="就绪"; I18N.dict.en["wac.import_ok"]="Ready"; I18N.dict.id["wac.import_ok"]="Siap";
   I18N.dict.zh["wac.export_no_data"]="暂无SKU可导出"; I18N.dict.en["wac.export_no_data"]="No SKU to export"; I18N.dict.id["wac.export_no_data"]="Tidak ada SKU untuk diekspor";
   I18N.dict.zh["wac.old_inventory_sheet"]="旧库存模板"; I18N.dict.en["wac.old_inventory_sheet"]="Old Inventory Template"; I18N.dict.id["wac.old_inventory_sheet"]="Template Stok Lama";
