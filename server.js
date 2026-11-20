@@ -20328,7 +20328,7 @@ const LOGISTICS_STATUS_ARRIVED = 'completed'; // 已到仓
 // computeWacCostFacts: single source of truth for WAC cost computation.
 // Used by both /api/wac/preview and /api/wac/confirm.
 // Fail-closed: any data integrity issue produces a blocker; blockers > 0 → no DB writes.
-const { computeWacCostFacts, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE } = require('./wac-calculator');
+const { computeWacCostFacts, findUnresolvedWacContextWarnings, resolveExactFxRate, allocateByWeight, WAC_MONETARY_TOLERANCE } = require('./wac-calculator');
 
 // 查询待WAC确认的物流批次（已到仓 且 wac_history 中无该批次的确认记录）
 app.get('/api/wac/pending-batches', requireApiPermission('ci_view'), asyncHandler((req, res) => {
@@ -20640,7 +20640,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
     const excluded=queryOne("SELECT id FROM wac_batch_exclusions WHERE logistics_batch_id=? AND status='excluded'",[req.params.logistics_batch_id]);
     if(excluded)return res.status(409).json({error:'该批次已标记为无需计算，请先恢复到待确认队列'});
     // ── 1. Re-read DB facts via shared calculator ──
-    const { blockers, items, meta } = computeWacCostFacts(req.params.logistics_batch_id);
+    const { blockers, warnings, items, meta } = computeWacCostFacts(req.params.logistics_batch_id);
 
     // ── 2. Blockers > 0 → no DB writes ──
     if (blockers.length > 0) {
@@ -20684,6 +20684,18 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
     const missingOldQty = items.filter(it => !oldQtyMap.has(it.sku_code)).map(it => it.sku_code);
     if (missingOldQty.length > 0) {
       return res.status(400).json({ error: `以下SKU缺少 old_qty: ${missingOldQty.join(', ')}` });
+    }
+
+    // A SKU without a target-country/warehouse row may proceed only when its
+    // explicitly supplied opening quantity is zero. Positive stock needs the
+    // target context's own historical WAC; never borrow another country's cost.
+    const unresolvedContextWarnings = findUnresolvedWacContextWarnings(warnings, oldQtyMap);
+    if (unresolvedContextWarnings.length > 0) {
+      return res.status(422).json({
+        error: '目标仓库没有原库存成本记录，原库存数量必须为 0；如原库存大于 0，请先补录目标仓库的历史成本',
+        blockers: unresolvedContextWarnings,
+        meta
+      });
     }
 
     // ── 4b. WAC_DENOMINATOR_ZERO: old_qty + batch_qty <= 0 → reject ──

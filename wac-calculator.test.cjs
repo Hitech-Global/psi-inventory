@@ -30,7 +30,7 @@ process.env.DB_DRIVER = 'sqlite';
 process.env.DB_PATH = ':memory:';
 
 const { query, queryOne, run, transaction, initDatabase } = require('./db');
-const { computeWacCostFacts, allocateByWeight, buildWacAllocationTrace, resolveExactFxRate, transportBasisForMode } = require('./wac-calculator');
+const { computeWacCostFacts, findUnresolvedWacContextWarnings, allocateByWeight, buildWacAllocationTrace, resolveExactFxRate, transportBasisForMode } = require('./wac-calculator');
 
 // ── Schema setup ──
 function createTestSchema() {
@@ -1370,7 +1370,9 @@ describe('computeWacCostFacts - WAC context gates', () => {
 
     const result = computeWacCostFacts('lb_oth');
     const codes = result.blockers.map(b => b.code);
-    assert.ok(codes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), `Expected WAC_INVENTORY_CONTEXT_MISMATCH, got: ${codes}`);
+    const warningCodes = (result.warnings || []).map(b => b.code);
+    assert.ok(warningCodes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), `Expected context warning, got: ${warningCodes}`);
+    assert.ok(!codes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), `Context mismatch must not be a hard blocker: ${codes}`);
   });
 
   test('WAC_INVENTORY_ROW_MISSING when SKU has no inventory rows at all', () => {
@@ -1393,6 +1395,7 @@ describe('computeWacCostFacts - WAC context gates', () => {
     const codes = result.blockers.map(b => b.code);
     assert.ok(!codes.includes('WAC_INVENTORY_ROW_MISSING'), `Should not have ROW_MISSING: ${codes}`);
     assert.ok(!codes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'), `Should not have mismatch: ${codes}`);
+    assert.ok(!(result.warnings || []).some(b => b.code === 'WAC_INVENTORY_CONTEXT_MISMATCH'), 'Target context exists, so no context warning should be emitted');
   });
 });
 
@@ -1516,8 +1519,11 @@ describe('computeWacCostFacts - shared freight payment FX and batch-scoped inven
 
     const other = computeWacCostFacts('lb_other_batch');
     const otherCodes = other.blockers.map(b => b.code);
-    assert.ok(otherCodes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'),
-      'the wrong-context inventory must still block the batch that actually contains that SKU');
+    const otherWarnings = (other.warnings || []).map(b => b.code);
+    assert.ok(otherWarnings.includes('WAC_INVENTORY_CONTEXT_MISMATCH'),
+      'the wrong-context inventory must be surfaced as a conditional warning for the batch that contains that SKU');
+    assert.ok(!otherCodes.includes('WAC_INVENTORY_CONTEXT_MISMATCH'),
+      'context mismatch is resolved against the user-entered opening quantity, not treated as an unconditional blocker');
   });
 });
 
@@ -2441,4 +2447,47 @@ test('WAC confirmation persists the actual freight-payment FX date and matrix sh
   assert.ok(render.includes('maximumFractionDigits:2'), 'rendered WAC values must use two decimals');
   assert.ok(render.includes('r && r.last_inbound_date'), 'rendered matrix date axis must use the actual inbound date');
   assert.ok(!render.includes('汇率结算日'), 'rendered matrix must not display the freight FX settlement date');
+});
+
+
+test('WAC target-context warning is resolved only by an explicit zero opening quantity', () => {
+  const mismatch = {
+    code: 'WAC_INVENTORY_CONTEXT_MISMATCH',
+    detail: { sku_code: 'SKU-OTH', expected_country: 'Indonesia', expected_warehouse: 'WH-JKT' }
+  };
+  const unrelated = { code: 'OTHER_WARNING', detail: { sku_code: 'SKU-OTH' } };
+
+  assert.deepEqual(findUnresolvedWacContextWarnings([mismatch], new Map([['SKU-OTH', 0]])), [],
+    'explicit zero means there is no previous stock value to price');
+  assert.deepEqual(findUnresolvedWacContextWarnings([mismatch], new Map([['SKU-OTH', 12]])), [mismatch],
+    'positive opening stock requires a target-context WAC');
+  assert.deepEqual(findUnresolvedWacContextWarnings([mismatch], new Map()), [mismatch],
+    'missing opening quantity must not clear the warning');
+  assert.deepEqual(findUnresolvedWacContextWarnings([unrelated], new Map()), [],
+    'this helper only evaluates target-context mismatch warnings');
+});
+
+test('WAC confirm route applies the target-context guard after strict old_qty validation', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const server = fs.readFileSync(path.join(__dirname, 'server.js'), 'utf8');
+  const start = server.indexOf("app.post('/api/wac/confirm/:logistics_batch_id'");
+  const end = server.indexOf("app.post('/api/wac/notifications/", start);
+  assert.ok(start >= 0 && end > start, 'WAC confirmation route must exist');
+  const route = server.slice(start, end);
+  const oldQtyPos = route.indexOf('const oldQtyMap = new Map()');
+  const contextGuardPos = route.indexOf('findUnresolvedWacContextWarnings(warnings, oldQtyMap)');
+  assert.ok(oldQtyPos >= 0 && contextGuardPos > oldQtyPos,
+    'backend must read and validate submitted original quantities before resolving context warnings');
+});
+
+test('WAC preview UI displays context warnings and blocks positive opening stock without target cost', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const app = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  assert.ok(app.includes('const warnings=p.warnings||[]'), 'preview UI must read conditional warnings');
+  assert.ok(app.includes('contextMismatchSkus'), 'input validation must identify missing target-context costs');
+  assert.ok(app.includes('contextInvalid.length>0'), 'positive opening stock must remain disabled without target cost');
+  assert.ok(app.includes('batchInfo+blockerHtml+warningHtml+costFactsHtml+skuTableHtml'),
+    'WAC cost facts and manual input table must remain visible for conditional context warnings');
 });

@@ -3,7 +3,8 @@
  *
  * Single source of truth for WAC cost computation.
  * Used by both /api/wac/preview and /api/wac/confirm endpoints in server.js.
- * Fail-closed: any data integrity issue produces a blocker; blockers > 0 → no DB writes.
+ * Fail-closed: hard data-integrity issues remain blockers. A target-context mismatch is a warning;
+ * it can proceed only when the user explicitly confirms opening stock is zero.
  */
 
 const { query, queryOne } = require('./db');
@@ -194,6 +195,7 @@ function buildWacAllocationTrace(skuCodes, weightMap, totalAmount, allocationMap
 // Main shared calculator
 function computeWacCostFacts(logisticsBatchId) {
   const blockers = [];
+  const warnings = [];
   _wacQueryCount = 0;
   const fxCache = new Map();
 
@@ -1269,9 +1271,11 @@ function computeWacCostFacts(logisticsBatchId) {
       blockers.push({ code: 'WAC_INVENTORY_ROW_MISSING', message: `SKU ${skuCode} 在库存中无任何记录，Confirm 无法创建库存行`, detail: { sku_code: skuCode, country: country2, warehouse } });
     }
 
-    // B. WAC_INVENTORY_CONTEXT_MISMATCH: SKU exists in inventory but in different context
+    // A SKU can legitimately exist in other countries/warehouses. Keep this as a
+    // conditional warning: confirmation is safe only when opening stock at this
+    // target context is explicitly zero; foreign-context WAC must never be reused.
     if (allInvRows.length > 0 && !matchingInv) {
-      blockers.push({ code: 'WAC_INVENTORY_CONTEXT_MISMATCH', message: `SKU ${skuCode} 库存记录不在目标国家/仓库(${country2}/${warehouse})下`, detail: { sku_code: skuCode, expected_country: country2, expected_warehouse: warehouse, actual_contexts: allInvRows.map(r => `${r.country}/${r.warehouse}`) } });
+      warnings.push({ code: 'WAC_INVENTORY_CONTEXT_MISMATCH', message: `SKU ${skuCode} 在目标国家/仓库(${country2}/${warehouse})没有库存成本记录；原库存必须明确为0才能确认`, detail: { sku_code: skuCode, expected_country: country2, expected_warehouse: warehouse, actual_contexts: allInvRows.map(r => `${r.country}/${r.warehouse}`) } });
     }
 
     // For pending batches, old quantity comes only from the user's per-confirmation upload,
@@ -1383,7 +1387,17 @@ function computeWacCostFacts(logisticsBatchId) {
     ci_goods_amount_total: Math.round(ci_goods_amount_total * 10000) / 10000,
   };
 
-  return { blockers, items, meta };
+  return { blockers, warnings, items, meta };
 }
 
-module.exports = { transportBasisForMode, computeWacCostFacts, resolveExactFxRate, allocateByWeight, buildWacAllocationTrace, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };
+function findUnresolvedWacContextWarnings(warnings, oldQtyMap) {
+  return (Array.isArray(warnings) ? warnings : []).filter(warning => {
+    if (!warning || warning.code !== 'WAC_INVENTORY_CONTEXT_MISMATCH') return false;
+    const skuCode = String(warning.detail && warning.detail.sku_code || '').trim();
+    if (!skuCode || !(oldQtyMap instanceof Map) || !oldQtyMap.has(skuCode)) return true;
+    const oldQty = Number(oldQtyMap.get(skuCode));
+    return !Number.isFinite(oldQty) || oldQty !== 0;
+  });
+}
+
+module.exports = { transportBasisForMode, computeWacCostFacts, findUnresolvedWacContextWarnings, resolveExactFxRate, allocateByWeight, buildWacAllocationTrace, WAC_MONETARY_TOLERANCE, WAC_FX_POLICIES, WAC_ALLOCATION_POLICIES, _getQueryCount: () => _wacQueryCount, _resetQueryCount: () => { _wacQueryCount = 0; } };

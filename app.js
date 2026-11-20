@@ -16868,6 +16868,7 @@ async function wacConfirm(batchId){
     window._wacPreview=p;
     const m=p.meta||{};
     const blockers=p.blockers||[];
+    const warnings=p.warnings||[];
     const items=p.items||[];
     window._wacImport={batchId:batchId,uploaded:!!m.already_confirmed,matched:m.already_confirmed?items.filter(it=>it.old_qty!=null).map(it=>it.sku_code):[],missing:[],unknown:[],duplicate:[],invalid:[]};
     window._wacBigSellerContext=null;
@@ -16892,6 +16893,31 @@ async function wacConfirm(batchId){
             '<span style="color:#cf1322">● '+esc(friendly)+'</span> '+
             '<span style="font-size:11px;color:#999">'+esc(b.code)+'</span>'+
             (detailStr?'<div style="font-size:11px;color:#999;margin-left:16px">'+detailStr+'</div>':'')+
+          '</div>';
+        }).join('')+
+      '</div>';
+    }
+
+    // ── Non-blocking target inventory-context warnings ──
+    let warningHtml='';
+    const contextWarnings=warnings.filter(w=>w&&w.code==='WAC_INVENTORY_CONTEXT_MISMATCH');
+    if(contextWarnings.length){
+      const lang=typeof getLang==='function'?String(getLang()||'zh').toLowerCase().slice(0,2):'zh';
+      const warningTitle=lang==='en'?'Target warehouse has no inventory cost record':lang==='id'?'Catatan biaya gudang target belum tersedia':'目标仓库暂无库存成本记录';
+      const warningRule=lang==='en'
+        ? 'Enter 0 if there was no opening stock. A positive opening quantity requires the target warehouse’s own previous cost record. Costs from other countries or warehouses are never reused. This WAC is saved to history and will sync when target inventory is imported.'
+        : lang==='id'
+          ? 'Isi 0 jika tidak ada stok awal. Jumlah awal positif memerlukan catatan biaya sebelumnya dari gudang target. Biaya negara atau gudang lain tidak akan digunakan. WAC ini disimpan ke riwayat dan akan disinkronkan saat stok gudang target diimpor.'
+          : '若目标仓库入库前没有库存，请填写 0。若原库存大于 0，必须先补齐目标仓库原有成本；系统不会拿其他国家或仓库的成本代替。确认后先保存到 WAC 历史，后续导入目标仓库库存时自动同步成本。';
+      const otherContextLabel=lang==='en'?'Other inventory contexts:':lang==='id'?'Konteks stok lain:':'其他库存记录：';
+      warningHtml='<div style="background:#fffbe6;border:1px solid #ffe58f;border-radius:6px;padding:12px 16px;margin-bottom:12px">'+
+        '<div style="font-size:13px;font-weight:bold;color:#ad6800">⚠️ '+esc(warningTitle)+'</div>'+
+        '<div style="font-size:12px;color:#8c6b1f;margin:6px 0 8px">'+esc(warningRule)+'</div>'+
+        contextWarnings.map(w=>{
+          const d=w.detail||{};
+          return '<div style="font-size:12px;padding:4px 0;border-top:1px solid #ffe7ba">'+
+            '<b>'+esc(d.sku_code||'')+'</b> · '+esc((d.expected_country||'')+' / '+(d.expected_warehouse||''))+
+            (Array.isArray(d.actual_contexts)&&d.actual_contexts.length?'<div style="font-size:11px;color:#999;margin-left:16px">'+esc(otherContextLabel+' '+d.actual_contexts.join(', '))+'</div>':'')+
           '</div>';
         }).join('')+
       '</div>';
@@ -17038,7 +17064,7 @@ async function wacConfirm(batchId){
       notificationSectionHtml='<div class="detail-section"><h3>成本变动通知记录</h3><div id="wac-notification-history"><span style="font-size:12px;color:var(--text-secondary)">正在加载通知记录…</span></div></div>';
     }
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
-      batchInfo+blockerHtml+costFactsHtml+skuTableHtml+notificationSectionHtml+
+      batchInfo+blockerHtml+warningHtml+costFactsHtml+skuTableHtml+notificationSectionHtml+
     '</div>';
 
     const footerBtns='<button class="btn btn-secondary" onclick="closeModal()">'+t('common.cancel','取消')+'</button>'+
@@ -17175,15 +17201,19 @@ function recalcWacRow(i){
   const oldWac=Number(it.current_wac)||0;
   const batchQty=Number(it.batch_qty)||0;
   const unitCost=Number(it.unit_landing_cost)||0;
-  const valid=oldQty!==null&&Number.isFinite(oldQty)&&oldQty>=0&&(oldQty+batchQty)>0;
+  const contextCostMissing=oldQty!==null&&oldQty>0&&(p.warnings||[]).some(w=>
+    w&&w.code==='WAC_INVENTORY_CONTEXT_MISMATCH'&&String(w.detail&&w.detail.sku_code||'').trim()===String(it.sku_code||'').trim()
+  );
+  const valid=oldQty!==null&&Number.isFinite(oldQty)&&oldQty>=0&&(oldQty+batchQty)>0&&!contextCostMissing;
   const oldValueCell=document.getElementById('wac-old-value-'+i);
   const newCell=document.getElementById('wac-new-'+i);
   const changeCell=document.getElementById('wac-change-'+i);
-  const oldValue=oldQty===null||!Number.isFinite(oldQty)?null:oldQty*oldWac;
+  const oldValue=contextCostMissing?null:(oldQty===null||!Number.isFinite(oldQty)?null:oldQty*oldWac);
   const newWac=valid?Math.round((oldQty*oldWac+batchQty*unitCost)/(oldQty+batchQty)*10000)/10000:null;
   const tips=wacCalcBuildTips(it,p.meta||{},oldQty,oldWac,oldValue,newWac);
-  if(oldValueCell)oldValueCell.innerHTML=oldValue===null?'待填写':wacCalcHover(wacCalcFmtMoney(oldValue),tips.oldValue);
-  if(newCell)newCell.innerHTML=newWac===null?'待填写':wacCalcHover(wacCalcFmtMoney(newWac),tips.newWac);
+  const contextCostHint=typeof getLang==='function'&&String(getLang()).toLowerCase().startsWith('en')?'Target cost record required':typeof getLang==='function'&&String(getLang()).toLowerCase().startsWith('id')?'Catatan biaya gudang target diperlukan':'需先补录目标仓库原成本';
+  if(oldValueCell)oldValueCell.innerHTML=contextCostMissing?contextCostHint:(oldValue===null?'待填写':wacCalcHover(wacCalcFmtMoney(oldValue),tips.oldValue));
+  if(newCell)newCell.innerHTML=contextCostMissing?contextCostHint:(newWac===null?'待填写':wacCalcHover(wacCalcFmtMoney(newWac),tips.newWac));
   if(changeCell){
     if(newWac===null||oldWac<=0){changeCell.textContent='—';changeCell.style.color='';}
     else{const pct=(newWac-oldWac)/oldWac*100;changeCell.textContent=(pct>0?'+':'')+pct.toFixed(2)+'%';changeCell.style.color=pct>0?'#cf4444':(pct<0?'#269653':'');}
@@ -17207,9 +17237,15 @@ function wacValidateInputs(){
   if(!p||!p.items) return;
   const items=p.items;
   const liveInvalid=[];
+  const contextInvalid=[];
+  const contextMismatchSkus=new Set((p.warnings||[])
+    .filter(w=>w&&w.code==='WAC_INVENTORY_CONTEXT_MISMATCH')
+    .map(w=>String(w.detail&&w.detail.sku_code||'').trim())
+    .filter(Boolean));
   items.forEach((it,i)=>{
     const r=readWacOldRaw(i);
     if(!r.ok) liveInvalid.push(it.sku_code);
+    else if(contextMismatchSkus.has(String(it.sku_code||'').trim())&&r.value>0) contextInvalid.push(it.sku_code);
   });
   // 文件缺失、重复或非法记录可以通过手动填写对应输入框修正，不再要求重新导入。
   if(st){
@@ -17222,13 +17258,18 @@ function wacValidateInputs(){
   const filledN=items.length-liveInvalid.length;
   // Unknown rows are outside this batch and are ignored; duplicate rows require a manual value.
   // Confirmation is gated only by the final values for this batch's SKU rows.
-  const blocked=liveInvalid.length>0;
+  const blocked=liveInvalid.length>0||contextInvalid.length>0;
   const statusEl=document.getElementById('wac-import-status');
   const btn=document.getElementById('wac-confirm-btn');
   if(statusEl){
     const parts=[];
     parts.push('<span class="'+(filledN?'ok':'')+'">'+t('wac.import_filled','已填写')+': '+filledN+'/'+items.length+'</span>');
     if(liveInvalid.length) parts.push('<span class="bad">'+t('wac.import_live_invalid','待填写/输入异常')+': '+liveInvalid.length+' ('+liveInvalid.join(', ')+')</span>');
+    if(contextInvalid.length){
+      const lang=typeof getLang==='function'?String(getLang()||'zh').toLowerCase().slice(0,2):'zh';
+      const contextErrorLabel=lang==='en'?'Target cost record missing; opening stock must be 0':lang==='id'?'Catatan biaya target tidak ada; stok awal harus 0':'目标仓库缺少原WAC成本，原库存必须为0';
+      parts.push('<span class="bad">'+contextErrorLabel+': '+contextInvalid.join(', ')+'</span>');
+    }
     if(unknownArr.length) parts.push('<span class="warn">'+t('wac.import_unknown_ignored','非本批次SKU（已忽略）')+': '+unknownArr.join(', ')+'</span>');
     if(duplicateArr.length) parts.push('<span class="warn">'+t('wac.import_duplicate_manual','重复SKU需手动填写')+': '+duplicateArr.join(', ')+'</span>');
     if(!liveInvalid.length) parts.push('<span class="ok">'+t('wac.import_ok','就绪')+'</span>');
