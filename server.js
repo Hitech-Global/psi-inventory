@@ -1283,6 +1283,18 @@ if (require.main === module) {
       run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
     );
     console.log('[STARTUP] inventory_delete_tombstones 表就绪 ✓');
+
+  // 价格体系独立表：幂等建表，失败时阻止启动，避免页面上线后出现缺表错误。
+  try {
+    require('./migrations/price-system').ensurePriceSystemSchema(
+      run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
+    );
+    console.log('[STARTUP] price_system tables ready ✓');
+  } catch (e) {
+    console.error('\n[FATAL] 价格体系数据库迁移失败:', e.message);
+    console.error(e.stack);
+    process.exit(1);
+  }
   } catch (e) {
     console.error('\n[FATAL] inventory_delete_tombstones 建表失败:', e.message);
     console.error(e.stack);
@@ -2007,6 +2019,11 @@ function adaptScopeToLots(dsfInv) {
 
 // 所有 /api 路由需要认证（公共鉴权前缀已在 apiAuth 内放行）
 app.use('/api', apiAuth);
+
+// 价格体系 API：独立维护国家/品牌/平台/店铺价格配置，不改动库存与 WAC 业务逻辑。
+require('./price-system-api').registerPriceSystemRoutes(app, {
+  query, queryOne, run, transaction, genId, requireApiPermission, asyncHandler, needsDataScopeFilter
+});
 
 // ==================== 认证：飞书 OAuth + break-glass 本地登录 ====================
 
