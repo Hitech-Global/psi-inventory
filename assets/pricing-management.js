@@ -104,7 +104,7 @@
     var schemes = state.schemes || [];
     var selected = state.scheme || schemes.find(function (s) { return s.id === state.selectedSchemeId; }) || {};
     var countryOptions = '<option value="">' + psEsc(psT('全部国家', 'All countries', 'Semua negara')) + '</option>' +
-      countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (selected.country === c.name ? 'selected' : '') + '' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('');
+      countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (selected.country === c.name ? 'selected' : '') + '>' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('');
     var brandOptions = '<option value="">' + psEsc(psT('全部品牌', 'All brands', 'Semua merek')) + '</option>' +
       brands.map(function (b) { return '<option value="' + psEsc(b) + '" ' + (selected.brand === b ? 'selected' : '') + '>' + psEsc(b) + '</option>'; }).join('');
     var platforms = Array.from(new Set(schemes.map(function (s) { return s.platform; }).filter(Boolean)));
@@ -274,7 +274,7 @@
     var s = state.scheme;
     var currencies = state.meta.currencies || [];
     return '<div class="ps-config-card"><div class="ps-section-head"><div><h3>' + psEsc(psT('方案基本信息', 'Scheme details', 'Detail skema')) + '</h3><p>' + psEsc(psT('每个国家、品牌、平台和店铺组合独立维护。', 'Each country, brand, platform and store combination is maintained independently.', 'Setiap kombinasi negara, merek, platform, dan toko dikelola terpisah.')) + '</p></div></div>' +
-      '<div class="ps-form-grid"><label class="ps-form-label">' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-set-country" class="ps-input">' + (state.meta.countries || []).map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (c.name === s.country ? 'selected' : '') + '' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="ps-form-grid"><label class="ps-form-label">' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-set-country" class="ps-input">' + (state.meta.countries || []).map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (c.name === s.country ? 'selected' : '') + '>' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
       '<label class="ps-form-label">' + psEsc(psT('品牌', 'Brand', 'Merek')) + '<select id="ps-set-brand" class="ps-input">' + (state.meta.brands || []).map(function (b) { return '<option value="' + psEsc(b) + '" ' + (b === s.brand ? 'selected' : '') + '>' + psEsc(b) + '</option>'; }).join('') + '</select></label>' +
       '<label class="ps-form-label">' + psEsc(psT('电商平台', 'Platform', 'Platform')) + '<input id="ps-set-platform" class="ps-input" value="' + psEsc(s.platform) + '"></label>' +
       '<label class="ps-form-label">' + psEsc(psT('店铺', 'Store', 'Toko')) + '<input id="ps-set-store" class="ps-input" value="' + psEsc(s.store || '') + '" placeholder="' + psEsc(psT('可选，不填代表全部店铺', 'Optional; blank means all stores', 'Opsional')) + '"></label>' +
@@ -335,7 +335,7 @@
     var countries = state.meta.countries || [];
     var brands = state.meta.brands || [];
     var currencies = state.meta.currencies || [];
-    var html = '<div class="ps-modal-grid"><label>' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-new-country" class="ps-input">' + countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" data-currency="' + psEsc(c.default_currency || '') + '"' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
+    var html = '<div class="ps-modal-grid"><label>' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-new-country" class="ps-input">' + countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" data-currency="' + psEsc(c.default_currency || '') + '">' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
       '<label>' + psEsc(psT('品牌', 'Brand', 'Merek')) + '<select id="ps-new-brand" class="ps-input">' + brands.map(function (b) { return '<option value="' + psEsc(b) + '">' + psEsc(b) + '</option>'; }).join('') + '</select></label>' +
       '<label>' + psEsc(psT('电商平台', 'Platform', 'Platform')) + '<input id="ps-new-platform" class="ps-input" placeholder="Shopee / TikTok Shop"></label>' +
       '<label>' + psEsc(psT('店铺（可选）', 'Store (optional)', 'Toko (opsional)')) + '<input id="ps-new-store" class="ps-input" placeholder="' + psEsc(psT('留空代表全部店铺', 'Blank means all stores', 'Kosong berarti semua toko')) + '"></label>' +
