@@ -206,6 +206,70 @@
       'modal-wac');
   }
 
+  function fetchWacLogisticsDetail(id) {
+    return withWacApiTimeout(
+      global.api('/api/logistics-batches/' + encodeURIComponent(id)),
+      15000,
+      tr('wac.logistics_timeout', '物流批次详情加载超时，请检查网络后重试。')
+    ).then(function (log) {
+      if (!log || !log.pl_id) return { log: log, plData: null };
+      return withWacApiTimeout(
+        global.api('/api/packing-lists/' + encodeURIComponent(log.pl_id)),
+        15000,
+        tr('wac.pl_timeout', 'PL明细加载超时，请检查网络后重试。')
+      ).then(function (plData) {
+        return { log: log, plData: plData };
+      });
+    });
+  }
+
+  function wacLogisticsLoadingHtml() {
+    return '<div class="detail-section" id="ci-wac-logistics-loading">' +
+      '<h3>物流批次详情</h3>' +
+      '<div style="font-size:12px;color:var(--text-secondary)">WAC预览已打开，正在后台读取物流批次和PL明细…</div></div>';
+  }
+
+  function loadWacLogisticsContext(id, ciId, seq) {
+    return Promise.resolve().then(function () {
+      return fetchWacLogisticsDetail(id);
+    }).then(function (context) {
+      if (seq !== global.__ciWacDetailSeq) return;
+      var log = context.log;
+      var plData = context.plData;
+      if (!log) throw new Error('物流批次不存在');
+
+      global.__ciWacActiveCiId = ciId || log.related_ci_id || '';
+      var modal = document.getElementById('modal-content');
+      var overlay = document.getElementById('modal-overlay');
+      var body = modal && modal.querySelector('.modal-body');
+      var card = body && body.querySelector('.form-card');
+      if (!modal || !modal.classList.contains('modal-wac') || !card ||
+          (overlay && !overlay.classList.contains('show'))) return;
+
+      var placeholder = card.querySelector('#ci-wac-logistics-loading');
+      if (placeholder) placeholder.remove();
+      if (!card.querySelector('.ci-wac-logistics-section')) {
+        var preview = global._wacPreview;
+        var wacMeta = preview && preview.meta &&
+          String(preview.meta.batch_no || '') === String(log.batch_no || '')
+          ? preview.meta : null;
+        card.insertAdjacentHTML('afterbegin', renderLogisticsDetail(log, plData, wacMeta));
+      }
+      var title = modal.querySelector('.modal-title');
+      if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + (log.batch_no || id);
+      localizeCiWacModal();
+    }).catch(function (error) {
+      if (seq !== global.__ciWacDetailSeq) return;
+      var modal = document.getElementById('modal-content');
+      var card = modal && modal.querySelector('.modal-body .form-card');
+      var placeholder = card && card.querySelector('#ci-wac-logistics-loading');
+      if (placeholder) {
+        placeholder.innerHTML = '<h3>物流批次详情</h3><div style="font-size:12px;color:#b45309">物流/PL明细加载失败：' +
+          esc(error && error.message || '未知错误') + '。WAC成本预览不受影响。</div>';
+      }
+    });
+  }
+
   var wacDetailBusy = false;
   async function viewLogWacDetail(batchId, ciId, wacStatus, exclusionReason) {
     var id = String(batchId || '');
@@ -220,27 +284,19 @@
     var seq = (global.__ciWacDetailSeq || 0) + 1;
     global.__ciWacDetailSeq = seq;
     try {
-      var log = await withWacApiTimeout(
-        global.api('/api/logistics-batches/' + encodeURIComponent(id)),
-        15000,
-        tr('wac.logistics_timeout', '物流批次详情加载超时，请检查网络后重试。')
-      );
-      var plData = log.pl_id
-        ? await withWacApiTimeout(
-            global.api('/api/packing-lists/' + encodeURIComponent(log.pl_id)),
-            15000,
-            tr('wac.pl_timeout', 'PL明细加载超时，请检查网络后重试。')
-          )
-        : null;
-      if (seq !== global.__ciWacDetailSeq) return;
+      global.__ciWacActiveCiId = ciId || '';
 
-      global.__ciWacActiveCiId = ciId || log.related_ci_id || '';
-      if (wacStatus === 'excluded') {
-        openExcludedDetail(log, plData, exclusionReason);
-        return;
-      }
-      if (wacStatus === 'not_ready' || !wacStatus) {
-        openNotReadyDetail(log, plData);
+      // Non-WAC states still need the logistics record first. For pending/confirmed
+      // WAC, open the cost preview first; logistics and PL details are supplementary.
+      if (wacStatus === 'excluded' || wacStatus === 'not_ready' || !wacStatus) {
+        var context = await fetchWacLogisticsDetail(id);
+        if (seq !== global.__ciWacDetailSeq) return;
+        global.__ciWacActiveCiId = ciId || context.log.related_ci_id || '';
+        if (wacStatus === 'excluded') {
+          openExcludedDetail(context.log, context.plData, exclusionReason);
+        } else {
+          openNotReadyDetail(context.log, context.plData);
+        }
         return;
       }
 
@@ -255,26 +311,31 @@
       var body = modal && modal.querySelector('.modal-body');
       var card = body && body.querySelector('.form-card');
       if (modal && modal.classList.contains('modal-wac') && card) {
-        if (!card.querySelector('.ci-wac-logistics-section')) {
-          var preview = global._wacPreview;
-          var wacMeta = preview && preview.meta &&
-            String(preview.meta.batch_no || '') === String(log.batch_no || '')
-            ? preview.meta : null;
-          card.insertAdjacentHTML('afterbegin', renderLogisticsDetail(log, plData, wacMeta));
+        if (!card.querySelector('.ci-wac-logistics-section') &&
+            !card.querySelector('#ci-wac-logistics-loading')) {
+          card.insertAdjacentHTML('afterbegin', wacLogisticsLoadingHtml());
         }
+        var preview = global._wacPreview;
         var title = modal.querySelector('.modal-title');
-        if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + (log.batch_no || id);
+        if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + ((preview && preview.meta && preview.meta.batch_no) || id);
         localizeCiWacModal();
       } else {
-        openLocalizedCiWacModal('物流批次详情 - ' + (log.batch_no || id),
-          '<div class="form-card" style="box-shadow:none;padding:0">' + renderLogisticsDetail(log, plData) +
-          '<div class="detail-section"><h3>WAC预览</h3><div style="color:var(--text-secondary);font-size:12px">当前批次暂时无法加载WAC计算详情，请检查物流批次、PL明细及WAC阻断原因后重试。</div></div></div>',
+        openLocalizedCiWacModal('WAC预览暂不可用 - ' + id,
+          '<div class="form-card" style="box-shadow:none;padding:0">' +
+          '<div class="detail-section"><h3>WAC预览</h3><div style="font-size:12px;color:var(--text-secondary)">当前批次的WAC预览未能打开。尚未提交WAC确认；可以检查上方错误提示后重试。</div></div>' +
+          wacLogisticsLoadingHtml() + '</div>',
           '<button class="btn btn-secondary" onclick="closeModal()">' + esc(tr('common.close', '关闭')) + '</button>',
           'modal-wac');
       }
+
+      // Do not await this: a slow logistics/PL detail endpoint must not keep the
+      // WAC action in a loading state after the cost preview has already opened.
+      Promise.resolve().then(function () {
+        return loadWacLogisticsContext(id, ciId, seq);
+      });
     } catch (error) {
       if (seq === global.__ciWacDetailSeq && typeof global.showToast === 'function') {
-        global.showToast(error && error.message || '物流批次详情加载失败', 'danger');
+        global.showToast(error && error.message || 'WAC预览加载失败', 'danger');
       }
     } finally {
       wacDetailBusy = false;
