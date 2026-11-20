@@ -227,7 +227,7 @@
   }
 
   function psRenderRules() {
-    var fields = state.details.fields || [];
+    var fields = (state.details.fields || []).filter(function (f) { return Number(f.is_active) === 1; });
     var rules = state.details.rules || [];
     var html = '<div class="ps-section-head"><div><h3>' + psEsc(psT('费用字段与适用规则', 'Fee fields and applicability rules', 'Kolom biaya dan aturan penerapan')) + '</h3><p>' + psEsc(psT('字段属于当前价格方案。规则可以按全部 SKU、产品类目或单个 SKU 匹配。', 'Fields belong to this pricing scheme. Rules can target all SKUs, a product category or an individual SKU.', 'Kolom biaya dimiliki skema ini dan dapat diterapkan ke semua SKU, kategori, atau SKU tertentu.')) + '</p></div>' +
       '<button class="btn btn-primary" onclick="psOpenFieldModal()">＋ ' + psEsc(psT('添加费用字段', 'Add fee field', 'Tambah kolom biaya')) + '</button></div>';
@@ -432,6 +432,8 @@
     openModal(isEdit ? psT('编辑费用规则', 'Edit fee rule', 'Edit aturan biaya') : psT('新增费用规则', 'Add fee rule', 'Tambah aturan biaya'), html,
       '<button class="btn btn-secondary" onclick="closeModal()">' + psEsc(psT('取消', 'Cancel', 'Batal')) + '</button><button class="btn btn-primary" onclick="psSaveRule(' + psArg(fieldId) + ',' + psArg(ruleId || '') + ')">' + psEsc(psT('保存规则', 'Save rule', 'Simpan aturan')) + '</button>');
     psRuleScopeChanged();
+    var scopeValueEl = document.getElementById('ps-rule-scope-value');
+    if (scopeValueEl) scopeValueEl.value = rule.scope_value || '';
   }
 
   function psRuleScopeChanged() {
@@ -492,7 +494,8 @@
     var label = fieldKey === 'FOB_RMB' ? 'FOB-RMB' : ((state.details.fields || []).find(function (f) { return f.field_key === fieldKey; }) || {}).field_name || fieldKey;
     var html = '<div class="ps-modal-grid"><label class="ps-form-wide">' + psEsc(psT('SKU', 'SKU', 'SKU')) + '<input class="ps-input" value="' + psEsc(skuCode) + '" disabled></label>' +
       '<label class="ps-form-wide">' + psEsc(label) + (valueType === 'percent' ? ' (%)' : '') + '<input id="ps-value-input" class="ps-input" type="number" step="0.0001" value="' + psEsc(value == null ? '' : value) + '"></label>' +
-      '<label class="ps-checkbox-label"><input id="ps-value-na" type="checkbox"> ' + psEsc(psT('该 SKU 不适用此费用', 'Not applicable to this SKU', 'Tidak berlaku untuk SKU ini')) + '</label></div>';
+      '<label class="ps-checkbox-label"><input id="ps-value-na" type="checkbox"> ' + psEsc(psT('该 SKU 不适用此费用', 'Not applicable to this SKU', 'Tidak berlaku untuk SKU ini')) + '</label>' +
+      '<label class="ps-checkbox-label"><input id="ps-value-reset" type="checkbox"> ' + psEsc(psT('恢复自动匹配（清除单 SKU 覆盖）', 'Reset to automatic rule matching', 'Kembali ke aturan otomatis')) + '</label></div>';
     openModal(psT('手动维护 SKU 价格', 'Manual SKU value', 'Nilai manual SKU'), html,
       '<button class="btn btn-secondary" onclick="closeModal()">' + psEsc(psT('取消', 'Cancel', 'Batal')) + '</button><button class="btn btn-primary" onclick="psSaveValue(' + psArg(skuCode) + ',' + psArg(fieldKey) + ')">' + psEsc(psT('保存', 'Save', 'Simpan')) + '</button>');
   }
@@ -500,9 +503,11 @@
   async function psSaveValue(skuCode, fieldKey) {
     try {
       var notApplicable = document.getElementById('ps-value-na').checked;
+      var reset = document.getElementById('ps-value-reset').checked;
       var value = document.getElementById('ps-value-input').value;
-      await api('/api/pricing/schemes/' + encodeURIComponent(state.scheme.id) + '/values/' + encodeURIComponent(skuCode) + '/' + encodeURIComponent(fieldKey), 'PUT',
-        { value: value, is_applicable: !notApplicable });
+      var valueUrl = '/api/pricing/schemes/' + encodeURIComponent(state.scheme.id) + '/values/' + encodeURIComponent(skuCode) + '/' + encodeURIComponent(fieldKey);
+      if (reset) await api(valueUrl, 'DELETE');
+      else await api(valueUrl, 'PUT', { value: value, is_applicable: !notApplicable });
       closeModal();
       await psLoadScheme(state.scheme.id);
       state.tab = 'details'; psRender();
@@ -511,8 +516,12 @@
   }
 
   function psEditSku(skuCode) {
-    var html = '<div class="ps-modal-actions"><button class="btn btn-secondary" onclick="psEditValue(' + psArg(skuCode) + ',\'FOB_RMB\',\'\',\'currency\')">编辑 FOB-RMB</button>' +
-      (state.details.fields || []).map(function (f) { return '<button class="btn btn-secondary" onclick="psEditValue(' + psArg(skuCode) + ',' + psArg(f.field_key) + ',\'\', ' + psArg(f.value_type) + ')">' + psEsc(f.field_name) + '</button>'; }).join('') + '</div>';
+    var row = (state.rows || []).find(function (r) { return r.sku_code === skuCode; }) || {};
+    var html = '<div class="ps-modal-actions"><button class="btn btn-secondary" onclick="psEditValue(' + psArg(skuCode) + ',\'FOB_RMB\',' + psArg(row.fob_rmb == null ? '' : row.fob_rmb) + ',\'currency\')">编辑 FOB-RMB</button>' +
+      (state.details.fields || []).filter(function (f) { return Number(f.is_active) === 1; }).map(function (f) {
+        var value = row.fields ? row.fields[f.field_key] : null;
+        return '<button class="btn btn-secondary" onclick="psEditValue(' + psArg(skuCode) + ',' + psArg(f.field_key) + ',' + psArg(value == null ? '' : value) + ',' + psArg(f.value_type) + ')">' + psEsc(f.field_name) + '</button>';
+      }).join('') + '</div>';
     openModal(psT('选择要维护的字段', 'Choose a field to edit', 'Pilih kolom untuk diedit'), html);
   }
 
@@ -556,6 +565,7 @@
 
   async function psSaveSettings() {
     try {
+      var schemeId = state.scheme.id;
       var body = {
         country: document.getElementById('ps-set-country').value,
         brand: document.getElementById('ps-set-brand').value,
@@ -567,8 +577,9 @@
         status: document.getElementById('ps-set-status').value,
         description: document.getElementById('ps-set-description').value
       };
-      await api('/api/pricing/schemes/' + encodeURIComponent(state.scheme.id), 'PUT', body);
-      await renderPricingSystem();
+      await api('/api/pricing/schemes/' + encodeURIComponent(schemeId), 'PUT', body);
+      await psLoadScheme(schemeId);
+      state.tab = 'settings'; psRender();
       psNotify(psT('价格方案设置已保存', 'Scheme settings saved', 'Pengaturan skema disimpan'), 'success');
     } catch (error) { psNotify(error.message, 'danger'); }
   }
