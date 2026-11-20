@@ -25,8 +25,18 @@ function registerPriceSystemRoutes(app, deps) {
     query, queryOne, run, transaction, genId,
     requireApiPermission, asyncHandler, needsDataScopeFilter
   } = deps;
-  const canRead = requireApiPermission('sku_view');
-  const canWrite = requireApiPermission('sku_edit');
+  function requirePricePermissions(write) {
+    return (req, res, next) => {
+      const permissions = req.currentUserPermissions || [];
+      const wildcard = permissions.includes('*');
+      if (!wildcard && (!permissions.includes('sku_view') || !permissions.includes('inventory_view') || (write && !permissions.includes('sku_edit')))) {
+        return res.status(403).json({ error: '价格体系需要 SKU 查看、库存查看' + (write ? '及 SKU 编辑' : '') + '权限' });
+      }
+      next();
+    };
+  }
+  const canRead = requirePricePermissions(false);
+  const canWrite = requirePricePermissions(true);
 
   function schemeAccess(req, res, scheme) {
     if (!scheme) {
@@ -252,8 +262,8 @@ function registerPriceSystemRoutes(app, deps) {
       if (duplicate) return res.status(409).json({ error: '该国家、品牌、平台和店铺已存在价格方案' });
       const id = genId('ps');
       run(
-        'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', req.currentUserId || '']
+        'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(req.body.notes || ''), req.currentUserId || '']
       );
       createVersion(id, userStamp(req), '创建价格方案');
       res.json(getSchemeOrNull(id));
