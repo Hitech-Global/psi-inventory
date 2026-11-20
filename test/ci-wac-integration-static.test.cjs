@@ -11,9 +11,10 @@ const server = path.join(root, 'server.js');
 const index = path.join(root, 'index.html');
 const ciLogistics = path.join(root, 'ci-list-inline-logistics.js');
 const integration = path.join(root, 'assets', 'ci-wac-integration.js');
+const wacNotificationUi = path.join(root, 'wac-notification-ui.js');
 const patch = path.join(root, 'scripts', 'ci-wac-summary-hotfix.cjs');
 
-for (const file of [app, ciLogistics, integration, patch]) {
+for (const file of [app, ciLogistics, integration, wacNotificationUi, patch]) {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
 }
 
@@ -25,6 +26,7 @@ execFileSync(process.execPath, ['--check', server], { stdio: 'pipe' });
 const appSrc = fs.readFileSync(app, 'utf8');
 const ciSrc = fs.readFileSync(ciLogistics, 'utf8');
 const integrationSrc = fs.readFileSync(integration, 'utf8');
+const notificationUiSrc = fs.readFileSync(wacNotificationUi, 'utf8');
 const serverSrc = fs.readFileSync(server, 'utf8');
 const indexSrc = fs.readFileSync(index, 'utf8');
 
@@ -45,6 +47,19 @@ assert.ok(integrationSrc.includes("path === '/api/wac/cc-groups'"), 'WAC CC grou
 assert.ok(integrationSrc.includes('wac.cc_groups_timeout'), 'WAC CC group timeout must explain that it does not block confirmation');
 assert.ok(integrationSrc.includes('wac.notifications_timeout'), 'WAC notification-history reads must have timeout protection');
 assert.ok(integrationSrc.includes('wacDetailBusy'), 'WAC detail loading must reject duplicate in-flight actions');
+assert.ok(integrationSrc.includes('withWacApiTimeout(\n        global.api(\'/api/logistics-batches/'), 'logistics batch detail must have a direct per-step deadline');
+assert.ok(integrationSrc.includes('withWacApiTimeout(\n            global.api(\'/api/packing-lists/'), 'PL detail must have a direct per-step deadline');
+assert.ok(integrationSrc.includes('withWacApiTimeout(\n        global.wacConfirm(id)'), 'WAC preview must have a direct deadline independent of the API wrapper');
+assert.ok(ciSrc.includes('var watchdog = setTimeout(function ()'), 'WAC row action must have a last-resort watchdog');
+assert.ok(ciSrc.includes('WAC详情加载超过 60 秒'), 'WAC row action watchdog must show an actionable timeout message');
+const wacStart = appSrc.indexOf('async function wacConfirm(batchId)');
+const wacEnd = appSrc.indexOf('// 已确认 WAC 的飞书通知记录', wacStart);
+const wacSrc = appSrc.slice(wacStart, wacEnd);
+assert.ok(!wacSrc.includes("await api('/api/wac/cc-candidates')"), 'WAC preview must not wait for Feishu CC candidates');
+assert.ok(wacSrc.includes("Promise.resolve().then(function(){return api('/api/wac/cc-candidates');})"), 'Feishu CC candidates must load after the WAC modal opens');
+assert.ok(wacSrc.includes("Promise.resolve().then(function(){return api('/api/wac/notifications/'"), 'WAC notification history must load after the modal opens');
+assert.ok(notificationUiSrc.includes('Promise.resolve(groupRequest).then(function (data)'), 'Feishu group options must load in the background');
+assert.ok(!notificationUiSrc.includes("var data = await window.api('/api/wac/cc-groups')"), 'WAC modal must not await Feishu group options');
 const submitWrapperStart = integrationSrc.indexOf('var originalSubmitWacConfirm = global.submitWacConfirm;');
 const submitWrapperEnd = integrationSrc.indexOf('function hideLegacyWacPage()', submitWrapperStart);
 const submitWrapperSrc = integrationSrc.slice(submitWrapperStart, submitWrapperEnd);
@@ -55,7 +70,10 @@ assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confir
 assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
 assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
 assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-1'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('<script src="app.js"></script>'), 'WAC preview must use the latest cache-busted app script');
+assert.ok(indexSrc.includes('ci-list-inline-logistics.js?v=20261120-2'), 'WAC row action must use the latest cache-busted CI logistics script');
+assert.ok(indexSrc.includes('wac-notification-ui.js?v=20261120-2'), 'WAC group loader must use the latest cache-busted notification script');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-2'), 'WAC submit integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
@@ -83,7 +101,7 @@ assert.ok(integrationSrc.includes('openWacCcFromCI'), 'confirmed-batch CC entry 
 assert.ok(integrationSrc.includes("page === 'inbound'"), 'legacy WAC page route must redirect');
 assert.ok(integrationSrc.includes("data-page=\"inbound\""), 'legacy WAC navigation entry must be hidden');
 
-const notificationPos = indexSrc.indexOf('<script src="wac-notification-ui.js"></script>');
+const notificationPos = indexSrc.indexOf('wac-notification-ui.js?v=20261120-2');
 const integrationPos = indexSrc.indexOf('assets/ci-wac-integration.js');
 assert.ok(notificationPos >= 0 && integrationPos > notificationPos,
   'CI WAC integration must load after WAC notification UI');

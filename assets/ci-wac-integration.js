@@ -220,9 +220,17 @@
     var seq = (global.__ciWacDetailSeq || 0) + 1;
     global.__ciWacDetailSeq = seq;
     try {
-      var log = await global.api('/api/logistics-batches/' + encodeURIComponent(id));
+      var log = await withWacApiTimeout(
+        global.api('/api/logistics-batches/' + encodeURIComponent(id)),
+        15000,
+        tr('wac.logistics_timeout', '物流批次详情加载超时，请检查网络后重试。')
+      );
       var plData = log.pl_id
-        ? await global.api('/api/packing-lists/' + encodeURIComponent(log.pl_id))
+        ? await withWacApiTimeout(
+            global.api('/api/packing-lists/' + encodeURIComponent(log.pl_id)),
+            15000,
+            tr('wac.pl_timeout', 'PL明细加载超时，请检查网络后重试。')
+          )
         : null;
       if (seq !== global.__ciWacDetailSeq) return;
 
@@ -236,7 +244,11 @@
         return;
       }
 
-      await global.wacConfirm(id);
+      await withWacApiTimeout(
+        global.wacConfirm(id),
+        30000,
+        tr('wac.preview_timeout', 'WAC预览加载超时；尚未提交确认，请稍后重试。')
+      );
       if (seq !== global.__ciWacDetailSeq) return;
 
       var modal = document.getElementById('modal-content');

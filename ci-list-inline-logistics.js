@@ -849,6 +849,21 @@
     el.setAttribute('aria-busy', 'true');
     el.textContent = wacUiText('loading');
 
+    var settled = false;
+    var watchdog = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      if (el.isConnected) {
+        el.disabled = false;
+        el.removeAttribute('data-wac-loading');
+        el.removeAttribute('aria-busy');
+        el.textContent = originalText;
+      }
+      if (typeof global.showToast === 'function') {
+        global.showToast('WAC详情加载超过 60 秒，已停止等待。请刷新后重试；本次没有提交 WAC。', 'danger');
+      }
+    }, 60000);
+
     var task;
     try {
       task = global.viewLogWacDetail(batchId, ciId, status, reason);
@@ -856,10 +871,13 @@
       task = Promise.reject(error);
     }
     Promise.resolve(task).catch(function (error) {
-      if (typeof global.showToast === 'function') {
+      if (!settled && typeof global.showToast === 'function') {
         global.showToast(error && error.message || 'WAC详情加载失败', 'danger');
       }
     }).finally(function () {
+      if (settled) return;
+      settled = true;
+      clearTimeout(watchdog);
       if (!el.isConnected) return;
       el.disabled = false;
       el.removeAttribute('data-wac-loading');
