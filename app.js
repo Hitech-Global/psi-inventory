@@ -183,12 +183,8 @@ async function apiRaw(url,method='GET',body=null){
     try{
       const raw = await responseForDiagnostics.text();
       const plain = raw
-        .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
-        .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
         .replace(/<[^>]*>/g, ' ')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/\\s+/g, ' ')
+        .replace(/\s+/g, ' ')
         .trim();
       if(plain) responseHint = '；响应摘要：' + plain.slice(0,160);
     }catch(_){}

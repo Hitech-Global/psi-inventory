@@ -23589,7 +23589,7 @@ app.use((err, req, res, next) => {
     ' path=' + requestPath +
     ' status=' + status +
     ' message=' + String(err && err.message || err) +
-    '\\n' + String(err && err.stack || ''));
+    '\n' + String(err && err.stack || ''));
   if (req && req.path && req.path.startsWith('/api/')) {
     return res.status(status).json({
       error: status >= 500 ? '服务器内部错误，请提供错误编号：' + requestId : String(err && err.message || '请求失败'),
