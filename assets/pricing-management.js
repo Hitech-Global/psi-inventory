@@ -116,7 +116,7 @@
       '<label><span>' + psEsc(psT('品牌', 'Brand', 'Merek')) + '</span><select id="ps-filter-brand" onchange="psApplyFilters()">' + brandOptions + '</select></label>' +
       '<label><span>' + psEsc(psT('电商平台', 'Platform', 'Platform')) + '</span><select id="ps-filter-platform" onchange="psApplyFilters()">' + platformOptions + '</select></label>' +
       '<label><span>' + psEsc(psT('店铺', 'Store', 'Toko')) + '</span><select id="ps-filter-store" onchange="psApplyFilters()">' + storeOptions + '</select></label>' +
-      '<label><span>' + psEsc(psT('方案状态', 'Status', 'Status')) + '</span><select id="ps-filter-status" onchange="psApplyFilters()"><option value="">' + psEsc(psT('全部状态', 'All statuses', 'Semua status')) + '</option><option value="active">' + psEsc(psT('启用', 'Active', 'Aktif')) + '</option><option value="draft">' + psEsc(psT('待配置', 'Draft', 'Draf')) + '</option><option value="disabled">' + psEsc(psT('停用', 'Disabled', 'Nonaktif')) + '</option></select></label>' +
+      '<label><span>' + psEsc(psT('方案状态', 'Status', 'Status')) + '</span><select id="ps-filter-status" onchange="psApplyFilters()"><option value="">' + psEsc(psT('全部状态', 'All statuses', 'Semua status')) + '</option><option value="active" ' + (selected.status === 'active' ? 'selected' : '') + '>' + psEsc(psT('启用', 'Active', 'Aktif')) + '</option><option value="draft" ' + (selected.status === 'draft' ? 'selected' : '') + '>' + psEsc(psT('待配置', 'Draft', 'Draf')) + '</option><option value="disabled" ' + (selected.status === 'disabled' ? 'selected' : '') + '>' + psEsc(psT('停用', 'Disabled', 'Nonaktif')) + '</option></select></label>' +
       '</div></div>';
   }
 
