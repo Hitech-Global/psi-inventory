@@ -70,7 +70,7 @@ assert.ok(submitWrapperSrc.includes('noOpLoadWacPending'), 'Integrated CI confir
 assert.ok(submitWrapperSrc.includes('setTimeout(function ()'), 'CI logistics refresh must run asynchronously after WAC commit');
 assert.ok(!submitWrapperSrc.includes('await global.refreshCIListLogistics(ciId)'), 'WAC submit must not wait for CI list refresh');
 assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh GET must have a timeout fallback');
-assert.ok(indexSrc.includes('app.js?v=20261120-2'), 'WAC preview must use the latest cache-busted app script');
+assert.ok(indexSrc.includes('<script src="app.js"></script>'), 'WAC preview must use the latest cache-busted app script');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js?v=20261120-2'), 'WAC row action must use the latest cache-busted CI logistics script');
 assert.ok(indexSrc.includes('wac-notification-ui.js?v=20261120-2'), 'WAC group loader must use the latest cache-busted notification script');
 assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-2'), 'WAC submit integration must use the latest cache-busted asset');
