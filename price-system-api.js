@@ -20,6 +20,123 @@ function isCategoryApplicable(field, category) {
   return categories.length === 0 || categories.includes(String(category || '').trim());
 }
 
+function createPriceSystemWacSync(deps) {
+  const { query, queryOne, run, genId } = deps;
+  const aliasCache = new Map();
+  const schemeCache = new Map();
+  function countryAliases(country) {
+    const name = String(country || '').trim();
+    const cacheKey = name.toLowerCase();
+    if (aliasCache.has(cacheKey)) return aliasCache.get(cacheKey);
+    const row = queryOne('SELECT code FROM countries WHERE name = ?', [name]);
+    const code = String(row && row.code || '').trim().toUpperCase();
+    const aliases = ({
+      ID: ['ID', 'IND', 'INDONESIA', 'Indonesia', '\u5370\u5c3c', '\u5370\u5ea6\u5c3c\u897f\u4e9a', '\u5370\u5ea6\u5c3c\u897f\u4e9a\u5171\u548c\u56fd'],
+      MY: ['MY', 'MALAYSIA', 'Malaysia', '\u9a6c\u6765', '\u9a6c\u6765\u897f\u4e9a'],
+      TH: ['TH', 'THAILAND', 'Thailand', '\u6cf0\u56fd'],
+      SG: ['SG', 'SINGAPORE', 'Singapore', '\u65b0\u52a0\u5761']
+    })[code] || [name];
+    const result = Array.from(new Set([name].concat(aliases).map(value => String(value || '').trim().toLowerCase()).filter(Boolean)));
+    aliasCache.set(cacheKey, result);
+    return result;
+  }
+  function activeSchemesForBrand(brand) {
+    const cacheKey = String(brand || '').trim().toLowerCase();
+    if (!schemeCache.has(cacheKey)) schemeCache.set(cacheKey, query("SELECT * FROM price_system_schemes WHERE status = 'active' AND LOWER(brand) = LOWER(?) ORDER BY country, platform, shop_name", [brand]).rows);
+    return schemeCache.get(cacheKey);
+  }
+  function createSnapshotVersion(schemeId, actor, note) {
+    const scheme = queryOne('SELECT * FROM price_system_schemes WHERE id = ?', [schemeId]);
+    if (!scheme) return null;
+    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name', [schemeId]).rows;
+    const values = query('SELECT sku_code, field_key, value FROM price_system_values WHERE scheme_id = ? ORDER BY sku_code, field_key', [schemeId]).rows;
+    const landingCosts = query('SELECT * FROM price_system_landing_costs WHERE scheme_id = ? ORDER BY sku_code', [schemeId]).rows;
+    const srpValues = query('SELECT * FROM price_system_srp_values WHERE scheme_id = ? ORDER BY sku_code', [schemeId]).rows;
+    const previous = queryOne('SELECT MAX(version_no) AS max_version FROM price_system_versions WHERE scheme_id = ?', [schemeId]);
+    const versionNo = Number(previous && previous.max_version || 0) + 1;
+    run('INSERT INTO price_system_versions (id, scheme_id, version_no, snapshot_json, note, created_by, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?)', [genId('psv'), schemeId, versionNo, JSON.stringify({ scheme, fields, values, landingCosts, srpValues }), String(note || ''), String(actor && actor.id || ''), String(actor && actor.name || '')]);
+    return versionNo;
+  }
+  return function syncPriceSystemLandingCostsForWacKeys(wacKeys, actor, reason) {
+    aliasCache.clear();
+    schemeCache.clear();
+    const uniqueKeys = new Map();
+    (Array.isArray(wacKeys) ? wacKeys : []).forEach(raw => {
+      const skuCode = String(raw && raw.sku_code || '').trim();
+      const country = String(raw && raw.country || '').trim();
+      if (!skuCode || !country) return;
+      const key = skuCode + '\u0000' + country.toLowerCase();
+      const previous = uniqueKeys.get(key) || {};
+      uniqueKeys.set(key, { sku_code: skuCode, country, brand: String(raw && raw.brand || previous.brand || '').trim() });
+    });
+    const keys = Array.from(uniqueKeys.values());
+    if (!keys.length) return { schemes_updated: 0, sku_updated: 0, sku_cleared: 0, versions: [] };
+    const brandBySku = new Map();
+    const skuCodes = Array.from(new Set(keys.map(key => key.sku_code)));
+    for (let i = 0; i < skuCodes.length; i += 400) {
+      const part = skuCodes.slice(i, i + 400);
+      query('SELECT sku_code, brand FROM skus WHERE sku_code IN (' + part.map(() => '?').join(',') + ')', part).rows.forEach(row => brandBySku.set(String(row.sku_code || '').trim(), String(row.brand || '').trim()));
+    }
+    const keysByScheme = new Map();
+    keys.forEach(key => {
+      const brand = brandBySku.get(key.sku_code) || key.brand;
+      if (!brand) return;
+      activeSchemesForBrand(brand).forEach(scheme => {
+        if (!countryAliases(scheme.country).includes(key.country.toLowerCase())) return;
+        if (!keysByScheme.has(scheme.id)) keysByScheme.set(scheme.id, { scheme, skuCodes: new Set() });
+        keysByScheme.get(scheme.id).skuCodes.add(key.sku_code);
+      });
+    });
+    const summary = { schemes_updated: 0, sku_updated: 0, sku_cleared: 0, versions: [] };
+    keysByScheme.forEach(({ scheme, skuCodes: schemeSkuSet }) => {
+      const schemeSkuCodes = Array.from(schemeSkuSet);
+      const aliases = countryAliases(scheme.country);
+      const latestBySku = new Map();
+      const existingBySku = new Map();
+      for (let i = 0; i < schemeSkuCodes.length; i += 400) {
+        const part = schemeSkuCodes.slice(i, i + 400);
+        const placeholders = part.map(() => '?').join(',');
+        const latestRows = query(
+          "SELECT wh.id, wh.sku_code, wh.brand, wh.country, wh.warehouse, wh.new_avg_cost, wh.local_currency, wh.ci_no, wh.version_no, wh.confirmed_at, wh.last_inbound_date FROM wac_history wh WHERE wh.sku_code IN (" + placeholders + ") AND LOWER(wh.country) IN (" + aliases.map(() => '?').join(',') + ") AND (COALESCE(wh.brand, '') = '' OR LOWER(wh.brand) = LOWER(?)) AND COALESCE(wh.is_locked, 0) = 1 AND LOWER(COALESCE(wh.confirmation_status, 'confirmed')) NOT IN ('reversed', 'void', 'cancelled') AND wh.confirmed_at IS NOT NULL AND wh.confirmed_at <> '' ORDER BY COALESCE(NULLIF(wh.confirmed_at, ''), NULLIF(wh.last_inbound_date, ''), wh.created_at) DESC, wh.version_no DESC, wh.created_at DESC",
+          part.concat(aliases, [scheme.brand])
+        ).rows;
+        latestRows.forEach(row => {
+          const skuCode = String(row.sku_code || '').trim();
+          if (skuCode && !latestBySku.has(skuCode) && row.new_avg_cost != null && String(row.new_avg_cost).trim() !== '') latestBySku.set(skuCode, row);
+        });
+        query('SELECT * FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code IN (' + placeholders + ')', [scheme.id].concat(part)).rows.forEach(row => existingBySku.set(String(row.sku_code || '').trim(), row));
+      }
+      let updated = 0;
+      let cleared = 0;
+      schemeSkuCodes.forEach(skuCode => {
+        const wac = latestBySku.get(skuCode);
+        const existing = existingBySku.get(skuCode);
+        if (!wac) {
+          if (existing) { run('DELETE FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code = ?', [scheme.id, skuCode]); cleared++; }
+          return;
+        }
+        const value = Number(wac.new_avg_cost);
+        if (!Number.isFinite(value) || value < 0) return;
+        const rawCurrency = String(wac.local_currency || scheme.currency || '').trim().toUpperCase();
+        const landingCost = { wac_history_id: wac.id, value, currency: rawCurrency === 'CNY' ? 'RMB' : rawCurrency, warehouse: wac.warehouse || '', ci_no: wac.ci_no || '', version_no: Number(wac.version_no || 0), confirmed_at: wac.confirmed_at || '', last_inbound_date: String(wac.last_inbound_date || '').slice(0, 10) };
+        const unchanged = existing && String(existing.wac_history_id || '') === String(landingCost.wac_history_id || '') && Number(existing.value) === landingCost.value && String(existing.currency || '') === landingCost.currency && String(existing.warehouse || '') === landingCost.warehouse && String(existing.ci_no || '') === landingCost.ci_no && Number(existing.version_no || 0) === landingCost.version_no && String(existing.confirmed_at || '') === landingCost.confirmed_at && String(existing.last_inbound_date || '') === landingCost.last_inbound_date;
+        if (unchanged) return;
+        run("INSERT INTO price_system_landing_costs (id, scheme_id, sku_code, wac_history_id, value, currency, warehouse, ci_no, version_no, confirmed_at, last_inbound_date, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(scheme_id, sku_code) DO UPDATE SET wac_history_id = excluded.wac_history_id, value = excluded.value, currency = excluded.currency, warehouse = excluded.warehouse, ci_no = excluded.ci_no, version_no = excluded.version_no, confirmed_at = excluded.confirmed_at, last_inbound_date = excluded.last_inbound_date, updated_by = excluded.updated_by, updated_at = datetime('now')", [genId('pslc'), scheme.id, skuCode, landingCost.wac_history_id, landingCost.value, landingCost.currency, landingCost.warehouse, landingCost.ci_no, landingCost.version_no, landingCost.confirmed_at, landingCost.last_inbound_date, actor && actor.id || 'system']);
+        updated++;
+      });
+      if (updated || cleared) {
+        const note = String(reason || 'WAC auto sync') + ': updated ' + updated + ' SKU(s), cleared ' + cleared + ' invalid cost(s)';
+        const versionNo = createSnapshotVersion(scheme.id, actor || { id: 'system', name: 'System' }, note);
+        summary.schemes_updated++;
+        summary.sku_updated += updated;
+        summary.sku_cleared += cleared;
+        summary.versions.push({ scheme_id: scheme.id, version_no: versionNo, updated, cleared });
+      }
+    });
+    return summary;
+  };
+}
+
 function registerPriceSystemRoutes(app, deps) {
   const {
     query, queryOne, run, transaction, genId,
@@ -38,6 +155,7 @@ function registerPriceSystemRoutes(app, deps) {
   const canRead = requirePricePermissions(false);
   const canWrite = requirePricePermissions(true);
   const canViewWac = requireApiPermission('inbound_view');
+  const syncPriceSystemLandingCostsForWacKeys = createPriceSystemWacSync(deps);
 
   function schemeAccess(req, res, scheme) {
     if (!scheme) {
@@ -346,6 +464,8 @@ function registerPriceSystemRoutes(app, deps) {
         [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(req.body.notes || ''), req.currentUserId || '']
       );
       createVersion(id, userStamp(req), '创建价格方案');
+      const schemeSkuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || brand, country }));
+      syncPriceSystemLandingCostsForWacKeys(schemeSkuKeys, userStamp(req), 'New price scheme initial WAC sync');
       res.json(getSchemeOrNull(id));
     } catch (e) {
       res.status(500).json({ error: e.message || '创建价格方案失败' });
@@ -642,4 +762,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, parseCategories, isCategoryApplicable };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable };

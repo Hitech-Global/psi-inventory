@@ -26,6 +26,7 @@ Module._resolveFilename = function(request, parent, isMain, options) {
 
 const db = require('../db');
 const { query, run, getDB } = db;
+const { ensurePriceSystemSchema } = require('../migrations/price-system');
 const { app, validateWacHistoryImportRows } = require('../server');
 
 let AUTH_TOKEN = '';
@@ -34,6 +35,12 @@ function setupSchema() {
   const d = getDB();
   d.exec('PRAGMA foreign_keys=OFF;');
   d.exec(`
+    DROP TABLE IF EXISTS price_system_srp_values;
+    DROP TABLE IF EXISTS price_system_landing_costs;
+    DROP TABLE IF EXISTS price_system_versions;
+    DROP TABLE IF EXISTS price_system_values;
+    DROP TABLE IF EXISTS price_system_fields;
+    DROP TABLE IF EXISTS price_system_schemes;
     DROP TABLE IF EXISTS wac_fx_snapshot_corrections;
     DROP TABLE IF EXISTS wac_history;
     DROP TABLE IF EXISTS inventory;
@@ -182,6 +189,8 @@ function setupSchema() {
     );
   `);
   d.exec('PRAGMA foreign_keys=ON;');
+  // WAC history import now also exercises the automatic price-system sync hook.
+  ensurePriceSystemSchema(run, false);
 
   run('INSERT INTO skus (sku_code,brand,model) VALUES (?,?,?)', ['NT-HISTORY-01','Netac','SSD A']);
   run('INSERT INTO skus (sku_code,brand,model) VALUES (?,?,?)', ['NT-HISTORY-02','Netac','SSD B']);

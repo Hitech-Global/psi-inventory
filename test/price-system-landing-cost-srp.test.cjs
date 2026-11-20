@@ -10,8 +10,8 @@ const api = fs.readFileSync(path.join(root, 'price-system-api.js'), 'utf8');
 test('price table removes Product Name and adds WAC-backed Landing Cost', () => {
   assert.doesNotMatch(ui, /tr\('product'\)|product_name/);
   assert.match(ui, /tr\('landingCost'\)/);
-  assert.match(ui, /psOpenWacSyncModal/);
-  assert.match(ui, /landing-cost\/sync-wac/);
+  assert.doesNotMatch(ui, /psOpenWacSyncModal|psConfirmWacSync|landing-cost\/sync-wac/);
+  assert.match(api, /createPriceSystemWacSync/);
   assert.match(api, /price_system_landing_costs/);
   assert.match(api, /wacCountryAliases/);
 });
@@ -154,10 +154,8 @@ test('Landing Cost is synced in bulk by SKU using the latest valid WAC, with pre
   assert.equal(landingWrites.length,2);assert.ok(landingWrites.some(x=>x.params.includes('wac-1-new')));assert.ok(landingWrites.some(x=>x.params.includes('wac-2-new')));assert.ok(!landingWrites.some(x=>x.params.includes('SKU-3')));
 });
 
-test('price system provides a reusable Excel template and batch-only WAC sync', () => {
-  assert.ok(ui.includes('psOpenWacSyncModal'));
-  assert.ok(ui.includes('landing-cost/sync-wac'));
-  assert.doesNotMatch(ui,/psOpenLandingCostModal|psSelectLandingCost|psClearLandingCost/);
+test('price system provides an Excel template without requiring manual WAC sync', () => {
+  assert.doesNotMatch(ui,/psOpenWacSyncModal|psConfirmWacSync|landing-cost\/sync-wac/);
   assert.ok(ui.includes('psDownloadImportTemplate'));
   assert.ok(ui.includes("book_append_sheet(wb,ws,tr('downloadTemplate'))"));
   assert.ok(ui.includes("book_append_sheet(wb,note,tr('templateInstructions'))"));
