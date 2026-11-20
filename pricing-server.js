@@ -196,8 +196,9 @@ function registerPricingRoutes(app, deps) {
       let formulaError = '';
       if (String(scheme.srp_formula || '').trim()) {
         try {
-          if (/\\bFOB_RMB\\b/i.test(scheme.srp_formula) && (fob === null || fob <= 0)) throw new Error('FOB-RMB 尚未维护');
-          if (/\\b(?:RMB_TO_LOCAL|EXCHANGE_RATE)\\b/i.test(scheme.srp_formula) && !(safeNumber(scheme.exchange_rate, 0) > 0)) throw new Error('请先设置人民币兑本币汇率');
+          const formulaUpper = String(scheme.srp_formula).toUpperCase();
+          if (formulaUpper.includes('FOB_RMB') && (fob === null || fob <= 0)) throw new Error('FOB-RMB 尚未维护');
+          if ((formulaUpper.includes('RMB_TO_LOCAL') || formulaUpper.includes('EXCHANGE_RATE')) && !(safeNumber(scheme.exchange_rate, 0) > 0)) throw new Error('请先设置人民币兑本币汇率');
           srp = core.evaluateFormula(scheme.srp_formula, context);
           context.SRP = srp;
           context.SRP_LOCAL = srp;
