@@ -11,8 +11,8 @@ test('empty category rules apply to every SKU', () => {
 
 test('category rules only apply to selected SKU categories', () => {
   const field = { applicable_categories: JSON.stringify(['Main Unit', 'Mounts']) };
-  assert.equal(isCategoryApplicable(field, { category: 'Main Unit' }), true);
-  assert.equal(isCategoryApplicable(field, { category: 'Mounts' }), true);
-  assert.equal(isCategoryApplicable(field, { category: 'Accessories' }), false);
-  assert.equal(isCategoryApplicable(field, { category: '' }), false);
+  assert.equal(isCategoryApplicable(field, 'Main Unit'), true);
+  assert.equal(isCategoryApplicable(field, 'Mounts'), true);
+  assert.equal(isCategoryApplicable(field, 'Accessories'), false);
+  assert.equal(isCategoryApplicable(field, ''), false);
 });
