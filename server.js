@@ -26,6 +26,8 @@ const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
+const priceSystemApi = require('./price-system-api');
+const syncPriceSystemLandingCostsForWacKeys = priceSystemApi.createPriceSystemWacSync({ query, queryOne, run, genId });
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
 const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
 const { importProformaInvoicesPg } = require('./wave2b-pi-batch-import-pg.js'); // Wave 2B: PI batch-import PG async path
@@ -1290,6 +1292,10 @@ if (require.main === module) {
       run, (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg'
     );
     console.log('[STARTUP] price_system tables ready ✓');
+    const startupPriceWacKeys = query("SELECT DISTINCT s.sku_code, s.brand, ps.country FROM price_system_schemes ps INNER JOIN skus s ON LOWER(s.brand) = LOWER(ps.brand) WHERE ps.status = 'active'", []).rows;
+    let startupPriceWacSync = null;
+    transaction(() => { startupPriceWacSync = syncPriceSystemLandingCostsForWacKeys(startupPriceWacKeys, { id: 'system', name: 'System' }, 'Startup WAC reconciliation'); });
+    console.log('[STARTUP] Price-system Landing Cost WAC auto-sync complete', JSON.stringify(startupPriceWacSync));
   } catch (e) {
     console.error('\n[FATAL] 价格体系数据库迁移失败:', e.message);
     console.error(e.stack);
@@ -2021,7 +2027,7 @@ function adaptScopeToLots(dsfInv) {
 app.use('/api', apiAuth);
 
 // 价格体系 API：独立维护国家/品牌/平台/店铺价格配置，不改动库存与 WAC 业务逻辑。
-require('./price-system-api').registerPriceSystemRoutes(app, {
+priceSystemApi.registerPriceSystemRoutes(app, {
   query, queryOne, run, transaction, genId, requireApiPermission, asyncHandler, needsDataScopeFilter
 });
 
@@ -11521,6 +11527,7 @@ async function reverseCiCorePg(req, res) {
         [ci.country, ci.target_warehouse, ci.id]);
 
       // W1-10. WAC 解锁（守卫触发器放行本事务；legacy 的 DISABLE/ENABLE DDL 已类别性消除）
+      const wacPriceSyncKeys = await aq('SELECT DISTINCT sku_code, country, brand FROM wac_history WHERE ci_id = ?', [ci.id]);
       await run(`UPDATE wac_history SET is_locked = 0, confirmation_status = 'reversed' WHERE ci_id = ?`, [ci.id]);
 
       // W1-11. 回退成本分摊（与 legacy 同一 SQL）
@@ -11598,9 +11605,13 @@ async function reverseCiCorePg(req, res) {
       const ciRemark = (ci.remark ? ci.remark + '\n' : '') + `[冲销 ${ts} by ${operatorName}]`;
       await run(`UPDATE commercial_invoices SET ci_status = 'reversed', wac_confirmed = 0, wac_version_id = '', cost_confirmed = 0, cost_allocated = 0, original_inventory_imported = 0, remark = ?, updated_at = datetime('now') WHERE id = ?`, [ciRemark, ci.id]);
 
-      return { status: 200, body: { success: true, id: ci.id, ci_no: ci.ci_no }, oldCiStatus: ci.ci_status };
+      return { status: 200, body: { success: true, id: ci.id, ci_no: ci.ci_no }, oldCiStatus: ci.ci_status, wacPriceSyncKeys };
     });
 
+    if (Array.isArray(outcome.wacPriceSyncKeys) && outcome.wacPriceSyncKeys.length) {
+      try { transaction(() => syncPriceSystemLandingCostsForWacKeys(outcome.wacPriceSyncKeys, { id: operatorId, name: operatorName }, 'CI reversal WAC reconciliation')); }
+      catch (syncError) { console.error('[CI-REVERSE] price-system WAC auto-sync failed after CI commit:', syncError && syncError.message || syncError); }
+    }
     res.status(outcome.status).json(outcome.body);
 
     if (outcome.status === 200) {
@@ -11695,6 +11706,7 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
         run('DROP TRIGGER IF EXISTS trg_wac_history_block_update');
         run('DROP TRIGGER IF EXISTS trg_wac_history_block_delete');
       }
+      const wacPriceSyncKeys = query('SELECT DISTINCT sku_code, country, brand FROM wac_history WHERE ci_id = ?', [ci.id]).rows;
       run('UPDATE wac_history SET is_locked = 0, confirmation_status = \'reversed\' WHERE ci_id = ?', [ci.id]);
       if (_isPg) {
         run('ALTER TABLE wac_history ENABLE TRIGGER trg_wac_history_block_update');
@@ -11703,6 +11715,7 @@ app.post('/api/commercial-invoices/:id/reverse', requireApiPermission('ci_edit')
         run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_update BEFORE UPDATE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_UPDATE_FORBIDDEN\'); END');
         run('CREATE TRIGGER IF NOT EXISTS trg_wac_history_block_delete BEFORE DELETE ON wac_history WHEN OLD.is_locked = 1 BEGIN SELECT RAISE(ABORT, \'LOCKED_WAC_HISTORY_DELETE_FORBIDDEN\'); END');
       }
+      syncPriceSystemLandingCostsForWacKeys(wacPriceSyncKeys, { id: operatorId, name: operatorName }, 'CI reversal WAC reconciliation');
 
       // 6. 回退成本分摊 — 标记 reversed 并清除 ci_id 关联
       // PG 兼容：NULL || 'text' = NULL，需 COALESCE 防止丢失原值
@@ -20307,7 +20320,8 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
         wacSyncKeys.push({
           sku_code: alloc.sku_code,
           country: origInv.country || '',
-          warehouse: origInv.warehouse || ''
+          warehouse: origInv.warehouse || '',
+          brand: ci.brand || (skuInfo ? (skuInfo.brand || '') : '')
         });
 
         // 更新分摊记录的原库存信息（不改 inventory）
@@ -20325,6 +20339,7 @@ app.post('/api/cost-allocation/update-weighted-avg/:ci_id', requireApiPermission
       if (logs.length !== allocations.length) {
         throw new Error('WAC 确认 SKU 数量不一致，已整体回滚');
       }
+      syncPriceSystemLandingCostsForWacKeys(wacSyncKeys, { id: req.currentUserId || '', name: userName }, 'WAC confirmation');
       syncInventoryWacFromHistory(wacSyncKeys);
       // 注意：不再写入 wac_version_id（P1-03-C 已废弃一对一版本关联）
       run('UPDATE commercial_invoices SET wac_confirmed = 1, wac_confirmed_at = datetime(\'now\'), wac_confirmed_by = ? WHERE id = ?', [req.currentUserId || userName, ci.id]);
@@ -20486,10 +20501,12 @@ app.post('/api/wac/history-import', requireApiPermission('ci_edit'), asyncHandle
         syncKeys.push({
           sku_code: item.sku_code,
           country: item.country,
-          warehouse: item.warehouse
+          warehouse: item.warehouse,
+          brand: item.brand
         });
         inserted++;
       });
+      syncPriceSystemLandingCostsForWacKeys(syncKeys, { id: userId, name: '' }, 'WAC history import');
       syncInventoryWacFromHistory(syncKeys);
     });
 
@@ -20827,7 +20844,8 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
         wacSyncKeys.push({
           sku_code: skuCode,
           country: item.country,
-          warehouse: item.warehouse
+          warehouse: item.warehouse,
+          brand: ci ? (ci.brand || '') : (skuInfo ? (skuInfo.brand || '') : '')
         });
 
         logs.push({
@@ -20841,6 +20859,7 @@ app.post('/api/wac/confirm/:logistics_batch_id', requireApiPermission('ci_edit')
           new_avg_cost: roundedAvgCost
         });
       }
+      syncPriceSystemLandingCostsForWacKeys(wacSyncKeys, { id: req.currentUserId || '', name: userName }, 'WAC confirmation');
       syncInventoryWacFromHistory(wacSyncKeys);
       // WAC history remains the source of truth; keep the CI summary flag synchronized as a projection.
       run("UPDATE commercial_invoices SET wac_confirmed=1, wac_confirmed_at=datetime('now'), wac_confirmed_by=? WHERE id=?",
