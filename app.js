@@ -16860,9 +16860,9 @@ async function wacConfirm(batchId){
     items.forEach((it,i)=>{const k=String(it.sku_code);if(!(k in skuIndex))skuIndex[k]=i;});
     window._wacSkuIndex=skuIndex;
 
-    let wacCcCandidates=[];let wacCcLoadError='';let wacNotificationRecords={logs:[]};
-    if(blockers.length===0&&!m.already_confirmed){try{wacCcCandidates=await api('/api/wac/cc-candidates');}catch(e){wacCcLoadError=e.message||'抄送人员列表加载失败';}}
-    else if(m.already_confirmed){try{wacNotificationRecords=await api('/api/wac/notifications/'+encodeURIComponent(batchId));}catch(e){wacNotificationRecords={logs:[],error:e.message||'通知记录加载失败'};}}
+    // Feishu recipients/history are auxiliary UI data. They must not delay the WAC cost preview.
+    const wacPreviewLoadToken=(window.__wacPreviewLoadToken||0)+1;
+    window.__wacPreviewLoadToken=wacPreviewLoadToken;
 
     // ── Blocker panel (if any) ──
     let blockerHtml='';
@@ -17018,10 +17018,9 @@ async function wacConfirm(batchId){
     if(blockers.length===0&&!m.already_confirmed){
       notificationSectionHtml='<div class="detail-section" id="wac-cc-section"><h3>成本变动通知</h3>'+
         '<div style="font-size:12px;color:var(--text-secondary);margin-bottom:8px">选择需要接收本次 WAC 成本变动报告的飞书人员，可多选；不选择则只确认 WAC、不发送通知。</div>'+
-        (wacCcLoadError?'<div style="font-size:12px;color:#cf1322;margin-bottom:8px">抄送人员加载失败：'+esc(wacCcLoadError)+'。不影响 WAC 确认。</div>':'')+
-        '<div class="cc-list" id="wac-cc-list">'+userChecklist(wacCcCandidates,[],'wac-cc-cb')+'</div></div>';
+        '<div class="cc-list" id="wac-cc-list"><span style="font-size:12px;color:var(--text-secondary)">正在加载抄送人员…</span></div></div>';
     }else if(m.already_confirmed){
-      notificationSectionHtml='<div class="detail-section"><h3>成本变动通知记录</h3><div id="wac-notification-history">'+renderWacNotificationHistory(wacNotificationRecords,batchId)+'</div></div>';
+      notificationSectionHtml='<div class="detail-section"><h3>成本变动通知记录</h3><div id="wac-notification-history"><span style="font-size:12px;color:var(--text-secondary)">正在加载通知记录…</span></div></div>';
     }
     const head='<div class="form-card" style="box-shadow:none;padding:0;display:flex;flex-direction:column;overflow:visible">'+
       batchInfo+blockerHtml+costFactsHtml+skuTableHtml+notificationSectionHtml+
@@ -17038,6 +17037,30 @@ async function wacConfirm(batchId){
       footerBtns,
     'modal-wac');
     if(blockers.length===0&&!m.already_confirmed) wacValidateInputs();
+
+    // Optional Feishu recipient list loads after the modal is visible; failures never block WAC.
+    if(blockers.length===0&&!m.already_confirmed){
+      Promise.resolve().then(function(){return api('/api/wac/cc-candidates');}).then(function(users){
+        if(window.__wacPreviewLoadToken!==wacPreviewLoadToken)return;
+        const target=document.getElementById('wac-cc-list');
+        if(target)target.innerHTML=userChecklist(Array.isArray(users)?users:[],[],'wac-cc-cb');
+      }).catch(function(e){
+        if(window.__wacPreviewLoadToken!==wacPreviewLoadToken)return;
+        const target=document.getElementById('wac-cc-list');
+        if(target)target.innerHTML='<span style="font-size:12px;color:#cf1322">抄送人员加载失败：'+esc(e&&e.message||'未知错误')+'。不影响 WAC 确认。</span>';
+      });
+    }else if(m.already_confirmed){
+      window._wacNotificationRetryBatchId=String(batchId||'');
+      Promise.resolve().then(function(){return api('/api/wac/notifications/'+encodeURIComponent(batchId));}).then(function(data){
+        if(window.__wacPreviewLoadToken!==wacPreviewLoadToken)return;
+        const target=document.getElementById('wac-notification-history');
+        if(target)target.innerHTML=renderWacNotificationHistory(data,batchId);
+      }).catch(function(e){
+        if(window.__wacPreviewLoadToken!==wacPreviewLoadToken)return;
+        const target=document.getElementById('wac-notification-history');
+        if(target)target.innerHTML=renderWacNotificationHistory({logs:[],error:e&&e.message||'通知记录加载失败'},batchId);
+      });
+    }
   }catch(e){showToast(e.message,'danger')}
 }
 

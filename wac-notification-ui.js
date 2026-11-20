@@ -118,16 +118,29 @@
   var originalWacConfirm = window.wacConfirm;
   if (typeof originalWacConfirm === 'function') {
     window.wacConfirm = async function (batchId) {
+      // Wait only for the core WAC preview/modal. Feishu group options are auxiliary
+      // and load in the background so a slow Feishu endpoint cannot hold the row action.
       await originalWacConfirm.apply(this, arguments);
       var section = document.getElementById('wac-cc-section');
       if (!section || section.querySelector('#wac-cc-group-list')) return;
+      var groupRequest;
       try {
-        var data = await window.api('/api/wac/cc-groups');
-        section.insertAdjacentHTML('beforeend', renderGroupSection(data && data.groups, 'wac-cc-group-list', 'wac-cc-group-cb'));
-        localizeWacCc(section);
+        groupRequest = window.api('/api/wac/cc-groups');
       } catch (error) {
         section.insertAdjacentHTML('beforeend', '<div class="wac-mac-cc-inline" style="color:#c33">群组列表加载失败：' + html(error && error.message || error) + '</div>');
+        return;
       }
+      Promise.resolve(groupRequest).then(function (data) {
+        var currentSection = document.getElementById('wac-cc-section');
+        if (!currentSection || currentSection.querySelector('#wac-cc-group-list')) return;
+        currentSection.insertAdjacentHTML('beforeend', renderGroupSection(data && data.groups, 'wac-cc-group-list', 'wac-cc-group-cb'));
+        localizeWacCc(currentSection);
+      }).catch(function (error) {
+        var currentSection = document.getElementById('wac-cc-section');
+        if (currentSection && !currentSection.querySelector('#wac-cc-group-list')) {
+          currentSection.insertAdjacentHTML('beforeend', '<div class="wac-mac-cc-inline" style="color:#c33">群组列表加载失败：' + html(error && error.message || error) + '</div>');
+        }
+      });
     };
   }
 
