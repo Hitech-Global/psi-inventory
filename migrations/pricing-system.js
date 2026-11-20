@@ -50,7 +50,7 @@ function ensurePricingTables(db) {
     'updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(scheme_id, sku_code, field_key))');
 
   run('CREATE TABLE IF NOT EXISTS pricing_scheme_versions (' +
-    'id TEXT PRIMARY KEY, scheme_id TEXT NOT NULL, version_no INTEGER NOT NULL, change_summary TEXT DEFAULT '', ' +
+    "id TEXT PRIMARY KEY, scheme_id TEXT NOT NULL, version_no INTEGER NOT NULL, change_summary TEXT DEFAULT '', " +
     'snapshot_json TEXT NOT NULL, created_by TEXT DEFAULT \'\', created_at TEXT DEFAULT CURRENT_TIMESTAMP, ' +
     'UNIQUE(scheme_id, version_no))');
 
