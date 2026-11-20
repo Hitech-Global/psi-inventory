@@ -168,7 +168,9 @@ function calculateRuleValue(rule, context) {
   const vars = context || {};
   const type = String(rule.calculation_type || 'manual').toLowerCase();
   let value = null;
-  if (type === 'fixed' || type === 'manual') {
+  if (type === 'rate') {
+    value = Number(rule.rate || 0);
+  } else if (type === 'fixed' || type === 'manual') {
     if (rule.fixed_amount === '' || rule.fixed_amount == null) return null;
     value = Number(rule.fixed_amount);
   } else if (type === 'percentage' || type === 'capped') {
