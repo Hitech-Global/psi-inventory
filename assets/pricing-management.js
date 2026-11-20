@@ -20,6 +20,15 @@
     var item = (state.meta.currencies || []).find(function (c) { return String(c.code).toUpperCase() === String(state.scheme.currency || '').toUpperCase(); });
     return item && item.symbol ? item.symbol : (state.scheme.currency || '');
   }
+  function psCountryLabel(country) {
+    var item = (state.meta.countries || []).find(function (c) { return c.name === country; });
+    var code = item ? String(item.code || '').toUpperCase() : '';
+    if (code === 'ID') return psT('印度尼西亚', 'Indonesia', 'Indonesia');
+    if (code === 'MY') return psT('马来西亚', 'Malaysia', 'Malaysia');
+    if (code === 'TH') return psT('泰国', 'Thailand', 'Thailand');
+    if (code === 'SG') return psT('新加坡', 'Singapore', 'Singapura');
+    return country || '';
+  }
   function psNotify(message, type) {
     if (typeof showToast === 'function') showToast(message, type || 'info');
   }
@@ -95,7 +104,7 @@
     var schemes = state.schemes || [];
     var selected = state.scheme || schemes.find(function (s) { return s.id === state.selectedSchemeId; }) || {};
     var countryOptions = '<option value="">' + psEsc(psT('全部国家', 'All countries', 'Semua negara')) + '</option>' +
-      countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (selected.country === c.name ? 'selected' : '') + '>' + psEsc(c.name) + '</option>'; }).join('');
+      countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (selected.country === c.name ? 'selected' : '') + '' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('');
     var brandOptions = '<option value="">' + psEsc(psT('全部品牌', 'All brands', 'Semua merek')) + '</option>' +
       brands.map(function (b) { return '<option value="' + psEsc(b) + '" ' + (selected.brand === b ? 'selected' : '') + '>' + psEsc(b) + '</option>'; }).join('');
     var platforms = Array.from(new Set(schemes.map(function (s) { return s.platform; }).filter(Boolean)));
@@ -234,7 +243,7 @@
     if (!fields.length) return html + '<div class="ps-empty-inline">' + psEsc(psT('还没有费用字段，先添加一个字段。', 'No fee fields yet. Add your first field.', 'Belum ada kolom biaya.')) + '</div>';
     fields.forEach(function (field) {
       var list = rules.filter(function (r) { return r.field_id === field.id; });
-      html += '<div class="ps-field-card"><div class="ps-field-head"><div><strong>' + psEsc(field.field_name) + '</strong><span class="ps-field-meta">' + psEsc(field.group_type) + ' · ' + psEsc(field.value_type) + ' · ' + (Number(field.include_in_profit) ? psEsc(psT('计入利润', 'Deduct from profit', 'Dikurangi dari laba')) : psEsc(psT('仅展示', 'Display only', 'Hanya tampil'))) + '</span></div>' +
+      html += '<div class="ps-field-card"><div class="ps-field-head"><div><strong>' + psEsc(field.field_name) + '</strong><span class="ps-field-meta">' + psEsc(field.group_type) + ' · ' + psEsc(field.value_type) + ' · ' + (Number(field.include_in_profit) ? psEsc(psT('计入利润', 'Deduct from profit', 'Dikurangi dari laba')) : psEsc(psT('仅展示', 'Display only', 'Hanya tampil'))) + (Number(field.required_for_profit) ? ' · ' + psEsc(psT('利润必填', 'Required for profit', 'Wajib untuk laba')) : '') + '</span></div>' +
         '<div class="ps-field-actions"><button class="btn btn-secondary btn-sm" onclick="psOpenRuleModal(' + psArg(field.id) + ')">＋ ' + psEsc(psT('添加规则', 'Add rule', 'Tambah aturan')) + '</button><button class="btn btn-secondary btn-sm" onclick="psOpenFieldModal(' + psArg(field.id) + ')">' + psEsc(psT('编辑字段', 'Edit field', 'Edit kolom')) + '</button><button class="btn btn-ghost btn-sm" onclick="psDeactivateField(' + psArg(field.id) + ')">' + psEsc(psT('停用', 'Disable', 'Nonaktifkan')) + '</button></div></div>';
       if (!list.length) html += '<div class="ps-rule-empty">' + psEsc(psT('暂无规则。可以在价格明细中按 SKU 手动维护，也可以在这里建立类目规则。', 'No rules yet. Enter SKU overrides in Price details or create category rules here.', 'Belum ada aturan.')) + '</div>';
       list.forEach(function (rule) {
@@ -265,7 +274,7 @@
     var s = state.scheme;
     var currencies = state.meta.currencies || [];
     return '<div class="ps-config-card"><div class="ps-section-head"><div><h3>' + psEsc(psT('方案基本信息', 'Scheme details', 'Detail skema')) + '</h3><p>' + psEsc(psT('每个国家、品牌、平台和店铺组合独立维护。', 'Each country, brand, platform and store combination is maintained independently.', 'Setiap kombinasi negara, merek, platform, dan toko dikelola terpisah.')) + '</p></div></div>' +
-      '<div class="ps-form-grid"><label class="ps-form-label">' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-set-country" class="ps-input">' + (state.meta.countries || []).map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (c.name === s.country ? 'selected' : '') + '>' + psEsc(c.name) + '</option>'; }).join('') + '</select></label>' +
+      '<div class="ps-form-grid"><label class="ps-form-label">' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-set-country" class="ps-input">' + (state.meta.countries || []).map(function (c) { return '<option value="' + psEsc(c.name) + '" ' + (c.name === s.country ? 'selected' : '') + '' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
       '<label class="ps-form-label">' + psEsc(psT('品牌', 'Brand', 'Merek')) + '<select id="ps-set-brand" class="ps-input">' + (state.meta.brands || []).map(function (b) { return '<option value="' + psEsc(b) + '" ' + (b === s.brand ? 'selected' : '') + '>' + psEsc(b) + '</option>'; }).join('') + '</select></label>' +
       '<label class="ps-form-label">' + psEsc(psT('电商平台', 'Platform', 'Platform')) + '<input id="ps-set-platform" class="ps-input" value="' + psEsc(s.platform) + '"></label>' +
       '<label class="ps-form-label">' + psEsc(psT('店铺', 'Store', 'Toko')) + '<input id="ps-set-store" class="ps-input" value="' + psEsc(s.store || '') + '" placeholder="' + psEsc(psT('可选，不填代表全部店铺', 'Optional; blank means all stores', 'Opsional')) + '"></label>' +
@@ -326,7 +335,7 @@
     var countries = state.meta.countries || [];
     var brands = state.meta.brands || [];
     var currencies = state.meta.currencies || [];
-    var html = '<div class="ps-modal-grid"><label>' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-new-country" class="ps-input">' + countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" data-currency="' + psEsc(c.default_currency || '') + '">' + psEsc(c.name) + '</option>'; }).join('') + '</select></label>' +
+    var html = '<div class="ps-modal-grid"><label>' + psEsc(psT('国家', 'Country', 'Negara')) + '<select id="ps-new-country" class="ps-input">' + countries.map(function (c) { return '<option value="' + psEsc(c.name) + '" data-currency="' + psEsc(c.default_currency || '') + '"' + psEsc(psCountryLabel(c.name)) + '</option>'; }).join('') + '</select></label>' +
       '<label>' + psEsc(psT('品牌', 'Brand', 'Merek')) + '<select id="ps-new-brand" class="ps-input">' + brands.map(function (b) { return '<option value="' + psEsc(b) + '">' + psEsc(b) + '</option>'; }).join('') + '</select></label>' +
       '<label>' + psEsc(psT('电商平台', 'Platform', 'Platform')) + '<input id="ps-new-platform" class="ps-input" placeholder="Shopee / TikTok Shop"></label>' +
       '<label>' + psEsc(psT('店铺（可选）', 'Store (optional)', 'Toko (opsional)')) + '<input id="ps-new-store" class="ps-input" placeholder="' + psEsc(psT('留空代表全部店铺', 'Blank means all stores', 'Kosong berarti semua toko')) + '"></label>' +
@@ -371,7 +380,8 @@
       '<label>' + psEsc(psT('数值类型', 'Value type', 'Jenis nilai')) + '<select id="ps-field-type" class="ps-input"><option value="currency" ' + (field.value_type !== 'percent' && field.value_type !== 'number' ? 'selected' : '') + '>' + psEsc(psT('金额', 'Currency amount', 'Nominal')) + '</option><option value="percent" ' + (field.value_type === 'percent' ? 'selected' : '') + '>百分比 (%)</option><option value="number" ' + (field.value_type === 'number' ? 'selected' : '') + '>' + psEsc(psT('数字', 'Number', 'Angka')) + '</option></select></label>' +
       '<label>' + psEsc(psT('默认计算方式', 'Default calculation', 'Perhitungan default')) + '<select id="ps-field-calc" class="ps-input"><option value="manual" ' + (field.calculation_type !== 'formula' ? 'selected' : '') + '>' + psEsc(psT('手动填写/规则匹配', 'Manual / rule based', 'Manual / berdasarkan aturan')) + '</option><option value="formula" ' + (field.calculation_type === 'formula' ? 'selected' : '') + '>' + psEsc(psT('公式计算', 'Formula', 'Rumus')) + '</option></select></label>' +
       '<label class="ps-form-wide">' + psEsc(psT('公式（仅公式计算时填写）', 'Formula (for formula calculation)', 'Rumus')) + '<input id="ps-field-formula" class="ps-input" value="' + psEsc(field.formula || '') + '" placeholder="FOB_RMB * (1 + PPN / 100)"></label>' +
-      '<label class="ps-checkbox-label"><input id="ps-field-profit" type="checkbox" ' + (Number(field.include_in_profit) !== 0 ? 'checked' : '') + '> ' + psEsc(psT('计入利润扣减', 'Deduct from profit', 'Kurangi laba')) + '</label></div>';
+      '<label class="ps-checkbox-label"><input id="ps-field-profit" type="checkbox" ' + (Number(field.include_in_profit) !== 0 ? 'checked' : '') + '> ' + psEsc(psT('计入利润扣减', 'Deduct from profit', 'Kurangi laba')) + '</label>' +
+      '<label class="ps-checkbox-label"><input id="ps-field-required" type="checkbox" ' + (Number(field.required_for_profit) === 1 ? 'checked' : '') + '> ' + psEsc(psT('利润计算必填（缺失时不计算利润）', 'Required for profit calculation', 'Wajib untuk perhitungan laba')) + '</label></div>';
     openModal(isEdit ? psT('编辑费用字段', 'Edit fee field', 'Edit kolom biaya') : psT('添加费用字段', 'Add fee field', 'Tambah kolom biaya'), html,
       '<button class="btn btn-secondary" onclick="closeModal()">' + psEsc(psT('取消', 'Cancel', 'Batal')) + '</button><button class="btn btn-primary" onclick="psSaveField(' + psArg(fieldId || '') + ')">' + psEsc(psT('保存', 'Save', 'Simpan')) + '</button>');
   }
@@ -384,7 +394,8 @@
         value_type: document.getElementById('ps-field-type').value,
         calculation_type: document.getElementById('ps-field-calc').value,
         formula: document.getElementById('ps-field-formula').value,
-        include_in_profit: document.getElementById('ps-field-profit').checked
+        include_in_profit: document.getElementById('ps-field-profit').checked,
+        required_for_profit: document.getElementById('ps-field-required').checked
       };
       var url = '/api/pricing/schemes/' + encodeURIComponent(state.scheme.id) + '/fields' + (fieldId ? '/' + encodeURIComponent(fieldId) : '');
       await api(url, fieldId ? 'PUT' : 'POST', body);
