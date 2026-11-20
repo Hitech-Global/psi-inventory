@@ -57,6 +57,10 @@
   async function psLoadScheme(id) {
     state.loading = true;
     state.selectedSchemeId = id;
+    state.scheme = (state.schemes || []).find(function (item) { return item.id === id; }) || state.scheme;
+    state.details = null;
+    state.rows = [];
+    state.rowsResult = null;
     psRender();
     try {
       var result = await Promise.all([
@@ -501,6 +505,15 @@
     } catch (error) { psNotify(error.message, 'danger'); }
   }
 
+  async function psActivateRule(ruleId) {
+    try {
+      await api('/api/pricing/schemes/' + encodeURIComponent(state.scheme.id) + '/rules/' + encodeURIComponent(ruleId), 'PUT', { status: 'active' });
+      await psLoadScheme(state.scheme.id);
+      state.tab = 'rules'; psRender();
+      psNotify(psT('费用规则已启用', 'Fee rule enabled', 'Aturan biaya diaktifkan'), 'success');
+    } catch (error) { psNotify(error.message, 'danger'); }
+  }
+
   function psEditValue(skuCode, fieldKey, value, valueType) {
     var label = fieldKey === 'FOB_RMB' ? 'FOB-RMB' : ((state.details.fields || []).find(function (f) { return f.field_key === fieldKey; }) || {}).field_name || fieldKey;
     var html = '<div class="ps-modal-grid"><label class="ps-form-wide">' + psEsc(psT('SKU', 'SKU', 'SKU')) + '<input class="ps-input" value="' + psEsc(skuCode) + '" disabled></label>' +
@@ -713,6 +726,7 @@
   window.psRuleScopeChanged = psRuleScopeChanged;
   window.psSaveRule = psSaveRule;
   window.psDeactivateRule = psDeactivateRule;
+  window.psActivateRule = psActivateRule;
   window.psEditValue = psEditValue;
   window.psSaveValue = psSaveValue;
   window.psEditSku = psEditSku;
