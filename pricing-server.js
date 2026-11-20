@@ -474,7 +474,10 @@ function registerPricingRoutes(app, deps) {
       return res.status(400).json({ error: '该 SKU 不属于当前方案品牌' });
     }
     const calculationType = ['manual', 'fixed', 'rate', 'percentage', 'capped', 'formula'].includes(String(body.calculation_type)) ? String(body.calculation_type) : 'manual';
-    if (calculationType === 'formula' && !String(body.formula || '').trim()) return res.status(400).json({ error: '公式不能为空' });
+    if (calculationType === 'formula') {
+      if (!String(body.formula || '').trim()) return res.status(400).json({ error: '公式不能为空' });
+      try { validateFormula(scheme.id, String(body.formula)); } catch (error) { return res.status(400).json({ error: '费用公式校验失败：' + error.message }); }
+    }
     const id = genId('prule');
     const now = new Date().toISOString();
     run('INSERT INTO pricing_rules (id, scheme_id, field_id, scope_type, scope_value, calculation_type, basis, rate, fixed_amount, cap_amount, floor_amount, formula, currency, per_order, items_per_order, priority, status, effective_from, effective_to, created_by, updated_by, created_at, updated_at) ' +
@@ -497,8 +500,14 @@ function registerPricingRoutes(app, deps) {
     const scopeType = ['global', 'category', 'sku'].includes(String(body.scope_type)) ? String(body.scope_type) : rule.scope_type;
     const scopeValue = String(body.scope_value === undefined ? rule.scope_value : body.scope_value || '').trim();
     if (scopeType !== 'global' && !scopeValue) return res.status(400).json({ error: '请选择适用类目或 SKU' });
+    if (scopeType === 'category' && scopeValue !== '__UNCATEGORIZED__' && !queryOne('SELECT sku_code FROM skus WHERE brand = ? AND category = ? LIMIT 1', [scheme.brand, scopeValue])) return res.status(400).json({ error: '该产品类目不属于当前方案的 SKU 主数据' });
+    if (scopeType === 'sku' && !queryOne('SELECT sku_code FROM skus WHERE brand = ? AND sku_code = ?', [scheme.brand, scopeValue])) return res.status(400).json({ error: '该 SKU 不属于当前方案品牌' });
     const calculationType = ['manual', 'fixed', 'rate', 'percentage', 'capped', 'formula'].includes(String(body.calculation_type)) ? String(body.calculation_type) : rule.calculation_type;
-    if (calculationType === 'formula' && !String(body.formula === undefined ? rule.formula : body.formula || '').trim()) return res.status(400).json({ error: '公式不能为空' });
+    if (calculationType === 'formula') {
+      const formula = String(body.formula === undefined ? rule.formula : body.formula || '');
+      if (!formula.trim()) return res.status(400).json({ error: '公式不能为空' });
+      try { validateFormula(scheme.id, formula); } catch (error) { return res.status(400).json({ error: '费用公式校验失败：' + error.message }); }
+    }
     run('UPDATE pricing_rules SET scope_type = ?, scope_value = ?, calculation_type = ?, basis = ?, rate = ?, fixed_amount = ?, cap_amount = ?, floor_amount = ?, formula = ?, currency = ?, per_order = ?, items_per_order = ?, priority = ?, status = ?, effective_from = ?, effective_to = ?, updated_by = ?, updated_at = ? WHERE id = ? AND scheme_id = ?',
       [scopeType, scopeValue, calculationType, String(body.basis === undefined ? rule.basis : body.basis || 'SRP').toUpperCase(),
         safeNumber(body.rate === undefined ? rule.rate : body.rate, 0), safeNumber(body.fixed_amount === undefined ? rule.fixed_amount : body.fixed_amount, null),
