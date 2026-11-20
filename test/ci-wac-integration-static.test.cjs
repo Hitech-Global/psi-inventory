@@ -47,8 +47,8 @@ assert.ok(integrationSrc.includes("path === '/api/wac/cc-groups'"), 'WAC CC grou
 assert.ok(integrationSrc.includes('wac.cc_groups_timeout'), 'WAC CC group timeout must explain that it does not block confirmation');
 assert.ok(integrationSrc.includes('wac.notifications_timeout'), 'WAC notification-history reads must have timeout protection');
 assert.ok(integrationSrc.includes('wacDetailBusy'), 'WAC detail loading must reject duplicate in-flight actions');
-assert.ok(integrationSrc.includes('withWacApiTimeout(\n        global.api(\'/api/logistics-batches/'), 'logistics batch detail must have a direct per-step deadline');
-assert.ok(integrationSrc.includes('withWacApiTimeout(\n            global.api(\'/api/packing-lists/'), 'PL detail must have a direct per-step deadline');
+assert.ok(integrationSrc.includes('withWacApiTimeout(\n      global.api(\'/api/logistics-batches/'), 'logistics batch detail must have a direct per-step deadline');
+assert.ok(integrationSrc.includes('withWacApiTimeout(\n        global.api(\'/api/packing-lists/'), 'PL detail must have a direct per-step deadline');
 assert.ok(integrationSrc.includes('withWacApiTimeout(\n        global.wacConfirm(id)'), 'WAC preview must have a direct deadline independent of the API wrapper');
 assert.ok(ciSrc.includes('var watchdog = setTimeout(function ()'), 'WAC row action must have a last-resort watchdog');
 assert.ok(ciSrc.includes('WAC详情加载超过 60 秒'), 'WAC row action watchdog must show an actionable timeout message');
@@ -73,9 +73,16 @@ assert.ok(integrationSrc.includes('wac.refresh_timeout'), 'CI logistics refresh 
 assert.ok(indexSrc.includes('<script src="app.js"></script>'), 'WAC preview must use the latest cache-busted app script');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js?v=20261120-2'), 'WAC row action must use the latest cache-busted CI logistics script');
 assert.ok(indexSrc.includes('wac-notification-ui.js?v=20261120-2'), 'WAC group loader must use the latest cache-busted notification script');
-assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-2'), 'WAC submit integration must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/ci-wac-integration.js?v=20261120-3'), 'WAC submit integration must use the latest cache-busted asset');
 assert.ok(ciSrc.includes('runWacDetailAction'), 'WAC row actions must show loading state');
 assert.ok(ciSrc.includes('data-wac-loading'), 'WAC row actions must prevent duplicate clicks while loading');
+const viewStart = integrationSrc.indexOf('async function viewLogWacDetail(batchId, ciId, wacStatus, exclusionReason)');
+const viewEnd = integrationSrc.indexOf('var excludeContext = null;', viewStart);
+const viewSrc = integrationSrc.slice(viewStart, viewEnd);
+assert.ok(viewSrc.indexOf('global.wacConfirm(id)') < viewSrc.indexOf('loadWacLogisticsContext(id, ciId, seq)'), 'WAC cost preview must open before logistics/PL details load');
+assert.ok(viewSrc.includes('Do not await this'), 'supplementary logistics/PL detail loading must not block the WAC preview action');
+assert.ok(integrationSrc.includes('id="ci-wac-logistics-loading"'), 'WAC modal must show a placeholder while logistics/PL details load in the background');
+assert.ok(integrationSrc.includes('WAC成本预览不受影响'), 'logistics/PL detail failure must explicitly leave WAC preview usable');
 assert.ok(integrationSrc.includes('renderLogisticsDetail'), 'logistics detail content must be embedded in WAC detail');
 assert.ok((appSrc.match(/Number\(pd\.local_rate\)\.toFixed\(2\)/g) || []).length >= 2, 'freight payment FX rates must display two decimals in logistics detail and WAC preview');
 assert.ok(appSrc.includes('Number(fpf.effective_rate).toFixed(2)'), 'freight effective FX rate must display two decimals in logistics detail');
