@@ -5,6 +5,7 @@
   // The former operational/history compaction is obsolete. It scanned the whole
   // page after every DOM change and could block the browser while WAC was opening.
   // Keep only the display-only currency formatter; financial values are untouched.
+  // CI-SUMMARY-CURRENCY-LINES-20261119: preserve multi-currency line display and hide zero unpaid currencies.
 
   function formatCurrencyAmounts(markup, omitZero) {
     return String(markup || '').replace(/\b[A-Z]{3}\s+-?[\d,]+\.\d{2}(?:\s*·\s*[A-Z]{3}\s+-?[\d,]+\.\d{2})*/g, function (group) {
