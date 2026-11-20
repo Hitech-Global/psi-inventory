@@ -514,6 +514,19 @@ function registerPricingRoutes(app, deps) {
     res.json({ success: true, version: version });
   }));
 
+  app.delete('/api/pricing/schemes/:id/values/:skuCode/:fieldKey', requirePricingEdit, asyncHandler((req, res) => {
+    const scheme = requireScheme(req, res);
+    if (!scheme) return;
+    const skuCode = String(req.params.skuCode || '').trim();
+    const fieldKey = String(req.params.fieldKey || '').trim().toUpperCase();
+    if (!queryOne('SELECT sku_code FROM skus WHERE brand = ? AND sku_code = ?', [scheme.brand, skuCode])) {
+      return res.status(404).json({ error: 'SKU 不属于当前价格方案品牌' });
+    }
+    run('DELETE FROM pricing_sku_values WHERE scheme_id = ? AND sku_code = ? AND field_key = ?', [scheme.id, skuCode, fieldKey]);
+    const version = createVersion(scheme.id, '恢复 SKU 自动匹配：' + skuCode + ' / ' + fieldKey, req.currentUserId);
+    res.json({ success: true, version: version });
+  }));
+
   app.post('/api/pricing/schemes/:id/import', requirePricingEdit, asyncHandler((req, res) => {
     const scheme = requireScheme(req, res);
     if (!scheme) return;
@@ -549,13 +562,15 @@ function registerPricingRoutes(app, deps) {
     const scheme = requireScheme(req, res);
     if (!scheme) return;
     const formula = String(req.body && req.body.formula || '').trim();
+    const exchangeRateInput = req.body && req.body.exchange_rate !== undefined ? req.body.exchange_rate : scheme.exchange_rate;
+    const exchangeRate = safeNumber(exchangeRateInput, 0);
     if (formula) {
       try {
         const sample = queryOne('SELECT purchase_price_rmb FROM skus WHERE brand = ? ORDER BY sku_code LIMIT 1', [scheme.brand]);
         const variables = {
           FOB_RMB: safeNumber(sample && sample.purchase_price_rmb, 0),
-          RMB_TO_LOCAL: safeNumber(req.body.exchange_rate === undefined ? scheme.exchange_rate : req.body.exchange_rate, 0),
-          EXCHANGE_RATE: safeNumber(req.body.exchange_rate === undefined ? scheme.exchange_rate : req.body.exchange_rate, 0),
+          RMB_TO_LOCAL: exchangeRate,
+          EXCHANGE_RATE: exchangeRate,
           SRP: 0,
           LANDING_COST_CNY: 0,
           LANDING_COST_LOCAL: 0
@@ -567,8 +582,7 @@ function registerPricingRoutes(app, deps) {
       }
     }
     run('UPDATE pricing_schemes SET srp_formula = ?, exchange_rate = ?, updated_by = ?, updated_at = ? WHERE id = ?',
-      [formula, safeNumber(req.body && req.body.exchange_rate === undefined ? scheme.exchange_rate : req.body.exchange_rate, 0),
-        String(req.currentUserId || ''), new Date().toISOString(), scheme.id]);
+      [formula, exchangeRate, String(req.currentUserId || ''), new Date().toISOString(), scheme.id]);
     const version = createVersion(scheme.id, '修改 SRP 计算公式', req.currentUserId);
     res.json({ success: true, version: version });
   }));
