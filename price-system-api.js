@@ -253,6 +253,15 @@ function registerPriceSystemRoutes(app, deps) {
       if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和平台不能为空' });
       const countryRow = queryOne('SELECT id, default_currency FROM countries WHERE name = ? AND status = ?', [country, 'active']);
       if (!countryRow) return res.status(400).json({ error: '请选择有效国家' });
+      if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
+        const scope = req.currentUserDataScope || {};
+        if (Array.isArray(scope.countries) && scope.countries.length && !scope.countries.includes(countryRow.id)) {
+          return res.status(403).json({ error: '没有在该国家创建价格方案的权限' });
+        }
+        if (Array.isArray(scope.brands) && scope.brands.length && !scope.brands.includes(brand)) {
+          return res.status(403).json({ error: '没有在该品牌创建价格方案的权限' });
+        }
+      }
       const brandRow = queryOne('SELECT COUNT(*) AS count FROM skus WHERE brand = ?', [brand]);
       if (!brandRow || Number(brandRow.count || 0) === 0) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
       const duplicate = queryOne(
