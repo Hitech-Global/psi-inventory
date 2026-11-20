@@ -174,7 +174,26 @@ async function apiRaw(url,method='GET',body=null){
   if(r.status===401){doLogout();throw new Error(t('err.not_logged_in','未登录，请重新登录'))}
   if(r.status===403){showToast(t('err.no_permission_toast','没有操作权限'),'danger');throw new Error(t('err.no_permission','没有该操作的权限'))}
   let d;
-  try{ d=await r.json(); }catch(e){ throw new Error(t('err.non_json','服务器返回了非 JSON 响应，可能后端服务未正常启动。请检查终端中 <b>node server.js</b> 是否在运行。')); }
+  const responseForDiagnostics = r.clone();
+  try{
+    d=await r.json();
+  }catch(e){
+    const contentType = r.headers.get('content-type') || '未知内容类型';
+    let responseHint = '';
+    try{
+      const raw = await responseForDiagnostics.text();
+      const plain = raw
+        .replace(/<script[\\s\\S]*?<\\/script>/gi, ' ')
+        .replace(/<style[\\s\\S]*?<\\/style>/gi, ' ')
+        .replace(/<[^>]*>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/\\s+/g, ' ')
+        .trim();
+      if(plain) responseHint = '；响应摘要：' + plain.slice(0,160);
+    }catch(_){}
+    throw new Error('接口返回非 JSON（HTTP '+r.status+'，'+contentType+'）'+responseHint);
+  }
   // 向后兼容：e.message 语义不变；额外挂载 status / payload，供需要读取错误响应体的调用方使用
   // （INV-IMPORT-PRECHECK-01 的 422 阻断明细需要它）
   if(d&&d.error){const _e=new Error(d.error);_e.status=r.status;_e.payload=d;throw _e;}

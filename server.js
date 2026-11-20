@@ -23564,6 +23564,42 @@ app.post('/api/inventory-adjustments/:id/approve', requireApiPermission('invento
   } catch(e) { res.status(500).json({error:e.message}); }
 }));
 
+// API-NONJSON-DIAGNOSTICS-20261120
+// Keep API failures JSON-shaped, including errors thrown by apiAuth / route middleware.
+// Express's default error page is HTML and makes the frontend misreport the server as stopped.
+app.use((req, res, next) => {
+  if (req.path && req.path.startsWith('/api/')) {
+    return res.status(404).json({
+      error: 'API接口不存在',
+      code: 'API_ROUTE_NOT_FOUND',
+      path: req.path
+    });
+  }
+  next();
+});
+
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const requestId = 'apierr_' + Date.now() + '_' + crypto.randomBytes(4).toString('hex');
+  const rawStatus = Number(err && (err.status || err.statusCode)) || 500;
+  const status = rawStatus >= 400 && rawStatus < 600 ? rawStatus : 500;
+  const requestPath = String(req && (req.originalUrl || req.path) || '').split('?')[0];
+  console.error('[API-ERROR] request_id=' + requestId +
+    ' method=' + String(req && req.method || '') +
+    ' path=' + requestPath +
+    ' status=' + status +
+    ' message=' + String(err && err.message || err) +
+    '\\n' + String(err && err.stack || ''));
+  if (req && req.path && req.path.startsWith('/api/')) {
+    return res.status(status).json({
+      error: status >= 500 ? '服务器内部错误，请提供错误编号：' + requestId : String(err && err.message || '请求失败'),
+      code: status >= 500 ? 'API_INTERNAL_ERROR' : 'API_REQUEST_ERROR',
+      request_id: requestId
+    });
+  }
+  return res.status(status).send('Internal Server Error');
+});
+
 // ==================== 启动服务 ====================
 // 顶层异常保护：避免未捕获异常导致进程静默退出（进程退出后前端会 Failed to fetch）
 process.on('uncaughtException', (err) => {

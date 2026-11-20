@@ -144,4 +144,11 @@ assert.ok(serverSrc.includes('CI-WAC-OPS-GET-SUMMARY-20261110'), 'ops-prep read 
 assert.ok(serverSrc.includes('CI-WAC-OPS-POST-SUMMARY-20261110'), 'ops-prep write must enforce current batch-level WAC state');
 assert.ok(serverSrc.includes('CI-WAC-OPS-READY-SUMMARY-20261110'), 'ops-ready must enforce current batch-level WAC state');
 
+assert.ok(serverSrc.includes('API-NONJSON-DIAGNOSTICS-20261120'), 'API errors must be converted to JSON instead of Express HTML pages');
+assert.ok(serverSrc.includes("code: 'API_ROUTE_NOT_FOUND'"), 'unknown API routes must return a JSON 404');
+assert.ok(serverSrc.includes("console.error('[API-ERROR] request_id=' + requestId"), 'API exceptions must be logged with a request ID');
+assert.ok(serverSrc.includes("code: status >= 500 ? 'API_INTERNAL_ERROR' : 'API_REQUEST_ERROR'"), 'API error responses must expose a stable diagnostic code');
+assert.ok(appSrc.includes('接口返回非 JSON（HTTP '+r.status+'，'+contentType+'）'), 'frontend non-JSON errors must include HTTP status and content type');
+assert.ok(appSrc.includes('responseForDiagnostics.text()'), 'frontend must retain a safe response excerpt for non-JSON diagnostics');
+
 console.log('CI inline WAC integration static checks: PASS');
