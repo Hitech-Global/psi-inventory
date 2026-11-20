@@ -99,6 +99,23 @@ function registerPricingRoutes(app, deps) {
       [scheme.brand]).rows.map(row => row.category);
   }
 
+  function validateFormula(schemeId, formula, extraKeys) {
+    const variables = {
+      FOB_RMB: 1, RMB_TO_LOCAL: 1, EXCHANGE_RATE: 1, INVENTORY_QTY: 1,
+      SRP: 1, SRP_LOCAL: 1, LANDING_COST_CNY: 1, LANDING_COST_LOCAL: 1
+    };
+    query('SELECT field_key FROM pricing_fields WHERE scheme_id = ?', [schemeId]).rows.forEach(field => {
+      variables[String(field.field_key).toUpperCase()] = 1;
+    });
+    (extraKeys || []).forEach(key => { variables[String(key).toUpperCase()] = 1; });
+    return core.evaluateFormula(formula, variables);
+  }
+
+  function findDuplicateScheme(country, brand, platform, store, excludeId) {
+    return queryOne("SELECT id FROM pricing_schemes WHERE country = ? AND brand = ? AND platform = ? AND COALESCE(store, '') = ? AND status <> 'disabled' AND id <> ? LIMIT 1",
+      [country, brand, platform, String(store || ''), String(excludeId || '')]);
+  }
+
   function getSchemeSkus(scheme, req) {
     const scope = req.currentUserDataScope || {};
     const scoped = needsDataScopeFilter(req);
@@ -311,6 +328,7 @@ function registerPricingRoutes(app, deps) {
     if (!queryOne('SELECT id FROM countries WHERE name = ?', [country])) return res.status(400).json({ error: '国家不存在' });
     if (!queryOne('SELECT sku_code FROM skus WHERE brand = ? LIMIT 1', [brand])) return res.status(400).json({ error: '品牌不存在或没有 SKU 主数据' });
     if (!schemeAllowed(req, { country: country, brand: brand })) return res.status(403).json({ error: '当前账号没有该国家或品牌的数据权限' });
+    if (findDuplicateScheme(country, brand, platform, body.store, '')) return res.status(409).json({ error: '相同国家、品牌、平台和店铺已经存在价格方案，请直接打开现有方案' });
     const currency = String(body.currency || (queryOne('SELECT default_currency FROM countries WHERE name = ?', [country]) || {}).default_currency || '').toUpperCase();
     const id = genId('price');
     const now = new Date().toISOString();
@@ -338,6 +356,8 @@ function registerPricingRoutes(app, deps) {
     if (!queryOne('SELECT id FROM countries WHERE name = ?', [country])) return res.status(400).json({ error: '国家不存在' });
     if (!queryOne('SELECT sku_code FROM skus WHERE brand = ? LIMIT 1', [brand])) return res.status(400).json({ error: '品牌不存在或没有 SKU 主数据' });
     if (!schemeAllowed(req, { country: country, brand: brand })) return res.status(403).json({ error: '当前账号没有该国家或品牌的数据权限' });
+    const nextStatus = String(body.status === undefined ? scheme.status : body.status || 'draft');
+    if (nextStatus !== 'disabled' && findDuplicateScheme(country, brand, platform, body.store === undefined ? scheme.store : body.store, scheme.id)) return res.status(409).json({ error: '相同国家、品牌、平台和店铺已经存在其他启用或待配置方案' });
     const currency = String(body.currency === undefined ? scheme.currency : body.currency || '').toUpperCase();
     run('UPDATE pricing_schemes SET country = ?, brand = ?, platform = ?, store = ?, currency = ?, exchange_rate = ?, status = ?, description = ?, effective_date = ?, updated_by = ?, updated_at = ? WHERE id = ?',
       [country, brand, platform, String(body.store === undefined ? scheme.store : body.store || '').trim(), currency,
@@ -385,6 +405,10 @@ function registerPricingRoutes(app, deps) {
     const groupType = ['cost', 'fee', 'other'].includes(String(body.group_type)) ? String(body.group_type) : 'fee';
     const valueType = ['currency', 'percent', 'number'].includes(String(body.value_type)) ? String(body.value_type) : 'currency';
     const calculationType = ['manual', 'formula'].includes(String(body.calculation_type)) ? String(body.calculation_type) : 'manual';
+    if (calculationType === 'formula') {
+      if (!String(body.formula || '').trim()) return res.status(400).json({ error: '公式计算字段必须填写公式' });
+      try { validateFormula(scheme.id, String(body.formula), [fieldKey]); } catch (error) { return res.status(400).json({ error: '字段公式校验失败：' + error.message }); }
+    }
     const order = Number(queryOne('SELECT COALESCE(MAX(display_order),0) AS n FROM pricing_fields WHERE scheme_id = ?', [scheme.id]).n || 0) + 1;
     const id = genId('pfield');
     const now = new Date().toISOString();
@@ -408,7 +432,10 @@ function registerPricingRoutes(app, deps) {
     const valueType = ['currency', 'percent', 'number'].includes(String(body.value_type)) ? String(body.value_type) : field.value_type;
     const calculationType = ['manual', 'formula'].includes(String(body.calculation_type)) ? String(body.calculation_type) : field.calculation_type;
     const formula = String(body.formula === undefined ? field.formula : body.formula || '');
-    if (calculationType === 'formula' && !formula.trim()) return res.status(400).json({ error: '公式计算字段必须填写公式' });
+    if (calculationType === 'formula') {
+      if (!formula.trim()) return res.status(400).json({ error: '公式计算字段必须填写公式' });
+      try { validateFormula(scheme.id, formula, [field.field_key]); } catch (error) { return res.status(400).json({ error: '字段公式校验失败：' + error.message }); }
+    }
     run('UPDATE pricing_fields SET field_name = ?, group_type = ?, value_type = ?, calculation_type = ?, formula = ?, currency = ?, include_in_profit = ?, required_for_profit = ?, display_order = ?, updated_at = ? WHERE id = ? AND scheme_id = ?',
       [fieldName, groupType, valueType, calculationType, formula,
         String(body.currency === undefined ? field.currency : body.currency || ''), body.include_in_profit === undefined ? Number(field.include_in_profit) : (body.include_in_profit ? 1 : 0),
@@ -577,19 +604,7 @@ function registerPricingRoutes(app, deps) {
     const exchangeRateInput = req.body && req.body.exchange_rate !== undefined ? req.body.exchange_rate : scheme.exchange_rate;
     const exchangeRate = safeNumber(exchangeRateInput, 0);
     if (formula) {
-      try {
-        const sample = queryOne('SELECT purchase_price_rmb FROM skus WHERE brand = ? ORDER BY sku_code LIMIT 1', [scheme.brand]);
-        const variables = {
-          FOB_RMB: safeNumber(sample && sample.purchase_price_rmb, 0),
-          RMB_TO_LOCAL: exchangeRate,
-          EXCHANGE_RATE: exchangeRate,
-          SRP: 0,
-          LANDING_COST_CNY: 0,
-          LANDING_COST_LOCAL: 0
-        };
-        query('SELECT field_key FROM pricing_fields WHERE scheme_id = ?', [scheme.id]).rows.forEach(field => { variables[String(field.field_key).toUpperCase()] = 0; });
-        core.evaluateFormula(formula, variables);
-      } catch (error) {
+      try { validateFormula(scheme.id, formula, ['RMB_TO_LOCAL', 'EXCHANGE_RATE']); } catch (error) {
         return res.status(400).json({ error: 'SRP 公式校验失败：' + error.message });
       }
     }
