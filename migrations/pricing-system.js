@@ -32,7 +32,7 @@ function ensurePricingTables(db) {
   run('CREATE TABLE IF NOT EXISTS pricing_fields (' +
     'id TEXT PRIMARY KEY, scheme_id TEXT NOT NULL, field_key TEXT NOT NULL, field_name TEXT NOT NULL, ' +
     "group_type TEXT DEFAULT 'fee', value_type TEXT DEFAULT 'currency', calculation_type TEXT DEFAULT 'manual', " +
-    "formula TEXT DEFAULT '', default_value NUMERIC, currency TEXT DEFAULT '', include_in_profit INTEGER DEFAULT 1, " +
+    "formula TEXT DEFAULT '', default_value NUMERIC, currency TEXT DEFAULT '', include_in_profit INTEGER DEFAULT 1, required_for_profit INTEGER DEFAULT 0, " +
     "is_active INTEGER DEFAULT 1, display_order INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP, " +
     'updated_at TEXT DEFAULT CURRENT_TIMESTAMP, UNIQUE(scheme_id, field_key))');
 
