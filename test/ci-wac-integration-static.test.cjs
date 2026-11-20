@@ -12,9 +12,10 @@ const index = path.join(root, 'index.html');
 const ciLogistics = path.join(root, 'ci-list-inline-logistics.js');
 const integration = path.join(root, 'assets', 'ci-wac-integration.js');
 const wacNotificationUi = path.join(root, 'wac-notification-ui.js');
+const wacBlockedImportControls = path.join(root, 'assets', 'wac-blocked-import-controls.js');
 const patch = path.join(root, 'scripts', 'ci-wac-summary-hotfix.cjs');
 
-for (const file of [app, ciLogistics, integration, wacNotificationUi, patch]) {
+for (const file of [app, ciLogistics, integration, wacNotificationUi, wacBlockedImportControls, patch]) {
   execFileSync(process.execPath, ['--check', file], { stdio: 'pipe' });
 }
 
@@ -27,6 +28,7 @@ const appSrc = fs.readFileSync(app, 'utf8');
 const ciSrc = fs.readFileSync(ciLogistics, 'utf8');
 const integrationSrc = fs.readFileSync(integration, 'utf8');
 const notificationUiSrc = fs.readFileSync(wacNotificationUi, 'utf8');
+const blockedControlsSrc = fs.readFileSync(wacBlockedImportControls, 'utf8');
 const serverSrc = fs.readFileSync(server, 'utf8');
 const indexSrc = fs.readFileSync(index, 'utf8');
 
@@ -113,7 +115,12 @@ const integrationPos = indexSrc.indexOf('assets/ci-wac-integration.js');
 assert.ok(notificationPos >= 0 && integrationPos > notificationPos,
   'CI WAC integration must load after WAC notification UI');
 assert.ok(indexSrc.includes('ci-list-inline-logistics.js'), 'CI logistics list module must remain loaded');
-assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261113-2'), 'blocked WAC import controls must use the latest cache-busted asset');
+assert.ok(indexSrc.includes('assets/wac-blocked-import-controls.js?v=20261120-1'), 'blocked WAC import controls must use the latest cache-busted asset');
+assert.match(blockedControlsSrc, /if \(!button\.disabled\) button\.disabled = true;/, 'blocked WAC button locking must be idempotent');
+assert.match(blockedControlsSrc, /if \(button\.textContent !== label\) button\.textContent = label;/, 'blocked WAC lock must not rewrite identical text and retrigger its observer');
+assert.match(blockedControlsSrc, /const modalRoot = doc\.getElementById\('modal-content'\)/, 'blocked WAC observer must be scoped to the modal');
+assert.match(blockedControlsSrc, /observer\.observe\(modalRoot, \{ childList: true, subtree: true \}\)/, 'blocked WAC observer must watch only modal content');
+assert.doesNotMatch(blockedControlsSrc, /observer\.observe\(doc\.documentElement/, 'blocked WAC observer must not watch the whole document');
 
 assert.ok(serverSrc.includes('CI-WAC-STATUS-IN-CI-LOGISTICS-20261110'), 'CI logistics endpoint WAC status projection missing');
 assert.ok(serverSrc.includes('CI-WAC-SUMMARY-PROJECTION-20261110'), 'CI WAC summary helper missing');

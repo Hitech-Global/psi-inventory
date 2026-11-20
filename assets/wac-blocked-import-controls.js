@@ -33,8 +33,11 @@
     if (!isBlockedPreview()) return;
     const button = doc.getElementById('wac-confirm-btn');
     if (!button) return;
-    button.disabled = true;
-    button.textContent = tr('wac.cannot_confirm', '当前批次不可确认WAC');
+    const label = tr('wac.cannot_confirm', '当前批次不可确认WAC');
+    if (!button.disabled) button.disabled = true;
+    // Idempotent: rewriting the same text creates another childList mutation and
+    // would recursively wake this observer forever on a blocked WAC preview.
+    if (button.textContent !== label) button.textContent = label;
   }
 
   // The existing validator also manages the import state. Wrap it so an old-stock
@@ -126,9 +129,12 @@
     keepConfirmLocked();
   }
 
-  if (typeof global.MutationObserver === 'function' && doc.documentElement) {
+  // Only observe the stable modal content root. The controls are modal-scoped;
+  // watching the whole document needlessly re-runs the blocker check for unrelated pages.
+  const modalRoot = doc.getElementById('modal-content');
+  if (typeof global.MutationObserver === 'function' && modalRoot) {
     const observer = new global.MutationObserver(ensureBlockedImportControls);
-    observer.observe(doc.documentElement, { childList: true, subtree: true });
+    observer.observe(modalRoot, { childList: true, subtree: true });
   }
 
   ensureBlockedImportControls();
