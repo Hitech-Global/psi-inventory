@@ -7,7 +7,7 @@ const DEFAULT_FIELDS = [
   { key: 'FREIGHT', name: 'Freight', group: 'cost', value: 'percent', include: 0 },
   { key: 'OTHERS', name: 'Others', group: 'cost', value: 'percent', include: 0 },
   { key: 'LANDING_COST_CNY', name: 'Landing Cost/CNY', group: 'cost', value: 'currency', include: 0 },
-  { key: 'LANDING_COST_LOCAL', name: 'Landing Cost/IDR', group: 'cost', value: 'currency', include: 1 },
+  { key: 'LANDING_COST_LOCAL', name: 'Landing Cost/IDR', group: 'cost', value: 'currency', include: 1, required: 1 },
   { key: 'COMMISSION_FEE', name: 'Commission Fee', group: 'fee', value: 'currency', include: 1 },
   { key: 'PAYMENT_FEE', name: 'Payment Fee', group: 'fee', value: 'currency', include: 1 },
   { key: 'FREE_SHIPPING_XTRA', name: 'Free Shipping Xtra', group: 'fee', value: 'currency', include: 1 },
@@ -77,9 +77,9 @@ function ensurePricingTables(db) {
 
   DEFAULT_FIELDS.forEach((field, index) => {
     run('INSERT INTO pricing_fields ' +
-      '(id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, include_in_profit, is_active, display_order, currency, created_at, updated_at) ' +
-      "VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, 1, ?, ?, ?, ?)",
-      [genId('pfield'), schemeId, field.key, field.name, field.group, field.value, field.include, index + 1, currency, now, now]);
+      '(id, scheme_id, field_key, field_name, group_type, value_type, calculation_type, include_in_profit, required_for_profit, is_active, display_order, currency, created_at, updated_at) ' +
+      "VALUES (?, ?, ?, ?, ?, ?, 'manual', ?, ?, 1, ?, ?, ?, ?)",
+      [genId('pfield'), schemeId, field.key, field.name, field.group, field.value, field.include, field.required || 0, index + 1, currency, now, now]);
   });
 
   const snapshot = {
