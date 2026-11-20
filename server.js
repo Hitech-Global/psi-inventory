@@ -1262,6 +1262,15 @@ console.log('========================================\n');
 // P0-FIX-1：仅在直接运行 server.js 时初始化数据库，避免 require 时连接/seed 真实库
 if (require.main === module) {
   initDatabase();
+  // PRICING-SYSTEM-SCHEMA-V1：在应用监听端口前创建价格体系所需表，并仅在首次初始化时建立印尼 Redragon Shopee 草稿方案。
+  try {
+    const pricingMigration = require('./migrations/pricing-system');
+    const pricingReady = pricingMigration.ensurePricingTables({ run, query, queryOne, genId });
+    console.log('[STARTUP] 价格体系数据表就绪 ✓', JSON.stringify(pricingReady));
+  } catch (e) {
+    console.error('[FATAL] 价格体系数据库初始化失败:', e.message);
+    throw e;
+  }
   // PostgreSQL production uses db.js worker_threads migrations; keep the voucher_fingerprint schema there in sync before this backfill.
   try {
     const fingerprintCount = backfillPaymentVoucherFingerprints();
@@ -1505,6 +1514,33 @@ if (require.main === module) {
       console.log('[Migration] 寄售库存表已就绪');
     } catch (e) {
       console.warn('[Migration] 寄售库存表迁移失败（非致命）:', e.message);
+    }
+  })();
+}
+
+// PRICING-SYSTEM-PERMISSIONS-V1：价格体系涉及采购成本和利润，仅向已有财务金额权限的内置管理/运营角色开放；普通用户不自动获得权限。
+if (require.main === module) {
+  (function ensurePricingPermissionsOnce() {
+    const migrationKey = 'migration_pricing_system_permissions_v1';
+    try {
+      const done = queryOne('SELECT value FROM system_config WHERE key = ?', [migrationKey]);
+      if (done) return;
+      ['role_admin', 'role_operator'].forEach(roleId => {
+        const role = queryOne('SELECT permissions FROM roles WHERE id = ?', [roleId]);
+        if (!role) return;
+        let permissions;
+        try { permissions = JSON.parse(role.permissions || '[]'); } catch (_) { return; }
+        if (!Array.isArray(permissions)) return;
+        ['pricing_view', 'pricing_edit'].forEach(permission => {
+          if (!permissions.includes(permission)) permissions.push(permission);
+        });
+        run('UPDATE roles SET permissions = ? WHERE id = ?', [JSON.stringify(permissions), roleId]);
+      });
+      run("INSERT INTO system_config (key, value, description, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, description=excluded.description, updated_at=excluded.updated_at",
+        [migrationKey, '价格体系权限仅授予内置管理员和运营角色']);
+      console.log('[Migration] 价格体系权限初始化完成 ✓');
+    } catch (e) {
+      console.warn('[Migration] 价格体系权限初始化失败（非致命）:', e.message);
     }
   })();
 }
@@ -2417,6 +2453,8 @@ const PERM_LABELS = {
   ci_create: { label: '创建', module: '采购链', submodule: 'CI管理' },
   ci_edit: { label: '编辑', module: '采购链', submodule: 'CI管理' },
   quotation_view: { label: '查看', module: '采购链', submodule: '报价管理' },
+  pricing_view: { label: '查看', module: '采购链', submodule: '价格体系' },
+  pricing_edit: { label: '编辑', module: '采购链', submodule: '价格体系' },
   logistics_view: { label: '查看', module: '采购链', submodule: '物流管理' },
   logistics_create: { label: '创建', module: '采购链', submodule: '物流管理' },
   logistics_edit: { label: '编辑', module: '采购链', submodule: '物流管理' },
@@ -23655,6 +23693,12 @@ if (require.main === module) {
   console.log('[DIAG] 环境变量检查通过 ✓');
   console.log('=====================================\n');
 }
+
+// PRICING-SYSTEM-API-REGISTRATION-V1：独立路由模块，沿用现有认证、权限和数据范围中间件。
+require('./pricing-server').registerPricingRoutes(app, {
+  query, queryOne, run, genId, requireApiPermission, asyncHandler,
+  buildDashboardScopeFilters, needsDataScopeFilter
+});
 
 // break-glass 本地管理员初始化（fail-closed：缺强密码则启动失败）
 // P0-FIX-1：仅在直接运行 server.js 时执行启动副作用（app.listen / bootstrapBreakGlass / initDatabase）

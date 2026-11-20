@@ -124,10 +124,14 @@ assert.match(blockedControlsSrc, /if \(button\.textContent !== label\) button\.t
 assert.match(blockedControlsSrc, /const modalRoot = doc\.getElementById\('modal-content'\)/, 'blocked WAC observer must be scoped to the modal');
 assert.match(blockedControlsSrc, /observer\.observe\(modalRoot, \{ childList: true, subtree: true \}\)/, 'blocked WAC observer must watch only modal content');
 assert.doesNotMatch(blockedControlsSrc, /observer\.observe\(doc\.documentElement/, 'blocked WAC observer must not watch the whole document');
-const validatorStart = appSrc.indexOf('function wacValidateInputs(){');
-const validatorEnd = appSrc.indexOf('// 导出旧库存模板', validatorStart);
-const validatorSrc = appSrc.slice(validatorStart, validatorEnd);
-assert.ok(validatorSrc.includes('const blocked=liveInvalid.length>0||contextInvalid.length>0;'), 'WAC confirmation must validate final SKU inputs and target-context cost requirements, not require a file import');
+const validatorMatch = appSrc.match(/function\\s+wacValidateInputs\\s*\\(\\s*\\)\\s*\\{/);
+const validatorStart = validatorMatch ? validatorMatch.index : -1;
+const validatorEnd = validatorStart >= 0 ? appSrc.indexOf('// 导出旧库存模板', validatorStart) : -1;
+const validatorSrc = validatorStart >= 0
+  ? appSrc.slice(validatorStart, validatorEnd > validatorStart ? validatorEnd : undefined)
+  : '';
+assert.ok(validatorStart >= 0, 'WAC input validator function must remain present');
+assert.match(validatorSrc, /const\\s+blocked\\s*=\\s*liveInvalid\\.length\\s*>\\s*0\\s*\\|\\|\\s*contextInvalid\\.length\\s*>\\s*0\\s*;/, 'WAC confirmation must validate final SKU inputs and target-context cost requirements, not require a file import');
 assert.ok(validatorSrc.includes('contextInvalid.length>0'), 'positive opening stock must remain blocked when target-context WAC is missing');
 assert.ok(appSrc.includes('const warnings=p.warnings||[]'), 'WAC preview must display conditional inventory-context warnings');
 assert.ok(serverSrc.includes('findUnresolvedWacContextWarnings(warnings, oldQtyMap)'), 'WAC confirm API must validate target-context warnings against submitted opening quantities');

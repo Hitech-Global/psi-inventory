@@ -145,6 +145,12 @@ on:
       - 'test/rp-brand-case-normalization.test.cjs'
       - 'test/inventory-onhand-local-currency-kpi.test.cjs'
       - 'i18n.js'
+      - 'pricing-core.js'
+      - 'pricing-server.js'
+      - 'migrations/pricing-system.js'
+      - 'assets/pricing-management.js'
+      - 'assets/pricing-management.css'
+      - 'test/pricing-system.test.cjs'
       - '.github/workflows/psi-regression-ci.yml'
 
 permissions:
@@ -270,6 +276,11 @@ jobs:
           node --check db.js
           node --check db-sqlite.js
           node --check i18n.js
+          node --check pricing-core.js
+          node --check pricing-server.js
+          node --check migrations/pricing-system.js
+          node --check assets/pricing-management.js
+          node --check test/pricing-system.test.cjs
           node --check inventory-asset-values.js
           node --check test/inventory-asset-values.test.cjs
           node --check test/inventory-overview-export.test.cjs
@@ -389,6 +400,8 @@ jobs:
         run: node test/wac-history-import.test.cjs
       - name: Test WAC batch exclusion and restore
         run: node test/wac-batch-exclusion.test.cjs
+      - name: Test pricing formulas, category rules and inventory sync
+        run: node --test test/pricing-system.test.cjs
       - name: Test quotation procurement brief observer idempotence
         run: node test/quotation-procurement-brief-observer.test.cjs
       - name: Test quote master-category eligibility and price priority sort

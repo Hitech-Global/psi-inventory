@@ -5497,4 +5497,8 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.en["ci.summary.breakdown_deduction_hint"]="Includes deducted deposits and payment deductions";
   I18N.dict.id["ci.summary.breakdown_deduction_hint"]="Termasuk uang muka dan potongan pembayaran";
 
+  I18N.dict.zh["nav.pricing_system"] = "价格体系";
+  I18N.dict.en["nav.pricing_system"] = "Pricing System";
+  I18N.dict.id["nav.pricing_system"] = "Sistem Harga";
+
 })();
