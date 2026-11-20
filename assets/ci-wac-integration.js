@@ -256,7 +256,8 @@
         card.insertAdjacentHTML('afterbegin', renderLogisticsDetail(log, plData, wacMeta));
       }
       var title = modal.querySelector('.modal-title');
-      if (title) title.textContent = '物流批次详情 / WAC成本详情 - ' + (log.batch_no || id);
+      var hasPreview = !!(global._wacPreview && global._wacPreview.meta);
+      if (title) title.textContent = (hasPreview ? '物流批次详情 / WAC成本详情 - ' : '物流批次详情 / WAC预览未加载 - ') + (log.batch_no || id);
       localizeCiWacModal();
     }).catch(function (error) {
       if (seq !== global.__ciWacDetailSeq) return;
@@ -300,6 +301,8 @@
         return;
       }
 
+      // Clear any previous batch preview so a failed request cannot reuse stale cost facts.
+      global._wacPreview = null;
       await withWacApiTimeout(
         global.wacConfirm(id),
         30000,
@@ -308,9 +311,11 @@
       if (seq !== global.__ciWacDetailSeq) return;
 
       var modal = document.getElementById('modal-content');
+      var overlay = document.getElementById('modal-overlay');
       var body = modal && modal.querySelector('.modal-body');
       var card = body && body.querySelector('.form-card');
-      if (modal && modal.classList.contains('modal-wac') && card) {
+      if (modal && modal.classList.contains('modal-wac') && card &&
+          overlay && overlay.classList.contains('show')) {
         if (!card.querySelector('.ci-wac-logistics-section') &&
             !card.querySelector('#ci-wac-logistics-loading')) {
           card.insertAdjacentHTML('afterbegin', wacLogisticsLoadingHtml());
