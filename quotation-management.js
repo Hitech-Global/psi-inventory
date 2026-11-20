@@ -63,7 +63,7 @@ function nav(){
   e.className='sidebar-item'+($('#qm')?' active':'');
   e.setAttribute('data-page','quotation-management');
   e.innerHTML='<span class="icon">🏷️</span><span data-quotation-nav-label>'+E(qmLabel('报价管理'))+'</span>';
-  e.onclick=show;n.appendChild(e);
+  e.onclick=show;const priceSystemItem=n.querySelector('[data-page="price-system"]');if(priceSystemItem)n.insertBefore(e,priceSystemItem);else n.appendChild(e);
 }
 
 function show(){

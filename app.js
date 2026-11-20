@@ -443,12 +443,12 @@ const NAV_MODULES=[
   ]},
   {id:'procurement',key:'nav.procurement',label:t("nav.procurement", "\u91c7\u8d2d\u94fe"),items:[
     {id:'po',key:'nav.po',icon:'🛒',label:t("nav.po", "PO\u7ba1\u7406"),perm:'po_view'},
-    {id:'price-system',key:'nav.price_system',icon:'💹',label:t('nav.price_system','价格体系'),perm:'ci_amount_view'},
     {id:'pi',key:'nav.pi',icon:'📄',label:t("nav.pi", "PI\u7ba1\u7406"),perm:'pi_view'},
     {id:'ci',key:'nav.ci',icon:'🚚',label:t("nav.ci", "CI/PL\u7ba1\u7406"),perm:'ci_view'},
     {id:'inbound',key:'nav.wac_confirm',icon:'💰',label:t("nav.wac_confirm", "WAC确认"),perm:'inbound_view'},
     {id:'wac-history',key:'nav.wac_history',icon:'📊',label:t('nav.wac_history','WAC历史记录'),perm:'inbound_view'},
     {id:'logistics-decision',key:'nav.logistics_decision',icon:'🧭',label:t("nav.logistics_decision","物流决策"),perm:'logistics_view'},
+    {id:'price-system',key:'nav.price_system',icon:'💹',label:t('nav.price_system','价格体系'),perm:'ci_amount_view'},
   ]},
   {id:'approval',key:'nav.approval',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),items:[
     {id:'approval-center',key:'nav.approval_center',icon:'✅',label:t("nav.approval_center", "\u5ba1\u6279\u4e2d\u5fc3"),perm:'approval_view'},
