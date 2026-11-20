@@ -57,24 +57,16 @@ assert.match(renderedSummary, /USD 7\.00/);
 assert.doesNotMatch(renderedSummary, /运营采购金额|历史采购金额|采购金额合计（按币种）/);
 assert.doesNotMatch(renderedSummary, /This explanatory note/);
 
-
-assert.match(script, /运营采购金额/);
-assert.match(script, /历史采购金额/);
-assert.match(script, /采购金额合计/);
-assert.match(script, /Total Procurement Amount by Currency/);
-assert.match(script, /Total Purchase Amount/);
-assert.match(script, /matchesLabelText/);
-assert.match(script, /characterData: true/);
-assert.match(script, /Historical Purchase Amount/);
-assert.match(script, /Operational Purchase Amount/);
-assert.match(script, /psi-ci-summary-hidden/);
-assert.match(script, /psi-ci-summary-total/);
-assert.match(script, /psi-ci-summary-note-hidden/);
-assert.match(script, /仅原币为/);
-assert.match(script, /跨币种裸加/);
-assert.match(script, /other currencies without explicit exchange/);
-assert.match(script, /MutationObserver/);
-assert.match(script, /getBoundingClientRect/);
+// The old page-wide DOM compaction was retired. This asset must not observe or scan the page.
+assert.doesNotMatch(script, /new\s+MutationObserver/);
+assert.doesNotMatch(script, /querySelectorAll\s*\(\s*['"]body\s*\*/);
+assert.doesNotMatch(script, /document\.body/);
+assert.doesNotMatch(script, /innerText/);
+assert.doesNotMatch(script, /getBoundingClientRect/);
+assert.doesNotMatch(script, /运营采购金额|历史采购金额|Historical Purchase Amount|Operational Purchase Amount/);
+assert.doesNotMatch(script, /psi-ci-summary-hidden|psi-ci-summary-total|psi-ci-summary-note-hidden/);
+assert.match(script, /CI-SUMMARY-CURRENCY-LINES-20261119/);
+assert.match(script, /installCurrencyLineRenderer/);
 assert.match(html, /assets\/ci-summary-compact\.js\?v=/);
 
 // The display-only adapter must not rewrite financial amounts or replace page markup.
@@ -83,7 +75,6 @@ assert.doesNotMatch(script, /(?:node|card|labelNode|descendants\[[^\]]+\])\.text
 assert.doesNotMatch(script, /\.innerText\s*=/);
 assert.doesNotMatch(script, /fetch\s*\(/);
 assert.doesNotMatch(script, /XMLHttpRequest/);
-
 
 const adapterContext = {};
 let adapterMarkup = [
@@ -118,7 +109,5 @@ adapterMarkup = '<div class="stat-card"><div class="stat-number">RMB 1.00</div><
 const zeroOnlyUnpaid = adapterContext.renderPurchaseAmountSummary();
 assert.match(zeroOnlyUnpaid, /class="stat-number">—<\/div>/);
 assert.doesNotMatch(zeroOnlyUnpaid, /USD 0\.00/);
-assert.match(script, /CI-SUMMARY-CURRENCY-LINES-20261119/);
-assert.match(script, /installCurrencyLineRenderer/);
 
-console.log('CI compact procurement summary source contract: PASS');
+console.log('CI summary currency adapter and main-thread safety: PASS');
