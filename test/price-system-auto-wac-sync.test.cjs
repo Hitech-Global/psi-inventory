@@ -17,6 +17,10 @@ function createHarness() {
     { id: 'scheme-disabled', country: 'Indonesia', brand: 'Netac', platform: 'Old', currency: 'IDR', status: 'disabled' }
   ];
   const skus = [1, 2, 3].map(n => ({ sku_code: 'SKU-' + n, brand: 'Netac' }));
+  const fieldConfigs = [
+    { id: 'field-shopee-wac', scheme_id: 'scheme-shopee', field_key: 'landing_cost', field_name: 'Landing Cost', field_type: 'amount', sync_wac: 1, is_active: 1 },
+    { id: 'field-tiktok-wac', scheme_id: 'scheme-tiktok', field_key: 'landing_cost', field_name: 'Landing Cost', field_type: 'amount', sync_wac: 1, is_active: 1 }
+  ];
   const wacs = [
     { id: 'wac-1-old', sku_code: 'SKU-1', brand: 'Netac', country: 'Indonesia', warehouse: 'Bekasi Warehouse', new_avg_cost: 100, local_currency: 'IDR', ci_no: 'CI-OLD', version_no: 1, confirmed_at: '2026-11-01 12:00:00', last_inbound_date: '2026-10-31', is_locked: 1, confirmation_status: 'confirmed', created_at: '2026-11-01 12:00:00' },
     { id: 'wac-1-new', sku_code: 'SKU-1', brand: 'Netac', country: 'Indonesia', warehouse: 'Bekasi Warehouse', new_avg_cost: 120, local_currency: 'IDR', ci_no: 'CI-NEW', version_no: 2, confirmed_at: '2026-11-18 12:00:00', last_inbound_date: '2026-11-17', is_locked: 1, confirmation_status: 'confirmed', created_at: '2026-11-18 12:00:00' },
@@ -41,8 +45,8 @@ function createHarness() {
     if (sql.includes('SELECT sku_code, brand FROM skus WHERE sku_code IN')) {
       const set = new Set(params); return { rows: skus.filter(row => set.has(row.sku_code)) };
     }
-    if (sql.includes("FROM price_system_schemes WHERE status = 'active'")) {
-      return { rows: schemes.filter(row => row.status === 'active' && row.brand.toLowerCase() === String(params[0]).toLowerCase()) };
+    if (sql.includes('FROM price_system_schemes ps WHERE ps.status')) {
+      return { rows: schemes.filter(row => row.status === 'active' && row.brand.toLowerCase() === String(params[0]).toLowerCase() && fieldConfigs.some(field => field.scheme_id === row.id && field.is_active === 1 && field.sync_wac === 1)) };
     }
     if (sql.includes('FROM wac_history wh')) {
       const skuCount = sql.slice(sql.indexOf('wh.sku_code IN'), sql.indexOf('AND LOWER(wh.country)')).split('?').length - 1;
@@ -58,7 +62,7 @@ function createHarness() {
       const schemeId = params[0], codes = new Set(params.slice(1));
       return { rows: Array.from(landing.values()).filter(row => row.scheme_id === schemeId && codes.has(row.sku_code)) };
     }
-    if (sql.includes('FROM price_system_fields')) return { rows: [] };
+    if (sql.includes('FROM price_system_fields')) return { rows: fieldConfigs.filter(field => field.scheme_id === params[0]) };
     if (sql.includes('FROM price_system_values')) return { rows: [] };
     if (sql.includes('FROM price_system_srp_values')) return { rows: [] };
     if (sql.includes('FROM price_system_landing_costs WHERE scheme_id = ? ORDER BY sku_code')) return { rows: Array.from(landing.values()).filter(row => row.scheme_id === params[0]) };
@@ -82,7 +86,7 @@ function createHarness() {
       versions.push({ id: params[0], scheme_id: params[1], version_no: params[2], snapshot_json: params[3], note: params[4], created_by: params[5], created_by_name: params[6] });
     }
   }
-  return { schemes, skus, wacs, landing, versions, queries, runs, query, queryOne, run, genId: prefix => prefix + '-' + (++nextId) };
+  return { schemes, skus, wacs, fieldConfigs, landing, versions, queries, runs, query, queryOne, run, genId: prefix => prefix + '-' + (++nextId) };
 }
 
 test('confirmed WAC automatically updates every active country/brand platform scheme and records one version per scheme', () => {
@@ -103,6 +107,7 @@ test('confirmed WAC automatically updates every active country/brand platform sc
   assert.equal(db.landing.has('scheme-redragon|SKU-1'), false);
   assert.equal(db.versions.length, 2);
   db.schemes.push({ id: 'scheme-lazada', country: 'Indonesia', brand: 'Netac', platform: 'Lazada', currency: 'IDR', status: 'active' });
+  db.fieldConfigs.push({ id: 'field-lazada-wac', scheme_id: 'scheme-lazada', field_key: 'landing_cost', field_name: 'Landing Cost', field_type: 'amount', sync_wac: 1, is_active: 1 });
   const newSchemeSync = sync([1, 2, 3].map(n => ({ sku_code: 'SKU-' + n, country: 'Indonesia', brand: 'Netac' })), { id: 'user-1', name: 'Operator' }, 'New scheme sync');
   assert.equal(newSchemeSync.schemes_updated, 1, 'newly created schemes must be visible to the next sync call');
   assert.equal(db.landing.get('scheme-lazada|SKU-1').wac_history_id, 'wac-1-new');

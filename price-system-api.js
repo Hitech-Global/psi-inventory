@@ -42,7 +42,7 @@ function createPriceSystemWacSync(deps) {
   }
   function activeSchemesForBrand(brand) {
     const cacheKey = String(brand || '').trim().toLowerCase();
-    if (!schemeCache.has(cacheKey)) schemeCache.set(cacheKey, query("SELECT * FROM price_system_schemes WHERE status = 'active' AND LOWER(brand) = LOWER(?) ORDER BY country, platform, shop_name", [brand]).rows);
+    if (!schemeCache.has(cacheKey)) schemeCache.set(cacheKey, query("SELECT ps.* FROM price_system_schemes ps WHERE ps.status = 'active' AND LOWER(ps.brand) = LOWER(?) AND EXISTS (SELECT 1 FROM price_system_fields pf WHERE pf.scheme_id = ps.id AND pf.is_active = 1 AND COALESCE(pf.sync_wac, 0) = 1) ORDER BY ps.country, ps.platform, ps.shop_name", [brand]).rows);
     return schemeCache.get(cacheKey);
   }
   function createSnapshotVersion(schemeId, actor, note) {
@@ -306,7 +306,8 @@ function registerPriceSystemRoutes(app, deps) {
     const fields = query(
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name',
       [scheme.id]
-    ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories) }));
+    ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories), sync_wac: Number(f.sync_wac || 0) === 1 }));
+    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: 999999 });
     const params = [scheme.country];
     let warehouseFilter = '';
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
@@ -377,6 +378,8 @@ function registerPriceSystemRoutes(app, deps) {
           resolved[key] = 0;
           return 0;
         }
+        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
+        if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
         if (field.field_type !== 'formula') {
           const raw = stored[key];
           resolved[key] = raw == null ? 0 : Number(raw);
@@ -404,6 +407,7 @@ function registerPriceSystemRoutes(app, deps) {
       const values = {};
       fields.forEach(field => {
         if (!isCategoryApplicable(field, sku.category)) values[field.field_key] = null;
+        else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
         else if (field.field_type === 'formula') values[field.field_key] = field.formula ? resolveField(field.field_key) : null;
         else values[field.field_key] = stored[field.field_key] == null ? null : Number(stored[field.field_key]);
       });
@@ -411,13 +415,10 @@ function registerPriceSystemRoutes(app, deps) {
       let srp = null;
       let srpSource = '';
       if (manualSrpBySku.has(sku.sku_code)) { srp = manualSrpBySku.get(sku.sku_code); srpSource = 'manual'; }
-      else if (String(scheme.srp_formula || '').trim()) {
-        try {
-          const vars = Object.assign({}, base, resolved);
-          getFormulaVariables(scheme.srp_formula).forEach(dep => { if (fieldMap.has(dep)) vars[dep] = resolveField(dep); });
-          srp = evaluateFormula(scheme.srp_formula, vars); srpSource = 'formula';
-        } catch (e) { errors.srp = e.message; }
+      else if (fieldMap.has('srp') && String(fieldMap.get('srp').formula || '').trim()) {
+        srp = resolveField('srp'); srpSource = 'formula';
       }
+      values.srp = srp;
       return {
         sku_code: sku.sku_code, brand: sku.brand || '', category: sku.category || '', model: sku.model || '',
         stock_qty: Number(sku.stock_qty || 0), purchase_currency: sku.purchase_currency || '',
@@ -577,36 +578,69 @@ function registerPriceSystemRoutes(app, deps) {
     const unit = String(d.unit || '').trim();
     const categories = Array.isArray(d.applicable_categories) ? d.applicable_categories.map(v => String(v || '').trim()).filter(Boolean) : [];
     const formula = String(d.formula || '').trim();
+    const syncWac = d.sync_wac === true || Number(d.sync_wac || 0) === 1;
     const allowedTypes = ['amount', 'percent', 'number', 'formula'];
-    if (!fieldName) return res.status(400).json({ error: '费用字段名称不能为空' });
+    if (!fieldName) return res.status(400).json({ error: '\u8d39\u7528\u5b57\u6bb5\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a' });
     if (!/^[a-z][a-z0-9_]{1,39}$/.test(fieldKey)) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u65e0\u6548' });
-    if (fieldKey === 'landing_cost') return res.status(400).json({ error: 'Landing Cost \u662f\u7cfb\u7edf\u5185\u7f6e\u5b57\u6bb5\uff0c\u4e0d\u80fd\u91cd\u590d\u6dfb\u52a0' });
-    if (!allowedTypes.includes(fieldType)) return res.status(400).json({ error: '字段类型无效' });
-    if (fieldType === 'formula' && !formula) return res.status(400).json({ error: '公式字段必须填写计算公式' });
+    if (!allowedTypes.includes(fieldType)) return res.status(400).json({ error: '\u5b57\u6bb5\u7c7b\u578b\u65e0\u6548' });
+    if (fieldType === 'formula' && !formula) return res.status(400).json({ error: '\u516c\u5f0f\u5b57\u6bb5\u5fc5\u987b\u586b\u5199\u8ba1\u7b97\u516c\u5f0f' });
+    if (syncWac && fieldType !== 'amount') return res.status(400).json({ error: 'WAC \u81ea\u52a8\u540c\u6b65\u53ea\u80fd\u7528\u4e8e\u91d1\u989d\u5b57\u6bb5' });
+    if (syncWac && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('inbound_view')) return res.status(403).json({ error: 'WAC \u81ea\u52a8\u540c\u6b65\u9700\u8981\u5165\u5e93\u67e5\u770b\u6743\u9650' });
+
+    // SRP is presented as a formula field in the same field manager, while retaining
+    // the existing scheme-level storage for backward compatibility with old versions.
+    if (fieldKey === 'srp' || d.id === 'builtin-srp') {
+      if (fieldKey !== 'srp' || fieldType !== 'formula' || !formula) return res.status(400).json({ error: 'SRP \u5fc5\u987b\u914d\u7f6e\u4e3a\u516c\u5f0f\u5b57\u6bb5' });
+      const existingFieldsForSrp = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+      try { validateFormula(formula, allowedFormulaVariables(existingFieldsForSrp, 'srp')); }
+      catch (e) { return res.status(400).json({ error: e.message }); }
+      run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
+      createVersion(scheme.id, userStamp(req), '\u66f4\u65b0 SRP \u516c\u5f0f\u5b57\u6bb5');
+      return res.json({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula, sync_wac: false, is_builtin_srp: true, sort_order: 999999 });
+    }
+
     const existingFields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
     const existing = d.id ? queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [d.id, scheme.id]) : null;
-    if (d.id && !existing) return res.status(404).json({ error: '费用字段不存在' });
-    if (existing && existing.field_key !== fieldKey) return res.status(400).json({ error: '字段编码创建后不可修改，避免影响历史数据和公式' });
+    if (d.id && !existing) return res.status(404).json({ error: '\u8d39\u7528\u5b57\u6bb5\u4e0d\u5b58\u5728' });
+    if (existing && existing.field_key !== fieldKey) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u521b\u5efa\u540e\u4e0d\u53ef\u4fee\u6539\uff0c\u907f\u514d\u5f71\u54cd\u5386\u53f2\u6570\u636e\u548c\u516c\u5f0f' });
+    if (fieldKey === 'srp') return res.status(400).json({ error: 'srp \u662f\u7cfb\u7edf\u4fdd\u7559\u5b57\u6bb5\u7f16\u7801' });
+    if (syncWac) {
+      const otherWacField = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 AND sync_wac = 1 AND id <> ?', [scheme.id, existing ? existing.id : '']);
+      if (otherWacField) return res.status(400).json({ error: '\u6bcf\u4e2a\u4ef7\u683c\u65b9\u6848\u53ea\u80fd\u8bbe\u7f6e\u4e00\u4e2a\u81ea\u52a8\u540c\u6b65 WAC \u7684\u5b57\u6bb5' });
+    }
     const duplicate = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND id <> ?', [scheme.id, fieldKey, existing ? existing.id : '']);
-    if (duplicate) return res.status(409).json({ error: '字段编码已存在' });
+    if (duplicate) return res.status(409).json({ error: '\u5b57\u6bb5\u7f16\u7801\u5df2\u5b58\u5728' });
     if (fieldType === 'formula') {
       try { validateFormula(formula, allowedFormulaVariables(existingFields, fieldKey)); }
       catch (e) { return res.status(400).json({ error: e.message }); }
     }
+
     const id = existing ? existing.id : genId('psf');
     const sortOrder = Number.isFinite(Number(d.sort_order)) ? Number(d.sort_order) : (existing ? existing.sort_order : existingFields.length * 10 + 10);
+    if (existing && Number(existing.sync_wac || 0) === 1 && !syncWac) {
+      if (fieldType === 'amount') query('SELECT sku_code, value FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]).rows.forEach(row => {
+        run("INSERT INTO price_system_values (id, scheme_id, sku_code, field_key, value, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(scheme_id, sku_code, field_key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = datetime('now')", [genId('psv'), scheme.id, row.sku_code, fieldKey, Number(row.value), req.currentUserId || '']);
+      });
+      run('DELETE FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]);
+    }
+    if (syncWac) run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, fieldKey]);
     if (existing) {
       run(
-        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
-        [fieldName, fieldType, unit, JSON.stringify(categories), formula, sortOrder, id, scheme.id]
+        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, sync_wac = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
+        [fieldName, fieldType, unit, JSON.stringify(categories), formula, syncWac ? 1 : 0, sortOrder, id, scheme.id]
       );
     } else {
       run(
-        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(categories), formula, sortOrder]
+        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sync_wac, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(categories), formula, syncWac ? 1 : 0, sortOrder]
       );
     }
-    createVersion(scheme.id, userStamp(req), existing ? '修改费用字段：' + fieldName : '新增费用字段：' + fieldName);
+    if (syncWac) {
+      const skuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [scheme.brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || scheme.brand, country: scheme.country }));
+      const sync = syncPriceSystemLandingCostsForWacKeys(skuKeys, userStamp(req), 'Enable field WAC auto sync');
+      const currentSchemeVersioned = sync && Array.isArray(sync.versions) && sync.versions.some(item => item.scheme_id === scheme.id);
+      if (!currentSchemeVersioned) createVersion(scheme.id, userStamp(req), existing ? '\u4fee\u6539\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName : '\u65b0\u589e\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName);
+    } else createVersion(scheme.id, userStamp(req), existing ? '\u4fee\u6539\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName : '\u65b0\u589e\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName);
     res.json(queryOne('SELECT * FROM price_system_fields WHERE id = ?', [id]));
   }));
 
@@ -617,6 +651,7 @@ function registerPriceSystemRoutes(app, deps) {
     if (!field) return res.status(404).json({ error: '费用字段不存在' });
     transaction(() => {
       run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, field.field_key]);
+      if (Number(field.sync_wac || 0) === 1) run('DELETE FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]);
       run('DELETE FROM price_system_fields WHERE id = ? AND scheme_id = ?', [field.id, scheme.id]);
     });
     createVersion(scheme.id, userStamp(req), '删除费用字段：' + field.field_name);
@@ -735,8 +770,8 @@ function registerPriceSystemRoutes(app, deps) {
       run('DELETE FROM price_system_fields WHERE scheme_id = ?', [scheme.id]);
       snapshotFields.forEach(field => {
         run(
-          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
+          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', Number(field.sync_wac || 0), Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
         );
       });
       snapshotValues.forEach(value => {
@@ -749,7 +784,13 @@ function registerPriceSystemRoutes(app, deps) {
       snapshotLandingCosts.forEach(value => run('INSERT INTO price_system_landing_costs (id, scheme_id, sku_code, wac_history_id, value, currency, warehouse, ci_no, version_no, confirmed_at, last_inbound_date, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [genId('pslc'), scheme.id, value.sku_code, value.wac_history_id, Number(value.value), value.currency || '', value.warehouse || '', value.ci_no || '', Number(value.version_no || 0), value.confirmed_at || '', value.last_inbound_date || '', req.currentUserId || '']));
       snapshotSrpValues.forEach(value => run('INSERT INTO price_system_srp_values (id, scheme_id, sku_code, value, updated_by) VALUES (?, ?, ?, ?, ?)', [genId('pssrp'), scheme.id, value.sku_code, Number(value.value), req.currentUserId || '']));
     });
-    const nextVersion = createVersion(scheme.id, userStamp(req), '恢复历史版本 #' + version.version_no);
+    let nextVersion = createVersion(scheme.id, userStamp(req), '恢复历史版本 #' + version.version_no);
+    if (snapshotFields.some(field => Number(field.sync_wac || 0) === 1)) {
+      const skuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [scheme.brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || scheme.brand, country: scheme.country }));
+      const sync = syncPriceSystemLandingCostsForWacKeys(skuKeys, userStamp(req), 'Reconcile WAC after version restore');
+      const restoredWacVersion = sync && Array.isArray(sync.versions) ? sync.versions.find(item => item.scheme_id === scheme.id) : null;
+      if (restoredWacVersion) nextVersion = restoredWacVersion.version_no;
+    }
     res.json({ success: true, restored_version: version.version_no, version_no: nextVersion });
   }));
 

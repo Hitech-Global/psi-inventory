@@ -10,7 +10,10 @@ const api = fs.readFileSync(path.join(root, 'price-system-api.js'), 'utf8');
 test('price table removes Product Name and adds WAC-backed Landing Cost', () => {
   assert.doesNotMatch(ui, /tr\('product'\)|product_name/);
   assert.match(ui, /tr\('landingCost'\)/);
-  assert.doesNotMatch(ui, /psOpenWacSyncModal|psConfirmWacSync|landing-cost\/sync-wac/);
+  assert.doesNotMatch(ui, /psOpenWacSyncModal|psConfirmWacSync|psOpenFormulaModal|landing-cost\/sync-wac/);
+  assert.match(ui, /ps-field-sync-wac/);
+  assert.match(ui, /syncWacFieldHelp/);
+  assert.match(api, /sync_wac INTEGER|sync_wac = ?/);
   assert.match(api, /createPriceSystemWacSync/);
   assert.match(api, /price_system_landing_costs/);
   assert.match(api, /wacCountryAliases/);
@@ -30,14 +33,19 @@ test('manual SRP import overrides formula output and is included in version hist
   assert.match(api, /srpSource = 'manual'/);
   assert.match(api, /snapshotLandingCosts/);
   assert.match(api, /snapshotSrpValues/);
-  assert.ok(api.indexOf('if (manualSrpBySku.has') < api.indexOf("else if (String(scheme.srp_formula"));
+  assert.match(api, /sync_wac, sort_order, is_active/);
+  assert.ok(api.includes("fieldMap.has('srp')"));
+  assert.ok(api.includes("id: 'builtin-srp'"));
   assert.match(ui, /srpIdx=headers\.findIndex/);
+  assert.match(ui, /id==='builtin-srp'/);
   assert.match(ui, /row\.srp=srp/);
 });
 
 test('Excel export includes Landing Cost and SRP without a Product Name column', () => {
-  assert.match(ui, /const headers=\[tr\('category'\),'SKU',tr\('stock'\),tr\('landingCost'\)\]/);
-  assert.match(ui, /r\.landing_cost/);
+  assert.match(ui, /const exportFields=state\.fields\.filter/);
+  assert.match(ui, /r\.values\?r\.values\[f\.field_key\]/);
+  assert.match(ui, /Number\(f\.sync_wac\|\|0\)===1/);
+  assert.match(ui, /field_type!=='formula'&&Number\(f\.sync_wac\|\|0\)!==1/);
   assert.match(ui, /r\.srp==null\?'':r\.srp/);
 });
 
@@ -161,4 +169,53 @@ test('price system provides an Excel template without requiring manual WAC sync'
   assert.ok(ui.includes("book_append_sheet(wb,note,tr('templateInstructions'))"));
   assert.ok(ui.includes("const headers=['SKU',tr('category'),tr('srp')]"));
   assert.ok(ui.includes('manual.map(f=>f.field_name'));
+});
+
+test('creating a WAC-backed amount field immediately imports the latest confirmed WAC', async () => {
+  const { registerPriceSystemRoutes } = require('../price-system-api');
+  const routes = new Map(), runs = [], queries = [], fields = [], landing = [], versions = [];
+  const scheme = { id: 'scheme-wac', country: 'Indonesia', brand: 'Netac', platform: 'Shopee', currency: 'IDR', status: 'active', srp_formula: '' };
+  const sku = { sku_code: 'SKU-WAC-1', brand: 'Netac' };
+  const wac = { id: 'wac-latest', sku_code: 'SKU-WAC-1', brand: 'Netac', country: 'Indonesia', warehouse: 'Bekasi Warehouse', new_avg_cost: 456.78, local_currency: 'IDR', ci_no: 'CI-WAC', version_no: 2, confirmed_at: '2026-11-20 10:00:00', last_inbound_date: '2026-11-20' };
+  const app = { get:(p,...h)=>routes.set('GET '+p,h), post:(p,...h)=>routes.set('POST '+p,h), put:(p,...h)=>routes.set('PUT '+p,h), delete:(p,...h)=>routes.set('DELETE '+p,h) };
+  const query = (sql, params=[]) => {
+    queries.push({sql,params});
+    if (sql.includes('SELECT sku_code, brand FROM skus WHERE brand = ?')) return { rows:[sku] };
+    if (sql.includes('SELECT sku_code, brand FROM skus WHERE sku_code IN')) return { rows:[sku] };
+    if (sql.includes('FROM price_system_schemes ps WHERE ps.status')) return { rows:fields.some(f=>f.sync_wac===1)?[scheme]:[] };
+    if (sql.includes('FROM wac_history wh')) return { rows:[wac] };
+    if (sql.includes('FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code IN')) return { rows:[] };
+    if (sql.includes('FROM price_system_fields')) return { rows:fields.filter(f=>f.scheme_id===params[0]) };
+    if (sql.includes('FROM price_system_values')) return { rows:[] };
+    if (sql.includes('FROM price_system_landing_costs')) return { rows:landing.filter(x=>x.scheme_id===params[0]) };
+    if (sql.includes('FROM price_system_srp_values')) return { rows:[] };
+    return { rows:[] };
+  };
+  const queryOne = (sql, params=[]) => {
+    queries.push({sql,params});
+    if (sql.includes('SELECT * FROM price_system_schemes WHERE id = ?')) return scheme;
+    if (sql.includes('SELECT code FROM countries')) return {code:'ID'};
+    if (sql.includes('SELECT id FROM price_system_fields')) return null;
+    if (sql.includes('SELECT * FROM price_system_fields WHERE id = ?')) return fields.find(f=>f.id===params[0])||null;
+    if (sql.includes('MAX(version_no)')) return {max_version:0};
+    return null;
+  };
+  const run = (sql, params=[]) => {
+    runs.push({sql,params});
+    if (sql.includes('INSERT INTO price_system_fields')) fields.push({id:params[0],scheme_id:params[1],field_key:params[2],field_name:params[3],field_type:params[4],unit:params[5],applicable_categories:params[6],formula:params[7],sync_wac:params[8],sort_order:params[9],is_active:1});
+    if (sql.includes('INSERT INTO price_system_landing_costs')) landing.push({id:params[0],scheme_id:params[1],sku_code:params[2],wac_history_id:params[3],value:params[4],currency:params[5],warehouse:params[6],ci_no:params[7],version_no:params[8],confirmed_at:params[9],last_inbound_date:params[10]});
+    if (sql.includes('INSERT INTO price_system_versions')) versions.push({scheme_id:params[1],version_no:params[2],note:params[4]});
+  };
+  registerPriceSystemRoutes(app,{query,queryOne,run,transaction:fn=>fn(),genId:p=>p+'-'+(runs.length+1),requireApiPermission:()=> (req,res,next)=>next(),asyncHandler:fn=>fn,needsDataScopeFilter:()=>false});
+  const handlers=routes.get('POST /api/price-system/schemes/:id/fields');
+  const req={params:{id:scheme.id},body:{field_name:'Landing Cost',field_key:'landing_cost',field_type:'amount',unit:'IDR',sync_wac:true,applicable_categories:[]},currentUserPermissions:['*'],currentUserId:'tester',currentUserName:'Tester'};
+  const res={statusCode:200,status(code){this.statusCode=code;return this;},json(value){this.body=value;return this;}};
+  for(const middleware of handlers.slice(0,-1)) await new Promise((resolve,reject)=>{try{middleware(req,res,resolve);}catch(e){reject(e);}});
+  await handlers[handlers.length-1](req,res,()=>{});
+  assert.equal(res.statusCode,200);
+  assert.equal(fields[0].sync_wac,1);
+  assert.equal(landing[0].wac_history_id,'wac-latest');
+  assert.equal(landing[0].value,456.78);
+  assert.equal(versions.length,1,'initial WAC import should be included in one scheme version');
+  assert.ok(queries.some(x=>x.sql.includes('FROM wac_history wh')));
 });
