@@ -7,12 +7,14 @@ test('creates all price system tables and indexes idempotently through IF NOT EX
   const statements = [];
   ensurePriceSystemSchema(sql => statements.push(sql), true);
   const joined = statements.join('\n');
-  for (const table of ['price_system_schemes','price_system_fields','price_system_values','price_system_versions']) {
+  for (const table of ['price_system_schemes','price_system_fields','price_system_values','price_system_versions','price_system_landing_costs','price_system_srp_values']) {
     assert.match(joined, new RegExp('CREATE TABLE IF NOT EXISTS ' + table));
   }
   assert.match(joined, /UNIQUE \(country, brand, platform, shop_name\)/);
   assert.match(joined, /UNIQUE \(scheme_id, sku_code, field_key\)/);
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_values_scheme_sku/);
+  assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_landing_costs_scheme_sku/);
+  assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_srp_values_scheme_sku/);
 });
 
 test('uses SQLite-compatible timestamp defaults on local database', () => {

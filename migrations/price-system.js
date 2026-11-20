@@ -58,6 +58,10 @@ function ensurePriceSystemSchema(run, isPg) {
   run('CREATE INDEX IF NOT EXISTS idx_price_system_fields_scheme ON price_system_fields(scheme_id, sort_order)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_values_scheme_sku ON price_system_values(scheme_id, sku_code)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_versions_scheme ON price_system_versions(scheme_id, version_no DESC)');
+  run('CREATE TABLE IF NOT EXISTS price_system_landing_costs (id TEXT PRIMARY KEY NOT NULL, scheme_id TEXT NOT NULL, sku_code TEXT NOT NULL, wac_history_id TEXT NOT NULL, value NUMERIC(18,6) NOT NULL, currency TEXT NOT NULL DEFAULT \'\', warehouse TEXT NOT NULL DEFAULT \'\', ci_no TEXT NOT NULL DEFAULT \'\', version_no INTEGER NOT NULL DEFAULT 0, confirmed_at TEXT NOT NULL DEFAULT \'\', last_inbound_date TEXT NOT NULL DEFAULT \'\', updated_by TEXT NOT NULL DEFAULT \'\', updated_at TEXT DEFAULT ' + now + ', UNIQUE (scheme_id, sku_code))');
+  run('CREATE TABLE IF NOT EXISTS price_system_srp_values (id TEXT PRIMARY KEY NOT NULL, scheme_id TEXT NOT NULL, sku_code TEXT NOT NULL, value NUMERIC(18,6) NOT NULL, updated_by TEXT NOT NULL DEFAULT \'\', updated_at TEXT DEFAULT ' + now + ', UNIQUE (scheme_id, sku_code))');
+  run('CREATE INDEX IF NOT EXISTS idx_price_system_landing_costs_scheme_sku ON price_system_landing_costs(scheme_id, sku_code)');
+  run('CREATE INDEX IF NOT EXISTS idx_price_system_srp_values_scheme_sku ON price_system_srp_values(scheme_id, sku_code)');
 }
 
 module.exports = { ensurePriceSystemSchema };

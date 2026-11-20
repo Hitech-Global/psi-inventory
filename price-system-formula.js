@@ -7,6 +7,7 @@ const BUILTIN_PRICE_VARIABLES = Object.freeze([
   'weighted_avg_cost',
   'inventory_wac',
   'reference_customs_rate',
+  'landing_cost',
   'stock_qty',
   'inventory_qty'
 ]);
