@@ -87,5 +87,5 @@ test('expanded logistics rows hydrate shared allocations by batch ID on every op
   assert.match(source, /hydrateSharedFreight\(ciId, data \|\| \[\], token\)/);
   assert.match(source, /hydrateSharedFreight\(ciId, rows \|\| \[\], state\.reqSeq\)/);
   assert.match(source, /Number\(item\.total_minor\) \/ 100/);
-  assert.match(html, /ci-list-inline-logistics\.js\?v=20261116-1/);
+  assert.match(html, /ci-list-inline-logistics\.js\?v=20261120-2/);
 });
