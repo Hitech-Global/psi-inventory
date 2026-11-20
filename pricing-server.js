@@ -21,7 +21,12 @@ function registerPricingRoutes(app, deps) {
     return perms.includes('*') || perms.includes('inventory_view');
   };
   const requirePricingView = requireApiPermission('pricing_view');
-  const requirePricingEdit = requireApiPermission('pricing_edit');
+  const requirePricingEdit = (req, res, next) => {
+    const permissions = req.currentUserPermissions || [];
+    if (!permissions.includes('*') && !permissions.includes('pricing_edit')) return res.status(403).json({ error: '没有价格体系编辑权限' });
+    if (!canViewAmounts(req)) return res.status(403).json({ error: '没有查看和编辑价格金额的权限' });
+    next();
+  };
 
   function safeNumber(value, fallback) {
     if (value === '' || value === null || value === undefined) return fallback === undefined ? null : fallback;
@@ -165,7 +170,7 @@ function registerPricingRoutes(app, deps) {
         return (order[a.group_type] || 3) - (order[b.group_type] || 3) ||
           Number(a.display_order || 0) - Number(b.display_order || 0);
       });
-      sortedFields.forEach(field => {
+      sortedFields.filter(field => field.group_type !== 'fee').forEach(field => {
         const override = skuValues[String(field.field_key)];
         let value = null;
         if (override && Number(override.is_applicable) === 0) {
@@ -203,17 +208,24 @@ function registerPricingRoutes(app, deps) {
 
       sortedFields.filter(field => field.group_type === 'fee').forEach(field => {
         const override = skuValues[String(field.field_key)];
-        let value = fieldValues[String(field.field_key)];
-        if (!(override && (override.value !== null && override.value !== undefined || Number(override.is_applicable) === 0)) &&
-            !(String(field.calculation_type || 'manual') === 'formula' && field.formula)) {
+        let value = null;
+        if (override && Number(override.is_applicable) === 0) {
+          value = null;
+        } else if (override && override.value !== null && override.value !== undefined && override.value !== '') {
+          value = safeNumber(override.value, null);
+        } else if (String(field.calculation_type || 'manual') === 'formula' && field.formula) {
+          try { value = core.evaluateFormula(field.formula, context); } catch (_) { value = null; }
+        } else {
           const fieldRules = rulesByField.get(String(field.id)) || [];
           const matched = core.resolvePricingRule(fieldRules, { sku_code: sku.sku_code, category: category });
           if (matched) {
             try { value = core.calculateRuleValue(matched, context); } catch (_) { value = null; }
+          } else if (field.default_value !== null && field.default_value !== undefined && field.default_value !== '') {
+            value = safeNumber(field.default_value, null);
           }
-          fieldValues[String(field.field_key)] = value;
-          context[String(field.field_key).toUpperCase()] = value;
         }
+        fieldValues[String(field.field_key)] = value;
+        context[String(field.field_key).toUpperCase()] = value;
       });
 
       let deductions = 0;
@@ -225,8 +237,8 @@ function registerPricingRoutes(app, deps) {
         deductions += Number(value);
         hasDeduction = true;
       });
-      const profit = srp === null ? null : Math.round((Number(srp) - deductions) * 10000) / 10000;
-      const profitRate = srp && Number(srp) !== 0 ? Math.round((profit / Number(srp)) * 10000) / 100 : null;
+      const profit = srp === null || !hasDeduction ? null : Math.round((Number(srp) - deductions) * 10000) / 10000;
+      const profitRate = profit !== null && srp && Number(srp) !== 0 ? Math.round((profit / Number(srp)) * 10000) / 100 : null;
       return {
         sku_code: sku.sku_code,
         product_name: sku.product_name || '',
@@ -276,19 +288,9 @@ function registerPricingRoutes(app, deps) {
     if (req.query.brand) { filters.push('brand = ?'); params.push(String(req.query.brand)); }
     if (req.query.platform) { filters.push('platform = ?'); params.push(String(req.query.platform)); }
     if (req.query.status) { filters.push('status = ?'); params.push(String(req.query.status)); }
-    if (needsDataScopeFilter(req)) {
-      const scope = buildDashboardScopeFilters(req);
-      const scoped = scope && scope.ci ? scope.ci : { sql: '', params: [] };
-      if (scoped.sql) {
-        const sql = 'SELECT id FROM pricing_schemes WHERE 1=1' + scoped.sql;
-        const allowed = query(sql, scoped.params).rows.map(row => row.id);
-        if (!allowed.length) return res.json([]);
-        filters.push('id IN (' + allowed.map(() => '?').join(',') + ')');
-        params.push(...allowed);
-      }
-    }
     const where = filters.length ? ' WHERE ' + filters.join(' AND ') : '';
-    const rows = query('SELECT * FROM pricing_schemes' + where + ' ORDER BY updated_at DESC, created_at DESC', params).rows;
+    const rows = query('SELECT * FROM pricing_schemes' + where + ' ORDER BY updated_at DESC, created_at DESC', params).rows
+      .filter(scheme => schemeAllowed(req, scheme));
     res.json(rows);
   }));
 
@@ -300,6 +302,7 @@ function registerPricingRoutes(app, deps) {
     if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和电商平台不能为空' });
     if (!queryOne('SELECT id FROM countries WHERE name = ?', [country])) return res.status(400).json({ error: '国家不存在' });
     if (!queryOne('SELECT sku_code FROM skus WHERE brand = ? LIMIT 1', [brand])) return res.status(400).json({ error: '品牌不存在或没有 SKU 主数据' });
+    if (!schemeAllowed(req, { country: country, brand: brand })) return res.status(403).json({ error: '当前账号没有该国家或品牌的数据权限' });
     const currency = String(body.currency || (queryOne('SELECT default_currency FROM countries WHERE name = ?', [country]) || {}).default_currency || '').toUpperCase();
     const id = genId('price');
     const now = new Date().toISOString();
@@ -326,6 +329,7 @@ function registerPricingRoutes(app, deps) {
     if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和电商平台不能为空' });
     if (!queryOne('SELECT id FROM countries WHERE name = ?', [country])) return res.status(400).json({ error: '国家不存在' });
     if (!queryOne('SELECT sku_code FROM skus WHERE brand = ? LIMIT 1', [brand])) return res.status(400).json({ error: '品牌不存在或没有 SKU 主数据' });
+    if (!schemeAllowed(req, { country: country, brand: brand })) return res.status(403).json({ error: '当前账号没有该国家或品牌的数据权限' });
     const currency = String(body.currency === undefined ? scheme.currency : body.currency || '').toUpperCase();
     run('UPDATE pricing_schemes SET country = ?, brand = ?, platform = ?, store = ?, currency = ?, exchange_rate = ?, status = ?, description = ?, effective_date = ?, updated_by = ?, updated_at = ? WHERE id = ?',
       [country, brand, platform, String(body.store === undefined ? scheme.store : body.store || '').trim(), currency,
@@ -531,14 +535,9 @@ function registerPricingRoutes(app, deps) {
         if (!allowed.has(fieldKey)) { unknown.add(key); return; }
         const value = safeNumber(values[key], null);
         if (value === null) return;
-        const existing = queryOne('SELECT id FROM pricing_sku_values WHERE scheme_id = ? AND sku_code = ? AND field_key = ?', [scheme.id, skuCode, fieldKey]);
-        if (existing) {
-          run('UPDATE pricing_sku_values SET value = ?, is_applicable = 1, updated_by = ?, updated_at = ? WHERE id = ?',
-            [value, String(req.currentUserId || ''), now, existing.id]);
-        } else {
-          run('INSERT INTO pricing_sku_values (id, scheme_id, sku_code, field_key, value, is_applicable, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)',
-            [genId('pvalue'), scheme.id, skuCode, fieldKey, value, String(req.currentUserId || ''), now, now]);
-        }
+        run('INSERT INTO pricing_sku_values (id, scheme_id, sku_code, field_key, value, is_applicable, updated_by, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?) ' +
+          'ON CONFLICT(scheme_id, sku_code, field_key) DO UPDATE SET value = excluded.value, is_applicable = 1, updated_by = excluded.updated_by, updated_at = excluded.updated_at',
+          [genId('pvalue'), scheme.id, skuCode, fieldKey, value, String(req.currentUserId || ''), now, now]);
       });
       imported++;
     });
@@ -553,14 +552,16 @@ function registerPricingRoutes(app, deps) {
     if (formula) {
       try {
         const sample = queryOne('SELECT purchase_price_rmb FROM skus WHERE brand = ? ORDER BY sku_code LIMIT 1', [scheme.brand]);
-        core.evaluateFormula(formula, {
+        const variables = {
           FOB_RMB: safeNumber(sample && sample.purchase_price_rmb, 0),
           RMB_TO_LOCAL: safeNumber(req.body.exchange_rate === undefined ? scheme.exchange_rate : req.body.exchange_rate, 0),
           EXCHANGE_RATE: safeNumber(req.body.exchange_rate === undefined ? scheme.exchange_rate : req.body.exchange_rate, 0),
           SRP: 0,
           LANDING_COST_CNY: 0,
           LANDING_COST_LOCAL: 0
-        });
+        };
+        query('SELECT field_key FROM pricing_fields WHERE scheme_id = ?', [scheme.id]).rows.forEach(field => { variables[String(field.field_key).toUpperCase()] = 0; });
+        core.evaluateFormula(formula, variables);
       } catch (error) {
         return res.status(400).json({ error: 'SRP 公式校验失败：' + error.message });
       }
