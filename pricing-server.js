@@ -159,8 +159,8 @@ function registerPricingRoutes(app, deps) {
       const stockQty = stockBySku.has(String(sku.sku_code)) ? stockBySku.get(String(sku.sku_code)) : 0;
       const context = {
         FOB_RMB: fob,
-        RMB_TO_LOCAL: safeNumber(scheme.exchange_rate, 0),
-        EXCHANGE_RATE: safeNumber(scheme.exchange_rate, 0),
+        RMB_TO_LOCAL: safeNumber(scheme.exchange_rate, 0) > 0 ? safeNumber(scheme.exchange_rate, 0) : null,
+        EXCHANGE_RATE: safeNumber(scheme.exchange_rate, 0) > 0 ? safeNumber(scheme.exchange_rate, 0) : null,
         INVENTORY_QTY: stockQty,
         SKU: 0
       };
@@ -196,6 +196,8 @@ function registerPricingRoutes(app, deps) {
       let formulaError = '';
       if (String(scheme.srp_formula || '').trim()) {
         try {
+          if (/\\bFOB_RMB\\b/i.test(scheme.srp_formula) && (fob === null || fob <= 0)) throw new Error('FOB-RMB 尚未维护');
+          if (/\\b(?:RMB_TO_LOCAL|EXCHANGE_RATE)\\b/i.test(scheme.srp_formula) && !(safeNumber(scheme.exchange_rate, 0) > 0)) throw new Error('请先设置人民币兑本币汇率');
           srp = core.evaluateFormula(scheme.srp_formula, context);
           context.SRP = srp;
           context.SRP_LOCAL = srp;
