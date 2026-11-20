@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { evaluateFormula, getFormulaVariables, validateFormula } = require('../price-system-formula');
 
 test('evaluates arithmetic, precedence, parentheses and unary signs', () => {
-  assert.equal(evaluateFormula('(purchase_price_rmb + freight) * 1.08', { purchase_price_rmb: 100, freight: 20 }), 129.6);
+  assert.ok(Math.abs(evaluateFormula('(purchase_price_rmb + freight) * 1.08', { purchase_price_rmb: 100, freight: 20 }) - 129.6) < 1e-9);
   assert.equal(evaluateFormula('-2 + 3 * 4', {}), 10);
   assert.equal(evaluateFormula('10 / (2 + 3)', {}), 2);
 });
