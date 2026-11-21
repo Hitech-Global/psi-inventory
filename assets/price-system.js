@@ -77,6 +77,7 @@ function styles(){
  '.ps-editor-formula-help{margin-top:8px;color:#858d98;font-size:11px;line-height:1.6}.ps-formula-preview{margin-top:10px;padding:10px 12px;border:1px solid #e6eaf0;border-radius:8px;background:#fafbfc;font-size:12px;line-height:1.6}.ps-formula-preview-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.ps-formula-preview-ok{color:#16803c;font-weight:650}.ps-formula-preview-result{color:#273444;font-weight:650}.ps-formula-preview-meta{margin-top:3px;color:#818a96;font-size:11px}.ps-formula-preview-error{color:#c43c3c;font-size:12px}.ps-field-modal-btn{height:34px;padding:0 14px;border:1px solid #dfe3e9;border-radius:8px;background:#fff;color:#4b5563;font:inherit;font-size:12px;cursor:pointer}.ps-field-modal-btn.primary{background:#0071e3;border-color:#0071e3;color:#fff;font-weight:600}.ps-field-modal-btn:hover{filter:brightness(.98)}',
  '.ps-formula-palette{display:flex;flex-direction:column;gap:10px;margin-bottom:10px}.ps-formula-palette-title{margin-bottom:6px;color:#6e7682;font-size:11px;font-weight:650}.ps-formula-chips{display:flex;flex-wrap:wrap;gap:6px;max-height:118px;overflow:auto;padding:1px}.ps-formula-token{display:inline-flex;align-items:center;gap:5px;min-height:28px;padding:4px 8px;border:1px solid #e3e7ed;border-radius:7px;background:#f8fafc;color:#3e4855;font:inherit;font-size:11px;cursor:pointer}.ps-formula-token:hover{border-color:#8bb9e8;background:#f0f7ff;color:#145c9e}.ps-formula-token code{color:#7d8794;font-size:10px}.ps-formula-operators .ps-formula-token{min-width:31px;justify-content:center;font-size:14px;font-weight:650}.ps-formula-empty{color:#9aa1aa;font-size:11px;padding:5px 0}',
  '.ps-category-formula-list{display:flex;flex-direction:column;gap:10px}.ps-category-formula-row{border:1px solid #e5e9ef;border-radius:9px;padding:10px;background:#fff}.ps-category-formula-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:7px;color:#303743;font-size:12px}.ps-category-formula-input{width:100%;min-height:64px;resize:vertical;border:1px solid #dfe3e9;border-radius:7px;padding:8px 10px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#263445;background:#fbfcfe}.ps-category-formula-input:focus{outline:none;border-color:#6aa5e8;box-shadow:0 0 0 2px rgba(0,113,227,.1)}.ps-category-formula-preview{margin-top:6px;color:#818a96;font-size:11px;min-height:16px}',
+ '.ps-formula-rules-title{display:flex;align-items:center;justify-content:space-between;gap:12px}.ps-formula-rules-title .ps-btn{font-size:12px;padding:6px 10px}.ps-formula-rules-list{display:flex;flex-direction:column;gap:12px}.ps-formula-rule-card{border:1px solid #dfe5ee;border-radius:10px;padding:11px;background:#fff}.ps-formula-rule-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:9px;color:#303743}.ps-formula-rule-top>div{display:flex;gap:8px}.ps-formula-rule-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(300px,1fr);gap:10px}.ps-formula-rule-editor,.ps-formula-rule-categories{border:1px solid #e3e8f0;border-radius:9px;padding:10px;min-width:0}.ps-formula-rule-section-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}.ps-formula-rule-input{width:100%;min-height:112px;resize:vertical;border:1px solid #d9e0ea;border-radius:8px;padding:10px;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#263445;background:#fbfcfe}.ps-formula-rule-input:focus,.ps-rule-category-search:focus{outline:none;border-color:#6aa5e8;box-shadow:0 0 0 2px rgba(0,113,227,.1)}.ps-formula-rule-preview{margin-top:7px;min-height:16px;color:#818a96;font-size:11px}.ps-rule-category-search{width:100%;height:31px;margin-top:8px;border:1px solid #dfe3e9;border-radius:7px;padding:5px 9px;font:inherit;font-size:12px}.ps-rule-category-toolbar{display:flex;align-items:center;gap:12px;margin:7px 0;color:#1671c9;font-size:12px}.ps-rule-category-toolbar button{border:0;background:none;padding:0;color:#1671c9;cursor:pointer}.ps-rule-category-toolbar span{margin-left:auto;color:#818a96}.ps-rule-category-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 10px;border:1px solid #e5e9ef;border-radius:8px;padding:8px;max-height:125px;overflow:auto}.ps-rule-category-option{display:flex;align-items:center;gap:7px;min-width:0;font-size:12px;cursor:pointer}.ps-rule-category-option.is-disabled{opacity:.4;cursor:not-allowed}.ps-rule-category-option input{accent-color:#1677df}.ps-formula-rule-summary{display:flex;align-items:center;gap:10px;margin-top:8px;padding:8px 10px;border:1px solid #e5e9ef;border-radius:8px;background:#f8fafc;min-width:0}.ps-formula-rule-summary>strong{white-space:nowrap;font-size:11px}.ps-formula-rule-chips{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-width:0}.ps-rule-category-chip{border:1px solid #d4e3f4;background:#eef6ff;color:#34516e;border-radius:6px;padding:3px 7px;font:inherit;font-size:11px;cursor:pointer}.ps-rule-category-chip span{margin-left:4px;color:#6f8195}.ps-formula-rule-summary-note{margin-left:auto;color:#818a96;font-size:11px;white-space:nowrap}.ps-formula-rule-card .ps-field-action.danger{color:#c43b36}@media(max-width:760px){.ps-formula-rule-grid{grid-template-columns:1fr}.ps-formula-rule-summary{align-items:flex-start;flex-wrap:wrap}.ps-formula-rule-summary-note{width:100%;margin-left:0}.ps-rule-category-list{grid-template-columns:1fr}}',
  '@media(max-width:640px){#modal-content.modal-price-fields .modal-body,#modal-content.modal-price-field-editor .modal-body{padding:13px}.ps-fields-toolbar{align-items:flex-start;flex-direction:column}.ps-field-row{grid-template-columns:30px minmax(0,1fr);gap:8px}.ps-field-actions{grid-column:2;justify-content:flex-end}.ps-field-top{align-items:flex-start;flex-direction:column}.ps-field-badges{justify-content:flex-start}.ps-editor-grid,.ps-category-chips{grid-template-columns:1fr}.ps-editor-switch-line{align-items:flex-start}}',
  '#ps-root .ps-version{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid #eee}#ps-root .ps-version-meta{color:#888;font-size:11px;margin-top:3px}',
  '@media(max-width:900px){#ps-root .ps-head{flex-direction:column}#ps-root .ps-table-wrap{max-height:none}#ps-root .ps-select{min-width:180px}}'
@@ -262,9 +263,10 @@ function formulaBuilderHtml(field){
 }
 window.psInsertFormulaToken=function(token){
  const active=document.activeElement;
- if(active&&active.classList&&active.classList.contains('ps-category-formula-input'))window.__psFormulaTargetInput=active;
+ if(active&&active.classList&&(active.classList.contains('ps-category-formula-input')||active.classList.contains('ps-formula-rule-input')))window.__psFormulaTargetInput=active;
  const remembered=window.__psFormulaTargetInput;
- const input=active&&active.classList&&active.classList.contains('ps-category-formula-input')?active:(remembered&&document.contains(remembered)?remembered:document.getElementById('ps-field-formula'));if(!input)return;
+ const isRuleInput=el=>el&&el.classList&&(el.classList.contains('ps-category-formula-input')||el.classList.contains('ps-formula-rule-input'));
+ const input=isRuleInput(active)?active:(remembered&&document.contains(remembered)?remembered:document.getElementById('ps-field-formula'));if(!input)return;
  const start=Number.isInteger(input.selectionStart)?input.selectionStart:input.value.length;
  const end=Number.isInteger(input.selectionEnd)?input.selectionEnd:start;
  const operator=['+','-','*','/'].includes(token);
@@ -273,7 +275,8 @@ window.psInsertFormulaToken=function(token){
  const text=isFunction?token+'(':(token==='%'?'%':(operator?' '+token+' ':(token==='('? '(': (token===')'?')':' '+displayToken+' '))));
  input.value=input.value.slice(0,start)+text+input.value.slice(end);
  const caret=start+text.length;input.focus();input.setSelectionRange(caret,caret);
- window.psFormulaInputChanged();
+ if(input.classList.contains('ps-formula-rule-input'))window.psFormulaRuleChanged(Number(input.getAttribute('data-rule-index')),input);
+ else window.psFormulaInputChanged();
 };
 window.psFormulaInputChanged=function(){
  const input=document.getElementById('ps-field-formula'),type=document.getElementById('ps-field-type');
@@ -321,7 +324,18 @@ function collectFieldEditorValues(){
  const total=document.querySelectorAll('.ps-cat-check').length;
  let field_type=document.getElementById('ps-field-type')?.value||'amount';
  const formula_rules={};
- if(field_type==='formula')document.querySelectorAll('.ps-category-formula-input').forEach(input=>{const category=String(input.getAttribute('data-category')||'').trim(),expression=String(input.value||'').trim();if(category&&expression)formula_rules[category]=expression;});
+ if(field_type==='formula'){
+  const used=new Map();
+  (window.__psFormulaRulesDraft||[]).forEach((rule,index)=>{
+   const expression=String(rule.formula||'').trim(),categories=Array.isArray(rule.categories)?rule.categories:[];
+   if(!expression&&!categories.length)return;
+   if(!expression||!categories.length)throw new Error('每条公式规则都需要填写公式并至少选择一个适用类目。');
+   categories.forEach(category=>{
+    if(used.has(category))throw new Error('类目「'+category+'」被多个公式规则重复选择，请调整适用类目。');
+    used.set(category,index);formula_rules[category]=expression;
+   });
+  });
+ }
  const applicable_categories=field_type==='formula'?[]:((!checked.length||checked.length===total)?[]:checked);
  return {field_name,field_key,unit,formula:'',formula_rules,sync_wac,applicable_categories,field_type};
 }
@@ -332,54 +346,89 @@ window.psSelectAllCategories=function(){
  checks.forEach(x=>{x.checked=selectAll;});
  window.psUpdateCategorySelectAll();
 };
-window.psOpenFieldEditor=function(id,percentDefault){
- const f=state.fields.find(x=>x.id===id)||null;
- const selected=new Set(f?cats(f):[]);
- const categoryList=Array.from(new Set(state.rows.map(x=>String(x.category||'').trim()).filter(Boolean).concat(Array.from(selected)))).sort();
- let formulaRules={};
- if(f&&f.formula_rules){try{formulaRules=typeof f.formula_rules==='string'?JSON.parse(f.formula_rules):f.formula_rules;}catch(e){formulaRules={};}}
- if(!formulaRules||typeof formulaRules!=='object'||Array.isArray(formulaRules))formulaRules={};
- if(f&&f.field_type==='formula'&&!Object.keys(formulaRules).length&&String(f.formula||'').trim()){
-  const legacyCategories=selected.size?Array.from(selected):categoryList;
-  legacyCategories.forEach(category=>{formulaRules[category]=String(f.formula||'').trim();});
+function formulaRuleDraftsFromMap(map,legacyFormula,legacyCategories,categoryList){
+ const grouped=[];
+ Object.keys(map||{}).forEach(category=>{
+  const expression=String(map[category]||'').trim();if(!expression)return;
+  let rule=grouped.find(x=>x.formula===expression);
+  if(!rule){rule={formula:expression,categories:[]};grouped.push(rule);}
+  if(!rule.categories.includes(category))rule.categories.push(category);
+ });
+ if(!grouped.length&&String(legacyFormula||'').trim()){
+  const categories=legacyCategories&&legacyCategories.length?legacyCategories:categoryList;
+  if(categories.length)grouped.push({formula:String(legacyFormula).trim(),categories:categories.slice()});
  }
- Object.keys(formulaRules).forEach(category=>{formulaRules[category]=formulaDisplayExpression(formulaRules[category]);});
- const formulaRuleCategories=Array.from(new Set(categoryList.concat(Object.keys(formulaRules)))).sort();
- const formulaRuleRows=formulaRuleCategories.map((category,index)=>'<div class="ps-category-formula-row" data-category="'+esc(category)+'"><div class="ps-category-formula-head"><strong>'+esc(category)+'</strong><button type="button" class="ps-field-action" onclick="psPreviewCategoryFormula(\''+esc(category).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">'+tr('previewCategoryFormula')+'</button></div><textarea class="ps-category-formula-input" data-category="'+esc(category)+'" placeholder="=MIN(srp*8.5%,60000)" onfocus="window.__psFormulaTargetInput=this" oninput="psCategoryFormulaChanged(this)">'+esc(formulaRules[category]||'')+'</textarea><div class="ps-category-formula-preview" data-preview-category="'+esc(category)+'">'+tr('categoryFormulaPreviewEmpty')+'</div></div>').join('')||'<div class="ps-editor-help">'+tr('categoryFormulaEmpty')+'</div>';
+ return grouped;
+}
+window.psRenderFormulaRules=function(){
+ const host=document.getElementById('ps-formula-rules-list');if(!host)return;
+ const rules=window.__psFormulaRulesDraft||[],all=window.__psFormulaCategoryList||[];
+ host.innerHTML=rules.map((rule,index)=>{
+  const assigned=new Set();rules.forEach((other,otherIndex)=>{if(otherIndex!==index)(other.categories||[]).forEach(c=>assigned.add(c));});
+  const selected=new Set(rule.categories||[]);
+  const categories=all.map(category=>{
+   const disabled=assigned.has(category),checked=selected.has(category);
+   return '<label class="ps-rule-category-option '+(disabled?'is-disabled':'')+'"><input type="checkbox" value="'+esc(category)+'" '+(checked?'checked ':'')+(disabled?'disabled ':'')+'onchange="psSetRuleCategory('+index+',this.value,this.checked)"><span>'+esc(category)+'</span></label>';
+  }).join('');
+  const chips=(rule.categories||[]).map(category=>'<button type="button" class="ps-rule-category-chip" data-category="'+esc(category)+'" onclick="psRemoveRuleCategory('+index+',this.getAttribute(\\'data-category\\'))">'+esc(category)+' <span>×</span></button>').join('');
+  const count=(rule.categories||[]).length,formula=String(rule.formula||'');
+  return '<article class="ps-formula-rule-card" data-rule-index="'+index+'"><div class="ps-formula-rule-top"><strong>公式 '+(index+1)+'</strong><div><button type="button" class="ps-field-action" onclick="psCopyFormulaRule('+index+')">复制</button><button type="button" class="ps-field-action danger" onclick="psDeleteFormulaRule('+index+')">删除</button></div></div><div class="ps-formula-rule-grid"><section class="ps-formula-rule-editor"><div class="ps-formula-rule-section-head"><strong>计算公式</strong><button type="button" class="ps-field-action" onclick="psPreviewFormulaRule('+index+')">校验并预览</button></div><textarea class="ps-formula-rule-input" data-rule-index="'+index+'" onfocus="window.__psFormulaTargetInput=this" oninput="psFormulaRuleChanged('+index+',this)" placeholder="=MIN(SRP*8.5%,60000)">'+esc(formulaDisplayExpression(formula))+'</textarea><div class="ps-formula-rule-preview" id="ps-formula-rule-preview-'+index+'">填写公式后点击校验并预览。</div></section><section class="ps-formula-rule-categories"><strong>适用类目</strong><div class="ps-editor-help">选择该计算公式要应用的产品类目，可多选。</div><input class="ps-rule-category-search" type="search" placeholder="搜索类目" oninput="psFilterRuleCategories('+index+',this.value)"><div class="ps-rule-category-toolbar"><button type="button" onclick="psSelectAllRuleCategories('+index+')">全选</button><button type="button" onclick="psClearRuleCategories('+index+')">清空</button><span>已选 '+count+' / '+all.length+'</span></div><div class="ps-rule-category-list" id="ps-rule-category-list-'+index+'">'+(categories||'<span class="ps-editor-help">暂无产品类目</span>')+'</div></section></div><div class="ps-formula-rule-summary"><strong>已选类目（'+count+'）</strong><div class="ps-formula-rule-chips">'+(chips||'<span class="ps-editor-help">尚未选择类目</span>')+'</div><span class="ps-formula-rule-summary-note">'+(count?'该公式将应用于以上 '+count+' 个类目':'请选择该公式的适用类目')+'</span></div></article>';
+ }).join('')||'<div class="ps-editor-help">尚未添加公式规则，请点击「新增公式」。</div>';
+};
+window.psAddFormulaRule=function(){if(!window.__psFormulaRulesDraft)window.__psFormulaRulesDraft=[];window.__psFormulaRulesDraft.push({formula:'',categories:[]});window.psRenderFormulaRules();};
+window.psCopyFormulaRule=function(index){const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule)return;window.__psFormulaRulesDraft.splice(index+1,0,{formula:String(rule.formula||''),categories:[]});window.psRenderFormulaRules();};
+window.psDeleteFormulaRule=function(index){(window.__psFormulaRulesDraft||[]).splice(index,1);window.psRenderFormulaRules();};
+window.psSetRuleCategory=function(index,category,checked){
+ const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule)return;
+ if(checked){const taken=(window.__psFormulaRulesDraft||[]).some((x,i)=>i!==index&&(x.categories||[]).includes(category));if(taken){err(new Error('该类目已分配给其他公式规则。'));window.psRenderFormulaRules();return;}if(!rule.categories.includes(category))rule.categories.push(category);}
+ else rule.categories=rule.categories.filter(x=>x!==category);
+ window.psRenderFormulaRules();
+};
+window.psRemoveRuleCategory=function(index,category){window.psSetRuleCategory(index,category,false);};
+window.psSelectAllRuleCategories=function(index){
+ const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule)return;
+ const taken=new Set();(window.__psFormulaRulesDraft||[]).forEach((x,i)=>{if(i!==index)(x.categories||[]).forEach(c=>taken.add(c));});
+ (window.__psFormulaCategoryList||[]).forEach(c=>{if(!taken.has(c)&&!rule.categories.includes(c))rule.categories.push(c);});
+ window.psRenderFormulaRules();
+};
+window.psClearRuleCategories=function(index){const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule)return;rule.categories=[];window.psRenderFormulaRules();};
+window.psFilterRuleCategories=function(index,query){
+ const host=document.getElementById('ps-rule-category-list-'+index);if(!host)return;const q=String(query||'').trim().toLowerCase();
+ host.querySelectorAll('.ps-rule-category-option').forEach(label=>{label.style.display=label.textContent.toLowerCase().includes(q)?'':'none';});
+};
+window.psFormulaRuleChanged=function(index,input){
+ const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule||!input)return;rule.formula=String(input.value||'');
+ const preview=document.getElementById('ps-formula-rule-preview-'+index);if(preview)preview.textContent='填写公式后点击校验并预览。';
+ const type=document.getElementById('ps-field-type');if(input.value.trim()&&type&&type.value!=='formula'){type.value='formula';window.psToggleFormula();}
+};
+window.psPreviewFormulaRule=async function(index){
+ const rule=(window.__psFormulaRulesDraft||[])[index];if(!rule)return;const expression=String(rule.formula||'').trim(),preview=document.getElementById('ps-formula-rule-preview-'+index);
+ if(!expression){if(preview)preview.textContent='请先填写计算公式。';return;}
+ const category=(rule.categories||[])[0],row=category?state.rows.find(x=>String(x.category||'').trim()===category):state.rows[0]||null;
+ const variables=Object.assign({},row&&row.formula_context||{},row&&row.values||{});if(row&&row.srp!=null)variables.srp=Number(row.srp);
+ const fieldKey=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'';if(fieldKey)delete variables[fieldKey];
+ if(preview)preview.textContent='正在校验并预览…';
+ try{const result=await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula/preview','POST',{formula:expression,exclude_key:fieldKey,variables});if(preview)preview.textContent='校验通过 · '+(state.scheme.currency||'')+' '+fmt(result.result)+(row?' · '+row.sku_code:'');}
+ catch(e){if(preview)preview.textContent='公式校验失败：'+String(e&&e.message||e);}
+};
+window.psOpenFieldEditor=function(id,percentDefault){
+ const f=state.fields.find(x=>x.id===id)||null,selected=new Set(f?cats(f):[]);
+ const categoryList=Array.from(new Set(state.rows.map(x=>String(x.category||'').trim()).filter(Boolean).concat(Array.from(selected)))).sort();
+ let formulaRules={};if(f&&f.formula_rules){try{formulaRules=typeof f.formula_rules==='string'?JSON.parse(f.formula_rules):f.formula_rules;}catch(e){formulaRules={};}}
+ if(!formulaRules||typeof formulaRules!=='object'||Array.isArray(formulaRules))formulaRules={};
+ const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1);
+ window.__psFormulaCategoryList=categoryList;
+ window.__psFormulaRulesDraft=type==='formula'?formulaRuleDraftsFromMap(formulaRules,f&&f.formula,Array.from(selected),categoryList).map(rule=>({formula:formulaDisplayExpression(rule.formula),categories:rule.categories.slice()})):[];
  const allScope=categoryList.length>0&&selected.size===categoryList.length;
  const checks=categoryList.map(category=>'<label class="ps-category-chip"><input type="checkbox" class="ps-cat-check" value="'+esc(category)+'" '+((allScope||selected.has(category))?'checked':'')+' onchange="psUpdateCategorySelectAll()"> <span>'+esc(category)+'</span></label>').join('')||'<span class="ps-editor-help">—</span>';
- const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1);
- const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"><div class="ps-editor-section-title">'+tr('categoryFormulaRules')+'</div>'+formulaBuilderHtml(f)+'<div class="ps-category-formula-list">'+formulaRuleRows+'</div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
+ const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"><div class="ps-editor-section-title ps-formula-rules-title"><strong>公式规则</strong><button type="button" class="ps-btn primary" onclick="psAddFormulaRule()">＋ 新增公式</button></div>'+formulaBuilderHtml(f)+'<div class="ps-formula-rules-list" id="ps-formula-rules-list"></div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
  const percentSection='<section class="ps-editor-section" id="ps-percent-wrap" style="'+(type==='percent'?'':'display:none')+'"><div class="ps-editor-section-title">'+tr('percentSettings')+'</div><div class="ps-percent-setting"><div class="ps-percent-row"><label class="ps-percent-label" for="ps-field-default-percent">'+tr('defaultPercent')+'</label><div class="ps-percent-input-wrap"><input class="ps-percent-input" id="ps-field-default-percent" type="number" min="0" step="0.01" placeholder="8" value="'+esc(percentDefault==null?'':percentDefault)+'"><span class="ps-percent-suffix">%</span></div><button type="button" class="ps-percent-apply" onclick="psApplyPercentToSkus(\''+(f?esc(f.id):'')+'\')">'+tr('batchApplyPercent')+'</button></div><div class="ps-percent-hint">'+tr('percentBatchHint')+'</div></div></section>';
  const categoryScopeSection=type==='formula'?'':'<section class="ps-editor-section"><div class="ps-editor-section-title">'+tr('scopeInfo')+'</div><div class="ps-category-toolbar"><button type="button" id="ps-select-all-categories" class="ps-category-select-all '+(allScope?'is-all':'')+'" onclick="psSelectAllCategories()"><span class="ps-checkmark">'+(allScope?'✓':'')+'</span>'+tr('selectAllCategories')+'</button></div><div class="ps-category-chips">'+checks+'</div><div class="ps-editor-help" style="margin-top:8px">'+tr('allCategoriesHelp')+'</div></section>';
  const body='<div class="ps-field-editor"><div class="ps-editor-intro">'+tr('fieldEditorHint')+'</div><section class="ps-editor-section"><div class="ps-editor-section-title">'+tr('basicInfo')+'</div><div class="ps-editor-grid"><div class="ps-editor-control"><label>'+tr('fieldName')+'</label><input id="ps-field-name" value="'+esc(f?f.field_name:'')+'" '+(isSrp?'disabled':'')+'></div><div class="ps-editor-control"><label>'+tr('fieldKey')+'</label><input id="ps-field-key" value="'+esc(f?f.field_key:('fee_'+Date.now().toString(36)))+'" '+(f?'disabled':'')+'><span class="ps-editor-help">'+tr('fieldKeyHint')+'</span></div><div class="ps-editor-control"><label>'+tr('fieldType')+'</label><select id="ps-field-type" onchange="psToggleFormula()" '+(isSrp||isWac?'disabled':'')+'><option value="amount" '+(type==='amount'?'selected':'')+'>'+tr('amount')+'</option><option value="percent" '+(type==='percent'?'selected':'')+'>'+tr('percent')+'</option><option value="number" '+(type==='number'?'selected':'')+'>'+tr('number')+'</option><option value="formula" '+(type==='formula'?'selected':'')+'>'+tr('calc')+'</option></select></div><div class="ps-editor-control"><label>'+tr('unit')+'</label><input id="ps-field-unit" value="'+esc(f?f.unit:'')+'" placeholder="'+esc(type==='percent'?'%':(state.scheme.currency||''))+'"></div></div></section>'+categoryScopeSection+'<section class="ps-editor-section" id="ps-field-wac-wrap" style="'+(type==='amount'&&!isSrp?'':'display:none')+'"><div class="ps-editor-switch-line"><div class="ps-editor-switch-copy"><strong>'+tr('syncWacField')+'</strong><p>'+tr('syncWacFieldHelp')+'</p></div><input type="checkbox" class="ps-wac-switch" id="ps-field-sync-wac" onchange="psToggleWacField()" '+(isWac?'checked':'')+'></div></section>'+percentSection+formulaSection+'</div>';
  const footer='<button type="button" class="ps-field-modal-btn" onclick="psOpenFieldsModal()">'+tr('cancel')+'</button><button type="button" class="ps-field-modal-btn primary" onclick="psSaveField(\''+(f?esc(f.id):'')+'\')">'+tr('confirm')+'</button>';
  openModal(f?tr('edit')+' · '+esc(f.field_name):tr('add')+' '+tr('fields'),body,footer,'modal-lg');
  const modal=document.getElementById('modal-content');if(modal)modal.classList.add('modal-price-field-editor');
- window.psFormulaInputChanged();
-};
-window.psCategoryFormulaChanged=function(input){
- const category=String(input&&input.getAttribute('data-category')||'');
- const type=document.getElementById('ps-field-type');
- if(input&&String(input.value||'').trim()&&type&&type.value!=='formula'){type.value='formula';window.psToggleFormula();}
- const preview=Array.from(document.querySelectorAll('.ps-category-formula-preview')).find(x=>x.getAttribute('data-preview-category')===category);
- if(preview)preview.textContent=tr('categoryFormulaPreviewEmpty');
-};
-window.psPreviewCategoryFormula=async function(category){
- const input=Array.from(document.querySelectorAll('.ps-category-formula-input')).find(x=>x.getAttribute('data-category')===category);
- const preview=Array.from(document.querySelectorAll('.ps-category-formula-preview')).find(x=>x.getAttribute('data-preview-category')===category);
- const expression=String(input&&input.value||'').trim();
- if(!input||!preview||!expression){if(preview)preview.textContent=tr('categoryFormulaPreviewEmpty');return;}
- const row=state.rows.find(x=>String(x.category||'').trim()===category)||null;
- const variables=Object.assign({},row&&row.formula_context||{},row&&row.values||{});
- if(row&&row.srp!=null)variables.srp=Number(row.srp);
- const fieldKey=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'';
- if(fieldKey)delete variables[fieldKey];
- preview.textContent=tr('formulaPreviewHint');
- try{
-  const result=await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula/preview','POST',{formula:expression,exclude_key:fieldKey,variables});
-  preview.textContent=tr('categoryFormulaPreviewOk')+' · '+(state.scheme.currency||'')+' '+fmt(result.result)+(row?' · '+row.sku_code:'');
- }catch(e){preview.textContent=tr('formulaPreviewError')+'：'+String(e&&e.message||e);}
+ window.psRenderFormulaRules();window.psFormulaInputChanged();
 };
 window.psUpdateCategorySelectAll=function(){
  const checks=Array.from(document.querySelectorAll('.ps-cat-check'));const checked=checks.filter(x=>x.checked).length;const button=document.getElementById('ps-select-all-categories');
