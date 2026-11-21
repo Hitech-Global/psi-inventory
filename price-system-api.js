@@ -388,7 +388,7 @@ function registerPriceSystemRoutes(app, deps) {
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
       params.concat([scheme.brand])
     ).rows;
-    const categoryBySku = primaryCategoryMapForSkus(skuRows);
+    const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
     const storedRows = query(
       'SELECT sku_code, field_key, value FROM price_system_values WHERE scheme_id = ?',
       [scheme.id]
