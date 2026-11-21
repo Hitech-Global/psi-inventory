@@ -84,7 +84,7 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
   assert.match(ui, /window\.psApplyPercentToSkus=async function\(id\)/);
   assert.match(ui, /values:\{\[data\.field_key\]:percent\}/);
   assert.match(ui, /api\('\/api\/price-system\/schemes\/'\+encodeURIComponent\(state\.schemeId\)\+'\/values','POST'/);
-  assert.match(ui, /f\.field_type==='percent'\?'%'/);
+  assert.ok(ui.includes(`f.field_type==='percent'?'<span class=\"ps-unit\">%</span>'`));
   assert.match(ui, /data-field=\\"\'+esc\(f\.field_key\)/);
   assert.match(ui, /window\.psMarkDirty=function\(input\)/);
 });
@@ -92,7 +92,7 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
 test('percentage field type displays percentage settings and hides formula calculation settings', () => {
   assert.match(ui, /id="ps-formula-wrap" style="\'+\(isWac\|\|type==='percent'\?'display:none':'\'\)\+'/);
   assert.match(ui, /if\(w\)w\.style\.display=\(c&&c\.checked\)\|\|t==='percent'\?'none':'\'/);
-  assert.match(ui, /if\(p\)p\.style\.display=t==='percent'\?'':'none'/);
+  assert.ok(ui.includes(`if(p)p.style.display=t==='percent'?'':'none';`));
 });
 
 test('category scope editor provides a select-all action and keeps empty scope as all categories', () => {
