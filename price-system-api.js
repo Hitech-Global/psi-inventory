@@ -57,6 +57,16 @@ function isCategoryApplicable(field, category) {
   return categories.length === 0 || categories.includes(String(category || '').trim());
 }
 
+function primaryCategoryMapForSkus(skuRows) {
+  const categories = new Map();
+  (skuRows || []).forEach(sku => {
+    const code = String(sku.sku_code || '').trim();
+    if (!code) return;
+    categories.set(code, String(sku.category || '').trim() || '未分类');
+  });
+  return categories;
+}
+
 function createPriceSystemWacSync(deps) {
   const { query, queryOne, run, genId } = deps;
   const aliasCache = new Map();
@@ -339,16 +349,6 @@ function registerPriceSystemRoutes(app, deps) {
       if (field && field.field_key && field.field_key !== excludeKey) allowed.add(field.field_key);
     });
     return Array.from(allowed);
-  }
-
-  function primaryCategoryMapForSkus(skuRows) {
-    const categories = new Map();
-    (skuRows || []).forEach(sku => {
-      const code = String(sku.sku_code || '').trim();
-      if (!code) return;
-      categories.set(code, String(sku.category || '').trim() || '未分类');
-    });
-    return categories;
   }
 
   function getSchemeData(req, res, scheme) {
