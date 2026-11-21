@@ -173,10 +173,6 @@ function registerPriceSystemRoutes(app, deps) {
   const canWrite = requirePricePermissions(true);
   const canViewWac = requireApiPermission('inbound_view');
   const syncPriceSystemLandingCostsForWacKeys = createPriceSystemWacSync(deps);
-  // Idempotent upgrade for category-specific formula rules.
-  try { run("ALTER TABLE price_system_fields ADD COLUMN formula_rules TEXT NOT NULL DEFAULT '{}'"); }
-  catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
-
   function schemeAccess(req, res, scheme) {
     if (!scheme) {
       res.status(404).json({ error: '价格方案不存在' });
