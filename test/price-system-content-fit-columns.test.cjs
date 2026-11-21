@@ -19,3 +19,19 @@ test('price table columns size to their content without forced wide columns', ()
   assert.doesNotMatch(source, /\.ps-category\{color:#666;min-width:100px\}/);
   assert.doesNotMatch(source, /\.ps-landing\{min-width:190px/);
 });
+
+
+test('create pricing scheme modal uses a compact responsive form layout', () => {
+  const source = fs.readFileSync(path.join(__dirname, '..', 'assets', 'price-system.js'), 'utf8');
+  assert.match(source, /\.ps-scheme-create\{width:min\(100%,760px\);margin:0 auto/);
+  assert.match(source, /\.ps-scheme-grid\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
+  assert.match(source, /\.ps-scheme-create \.ps-scheme-field input,\.ps-scheme-create \.ps-scheme-field select\{box-sizing:border-box;width:100%;height:40px/);
+  assert.match(source, /@media\(max-width:640px\)\{\.ps-scheme-create/);
+  assert.match(source, /class="ps-scheme-create"/);
+  assert.match(source, /class="ps-scheme-section-title"/);
+  assert.match(source, /id="ps-country"/);
+  assert.match(source, /id="ps-brand"/);
+  assert.match(source, /id="ps-platform"/);
+  assert.match(source, /id="ps-shop"/);
+  assert.match(source, /id="ps-currency"/);
+});
