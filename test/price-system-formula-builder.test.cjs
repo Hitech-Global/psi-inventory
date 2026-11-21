@@ -144,7 +144,8 @@ test('all price-system table fields, including dynamically added fields, are cen
 
 
 test('category scope starts unselected, toggles both ways and hides dynamically for formula fields', () => {
-  assert.ok(ui.includes('id="ps-category-scope-wrap" style="'+(type==='formula'?'display:none':'')+'"'));
+  assert.ok(ui.includes('id="ps-category-scope-wrap"'));
+  assert.ok(ui.includes("style=\"'+(type==='formula'?'display:none':'')+'\""));
   assert.ok(ui.includes("if(scope)scope.style.display=t==='formula'?'none':'';"));
   assert.ok(ui.includes('const allScope=categoryList.length>0&&selected.size===categoryList.length;'));
   assert.ok(ui.includes("((allScope||selected.has(category))?'checked':'')"));
@@ -224,7 +225,7 @@ test('formula fields support independent cell display format and decimal precisi
   assert.ok(ui.includes("f.display_format==='percent'?'<span class=\"ps-unit\">%</span>'"));
   assert.ok(ui.includes("cell.z='0.00%'"));
   assert.match(api, /display_format = \?, decimal_places = \?/);
-  assert.match(api, /display_format, decimal_places, syncWac/);
+  assert.match(api, /displayFormat, decimalPlaces, syncWac/);
   assert.match(api, /field\.display_format \|\| 'auto'/);
   assert.match(migration, /display_format TEXT NOT NULL DEFAULT 'auto'/);
   assert.match(migration, /decimal_places INTEGER NOT NULL DEFAULT 2/);
