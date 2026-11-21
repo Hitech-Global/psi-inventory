@@ -142,7 +142,9 @@ test('all price-system table fields, including dynamically added fields, are cen
 });
 
 
-test('category scope starts unselected and select-all toggles both ways', () => {
+test('category scope starts unselected, toggles both ways and hides dynamically for formula fields', () => {
+  assert.ok(ui.includes('id="ps-category-scope-wrap" style="'+(type==='formula'?'display:none':'')+'"'));
+  assert.ok(ui.includes("if(scope)scope.style.display=t==='formula'?'none':'';"));
   assert.ok(ui.includes('const allScope=categoryList.length>0&&selected.size===categoryList.length;'));
   assert.ok(ui.includes("((allScope||selected.has(category))?'checked':'')"));
   assert.ok(ui.includes('const selectAll=!checks.every(x=>x.checked);'));
