@@ -25,7 +25,7 @@ test('formula editor groups base data, fee fields and SRP separately without dup
 });
 
 test('formula builder is available while editing ordinary fee fields and auto-selects formula type', () => {
-  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac?'display:none':'')+'"`));
+  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"`));
   assert.match(ui, /if\(formula\)field_type='formula'/);
   assert.match(ui, /window\.psFormulaInputChanged=function\(\)[\s\S]*type\.value='formula'/);
 });
@@ -75,4 +75,30 @@ test('price system toolbar removes redundant page heading and combines Excel imp
   assert.match(ui, /window\.psToggleImportMenu=function\(event\)/);
   assert.match(ui, /window\.psCloseImportMenu=function\(\)/);
   assert.match(ui, /ps-import-menu\[hidden\]\{display:none\}/);
+});
+
+test('percentage fields have a bulk default control and batch-apply to SKUs in the selected category scope', () => {
+  assert.ok(ui.includes('id="ps-percent-wrap"'));
+  assert.ok(ui.includes('id="ps-field-default-percent"'));
+  assert.ok(ui.includes('window.psApplyPercentToSkus=async function(id)'));
+  assert.ok(ui.includes('values:{[data.field_key]:percent}'));
+  assert.ok(ui.includes("'/values','POST'"));
+  assert.ok(ui.includes('f.field_type===\'percent\'?\'<span class="ps-unit">%</span>\''));
+  assert.ok(ui.includes('data-field="') && ui.includes('esc(f.field_key)'));
+  assert.ok(ui.includes('window.psMarkDirty=function(input)'));
+});
+
+test('percentage field type displays percentage settings and hides formula calculation settings', () => {
+  assert.ok(ui.includes("isWac||type==='percent'?'display:none':''"));
+  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||t==='percent'?'none':'';"));
+  assert.ok(ui.includes("if(p)p.style.display=t==='percent'?'':'none';"));
+});
+
+test('category scope editor provides a select-all action and keeps empty scope as all categories', () => {
+  assert.ok(ui.includes('ps-category-select-all'));
+  assert.ok(ui.includes('window.psSelectAllCategories=function()'));
+  assert.ok(ui.includes("document.querySelectorAll('.ps-cat-check').forEach(x=>{x.checked=true;})"));
+  assert.ok(ui.includes('(!checked.length||checked.length===total)?[]:checked'));
+  assert.ok(ui.includes('allScope||selected.has(category)'));
+  assert.ok(ui.includes('if(checks.length&&checked===0)'));
 });
