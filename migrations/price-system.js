@@ -29,6 +29,7 @@ function ensurePriceSystemSchema(run, isPg) {
     unit TEXT NOT NULL DEFAULT '',
     applicable_categories TEXT NOT NULL DEFAULT '[]',
     formula TEXT NOT NULL DEFAULT '',
+    formula_rules TEXT NOT NULL DEFAULT '{}',
     sync_wac INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
@@ -59,6 +60,7 @@ function ensurePriceSystemSchema(run, isPg) {
   )`);
   // Idempotent upgrade for existing price-system installations.
   try { run('ALTER TABLE price_system_fields ADD COLUMN sync_wac INTEGER NOT NULL DEFAULT 0'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
+  try { run("ALTER TABLE price_system_fields ADD COLUMN formula_rules TEXT NOT NULL DEFAULT '{}'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run('ALTER TABLE price_system_schemes ADD COLUMN srp_sort_order INTEGER NOT NULL DEFAULT 999999'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   run('CREATE INDEX IF NOT EXISTS idx_price_system_schemes_scope ON price_system_schemes(country, brand, status)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_fields_scheme ON price_system_fields(scheme_id, sort_order)');
