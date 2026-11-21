@@ -233,6 +233,8 @@ if (driver === 'pg') {
       // db-pg.js 的 async initDatabase 在 worker_threads 模式下不会被调用，
       // 因此在此处通过 syncRequest 同步执行迁移。
       var migrations = [
+        // PRICE-SYSTEM-CATEGORY-FORMULA: category-specific fee formulas are stored as a JSON map.
+        "ALTER TABLE price_system_fields ADD COLUMN IF NOT EXISTS category_formulas TEXT NOT NULL DEFAULT '{}'",
         "CREATE TABLE IF NOT EXISTS sku_channel_configs (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, country_id TEXT NOT NULL, online_pct DOUBLE PRECISION NOT NULL, offline_pct DOUBLE PRECISION NOT NULL, status TEXT DEFAULT 'active', remark TEXT DEFAULT '', created_at TEXT DEFAULT NOW(), updated_at TEXT DEFAULT NOW(), UNIQUE (sku_code, country_id))",
 
         // PO-FOB-FX-01：生产PG同步迁移，历史PO默认汇率1、报价快照留空，不回写历史价格。
