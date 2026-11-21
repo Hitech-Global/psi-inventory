@@ -31,4 +31,4 @@ jobs:
           node --check app.js
           node --check quotation-management.js
       - name: Price system unit tests
-        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs test/price-system-sidebar-order.test.cjs test/price-system-landing-cost-srp.test.cjs test/price-system-auto-wac-sync.test.cjs
+        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs test/price-system-sidebar-order.test.cjs test/price-system-landing-cost-srp.test.cjs test/price-system-auto-wac-sync.test.cjs test/price-system-field-order.test.cjs
