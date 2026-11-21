@@ -183,3 +183,11 @@ test('backend normalizes localized readable formula labels to stable internal ke
   assert.match(api, /normalizeFormulaExpression\(expression, existingFields\)/);
   assert.match(api, /normalizeFormulaExpression\(formula, fields\)/);
 });
+
+
+test('formula editor and field list share the exact configured field display name', () => {
+  assert.ok(ui.includes('function priceFieldDisplayName(field)'));
+  assert.ok(ui.includes('priceFieldDisplayName(x))+"</button>"'));
+  assert.ok(ui.includes("esc(priceFieldDisplayName(f))+'</div>'"));
+  assert.ok(ui.includes('state.fields.map(x=>[x.field_key,priceFieldDisplayName(x)||x.field_key])'));
+});
