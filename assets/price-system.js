@@ -343,7 +343,6 @@ window.psOpenFieldEditor=function(id,percentDefault){
   legacyCategories.forEach(category=>{formulaRules[category]=String(f.formula||'').trim();});
  }
  Object.keys(formulaRules).forEach(category=>{formulaRules[category]=formulaDisplayExpression(formulaRules[category]);});
- }
  const formulaRuleCategories=Array.from(new Set(categoryList.concat(Object.keys(formulaRules)))).sort();
  const formulaRuleRows=formulaRuleCategories.map((category,index)=>'<div class="ps-category-formula-row" data-category="'+esc(category)+'"><div class="ps-category-formula-head"><strong>'+esc(category)+'</strong><button type="button" class="ps-field-action" onclick="psPreviewCategoryFormula(\''+esc(category).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">'+tr('previewCategoryFormula')+'</button></div><textarea class="ps-category-formula-input" data-category="'+esc(category)+'" placeholder="=MIN(srp*8.5%,60000)" onfocus="window.__psFormulaTargetInput=this" oninput="psCategoryFormulaChanged(this)">'+esc(formulaRules[category]||'')+'</textarea><div class="ps-category-formula-preview" data-preview-category="'+esc(category)+'">'+tr('categoryFormulaPreviewEmpty')+'</div></div>').join('')||'<div class="ps-editor-help">'+tr('categoryFormulaEmpty')+'</div>';
  const allScope=categoryList.length>0&&selected.size===categoryList.length;
