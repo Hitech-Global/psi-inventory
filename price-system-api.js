@@ -31,6 +31,29 @@ function formulaForCategory(field, category) {
   }
   return String(field && field.formula || '').trim() || null;
 }
+
+const BUILTIN_FORMULA_LABELS = Object.freeze({
+  purchase_price_rmb: ['采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'],
+  purchase_price_usd: ['采购价 USD', 'Purchase Price USD', 'Harga Beli USD'],
+  standard_purchase_price: ['标准采购价', 'Standard Purchase Price', 'Harga Beli Standar'],
+  weighted_avg_cost: ['SKU 加权平均成本', 'SKU Weighted Average Cost', 'Biaya Rata-rata Tertimbang SKU'],
+  inventory_wac: ['库存 WAC', 'Inventory WAC', 'WAC Persediaan'],
+  reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
+  landing_cost: ['系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
+  stock_qty: ['库存数量', 'Stock Quantity', 'Jumlah Persediaan'],
+  inventory_qty: ['库存数量', 'Inventory Quantity', 'Jumlah Persediaan'],
+  srp: ['SRP']
+});
+
+function normalizeFormulaExpression(expression, fields) {
+  let result = String(expression == null ? '' : expression);
+  const aliases = [];
+  Object.keys(BUILTIN_FORMULA_LABELS).forEach(key => BUILTIN_FORMULA_LABELS[key].forEach(label => aliases.push([label, key])));
+  (fields || []).forEach(field => { if (field && field.field_key && field.field_name) aliases.push([String(field.field_name), String(field.field_key)]); });
+  aliases.sort((a, b) => b[0].length - a[0].length);
+  aliases.forEach(([label, key]) => { if (label && label !== key) result = result.split(label).join(key); });
+  return result;
+}
 function isCategoryApplicable(field, category) {
   if (field && field.field_type === 'formula' && Object.keys(parseFormulaRules(field.formula_rules)).length) return !!formulaForCategory(field, category);
   const categories = parseCategories(field.applicable_categories);
@@ -437,7 +460,7 @@ function registerPriceSystemRoutes(app, deps) {
         resolving.add(key);
         try {
           const vars = Object.assign({}, base, resolved);
-          const expression = categoryFormula || field.formula;
+          const expression = normalizeFormulaExpression(categoryFormula || field.formula, fields);
           getFormulaVariables(expression).forEach(dep => {
             if (fieldMap.has(dep)) vars[dep] = resolveField(dep);
           });
@@ -608,9 +631,10 @@ function registerPriceSystemRoutes(app, deps) {
     const body = req.body || {};
     const formula = String(body.formula || '').trim();
     const excludeKey = String(body.exclude_key || '').trim();
-    const fields = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const normalizedFormula = normalizeFormulaExpression(formula, fields);
     try {
-      const validation = validateFormula(formula, allowedFormulaVariables(fields, excludeKey));
+      const validation = validateFormula(normalizedFormula, allowedFormulaVariables(fields, excludeKey));
       const supplied = body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables) ? body.variables : {};
       const variables = {};
       validation.variables.forEach(key => {
@@ -619,7 +643,7 @@ function registerPriceSystemRoutes(app, deps) {
         if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         variables[key] = value;
       });
-      const result = evaluateFormula(formula, variables);
+      const result = evaluateFormula(normalizedFormula, variables);
       res.json({ valid: true, variables: validation.variables, result });
     } catch (e) {
       res.status(400).json({ valid: false, error: e.message });
@@ -630,8 +654,9 @@ function registerPriceSystemRoutes(app, deps) {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
     const formula = String(req.body.srp_formula || '').trim();
-    const fields = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
-    try { if (formula) validateFormula(formula, allowedFormulaVariables(fields, 'srp')); }
+    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const normalizedFormula = normalizeFormulaExpression(formula, fields);
+    try { if (formula) validateFormula(normalizedFormula, allowedFormulaVariables(fields, 'srp')); }
     catch (e) { return res.status(400).json({ error: e.message }); }
     run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新 SRP 公式');
@@ -689,7 +714,7 @@ function registerPriceSystemRoutes(app, deps) {
     if (fieldKey === 'srp' || d.id === 'builtin-srp') {
       if (fieldKey !== 'srp' || fieldType !== 'formula' || !formula) return res.status(400).json({ error: 'SRP \u5fc5\u987b\u914d\u7f6e\u4e3a\u516c\u5f0f\u5b57\u6bb5' });
       const existingFieldsForSrp = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
-      try { validateFormula(formula, allowedFormulaVariables(existingFieldsForSrp, 'srp')); }
+      try { validateFormula(normalizeFormulaExpression(formula, existingFieldsForSrp), allowedFormulaVariables(existingFieldsForSrp, 'srp')); }
       catch (e) { return res.status(400).json({ error: e.message }); }
       run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
       createVersion(scheme.id, userStamp(req), '\u66f4\u65b0 SRP \u516c\u5f0f\u5b57\u6bb5');
@@ -717,9 +742,9 @@ function registerPriceSystemRoutes(app, deps) {
             const expression = String(formulaRules[category] || '').trim();
             if (!category || !validCategories.has(category)) throw new Error('公式规则包含无效类目：' + category);
             if (!expression) throw new Error(category + ' 的计算公式不能为空');
-            validateFormula(expression, allowedVariables);
+            validateFormula(normalizeFormulaExpression(expression, existingFields), allowedVariables);
           });
-        } else validateFormula(formula, allowedVariables);
+        } else validateFormula(normalizeFormulaExpression(formula, existingFields), allowedVariables);
       } catch (e) { return res.status(400).json({ error: e.message }); }
     }
 
