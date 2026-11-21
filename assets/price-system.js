@@ -245,7 +245,9 @@ function formulaBuilderHtml(field){
 }
 window.psInsertFormulaToken=function(token){
  const active=document.activeElement;
- const input=active&&active.classList&&active.classList.contains('ps-category-formula-input')?active:document.getElementById('ps-field-formula');if(!input)return;
+ if(active&&active.classList&&active.classList.contains('ps-category-formula-input'))window.__psFormulaTargetInput=active;
+ const remembered=window.__psFormulaTargetInput;
+ const input=active&&active.classList&&active.classList.contains('ps-category-formula-input')?active:(remembered&&document.contains(remembered)?remembered:document.getElementById('ps-field-formula'));if(!input)return;
  const start=Number.isInteger(input.selectionStart)?input.selectionStart:input.value.length;
  const end=Number.isInteger(input.selectionEnd)?input.selectionEnd:start;
  const operator=['+','-','*','/'].includes(token);
@@ -324,7 +326,7 @@ window.psOpenFieldEditor=function(id,percentDefault){
   legacyCategories.forEach(category=>{formulaRules[category]=String(f.formula||'').trim();});
  }
  const formulaRuleCategories=Array.from(new Set(categoryList.concat(Object.keys(formulaRules)))).sort();
- const formulaRuleRows=formulaRuleCategories.map((category,index)=>'<div class="ps-category-formula-row" data-category="'+esc(category)+'"><div class="ps-category-formula-head"><strong>'+esc(category)+'</strong><button type="button" class="ps-field-action" onclick="psPreviewCategoryFormula(\''+esc(category).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">'+tr('previewCategoryFormula')+'</button></div><textarea class="ps-category-formula-input" data-category="'+esc(category)+'" placeholder="=MIN(srp*8.5%,60000)" oninput="psCategoryFormulaChanged(this)">'+esc(formulaRules[category]||'')+'</textarea><div class="ps-category-formula-preview" data-preview-category="'+esc(category)+'">'+tr('categoryFormulaPreviewEmpty')+'</div></div>').join('')||'<div class="ps-editor-help">'+tr('categoryFormulaEmpty')+'</div>';
+ const formulaRuleRows=formulaRuleCategories.map((category,index)=>'<div class="ps-category-formula-row" data-category="'+esc(category)+'"><div class="ps-category-formula-head"><strong>'+esc(category)+'</strong><button type="button" class="ps-field-action" onclick="psPreviewCategoryFormula(\''+esc(category).replace(/\\/g,'\\\\').replace(/'/g,"\\'")+'\')">'+tr('previewCategoryFormula')+'</button></div><textarea class="ps-category-formula-input" data-category="'+esc(category)+'" placeholder="=MIN(srp*8.5%,60000)" onfocus="window.__psFormulaTargetInput=this" oninput="psCategoryFormulaChanged(this)">'+esc(formulaRules[category]||'')+'</textarea><div class="ps-category-formula-preview" data-preview-category="'+esc(category)+'">'+tr('categoryFormulaPreviewEmpty')+'</div></div>').join('')||'<div class="ps-editor-help">'+tr('categoryFormulaEmpty')+'</div>';
  const allScope=categoryList.length>0&&selected.size===categoryList.length;
  const checks=categoryList.map(category=>'<label class="ps-category-chip"><input type="checkbox" class="ps-cat-check" value="'+esc(category)+'" '+((allScope||selected.has(category))?'checked':'')+' onchange="psUpdateCategorySelectAll()"> <span>'+esc(category)+'</span></label>').join('')||'<span class="ps-editor-help">—</span>';
  const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1);
