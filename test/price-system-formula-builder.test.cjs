@@ -102,3 +102,13 @@ test('category scope editor provides a select-all action and keeps empty scope a
   assert.ok(ui.includes('allScope||selected.has(category)'));
   assert.ok(ui.includes('if(checks.length&&checked===0)'));
 });
+
+
+test('formula editor exposes MIN/MAX and a live server-validated SKU preview', () => {
+  assert.ok(ui.includes("const functions=['MIN','MAX']"));
+  assert.ok(ui.includes("const isFunction=['MIN','MAX'].includes(token)"));
+  assert.match(ui, /id="ps-formula-preview"/);
+  assert.match(ui, /window\.psRunFormulaPreview=async function/);
+  assert.match(api, /app\.post\('\/api\/price-system\/schemes\/:id\/formula\/preview'/);
+  assert.match(api, /formula_context: Object\.assign\(\{\}, base, values\)/);
+});
