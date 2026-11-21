@@ -176,7 +176,7 @@ window.psOpenFieldsModal=function(){
   const categoryTags=displayCategories.length?displayCategories.map(c=>'<span class="ps-field-category">'+esc(c)+'</span>').join(''):'<span class="ps-field-category all">'+tr('allCategories')+'</span>';
   const badges='<span class="ps-field-badge '+typeClass+'">'+tr(typeKey)+'</span>'+(Number(f.sync_wac||0)===1?'<span class="ps-field-badge is-wac">'+tr('wacSource')+'</span>':'')+(f.is_builtin_srp?'<span class="ps-field-badge is-system">'+tr('systemField')+'</span>':'');
   const remove=f.is_builtin_srp?'':'<button type="button" class="ps-field-action danger" onclick="psDeleteField(\''+esc(f.id)+'\')">'+tr('delete')+'</button>';
-  return '<div class="ps-field-row" data-field-id="'+esc(f.id)+'" ondragover="psFieldDragOver(event,this)" ondragleave="psFieldDragLeave(event,this)" ondrop="psFieldDrop(event,this)"><button type="button" class="ps-drag-handle" draggable="'+(state.orderSaving?'false':'true')+'" title="'+tr('fieldOrderHint')+'" aria-label="'+tr('fieldOrderHint')+'" ondragstart="psFieldDragStart(event,\''+esc(f.id)+'\')" ondragend="psFieldDragEnd(event)">⠿</button><div class="ps-field-main"><div class="ps-field-top"><div><div class="ps-field-name">'+esc(f.field_name)+'</div><code class="ps-field-key">'+esc(f.field_key)+'</code></div><div class="ps-field-badges">'+badges+'</div></div><div class="ps-field-meta">'+categoryTags+'</div></div><div class="ps-field-actions"><button type="button" class="ps-field-action" onclick="psOpenFieldEditor(\''+esc(f.id)+'\')">'+tr('edit')+'</button>'+remove+'</div></div>';
+  return '<div class="ps-field-row" data-field-id="'+esc(f.id)+'" ondragover="psFieldDragOver(event,this)" ondragleave="psFieldDragLeave(event,this)" ondrop="psFieldDrop(event,this)"><button type="button" class="ps-drag-handle" draggable="'+(state.orderSaving?'false':'true')+'" title="'+tr('fieldOrderHint')+'" aria-label="'+tr('fieldOrderHint')+'" ondragstart="psFieldDragStart(event,\''+esc(f.id)+'\')" ondragend="psFieldDragEnd(event)">⠿</button><div class="ps-field-main"><div class="ps-field-top"><div><div class="ps-field-name">'+esc(priceFieldDisplayName(f))+'</div><code class="ps-field-key">'+esc(f.field_key)+'</code></div><div class="ps-field-badges">'+badges+'</div></div><div class="ps-field-meta">'+categoryTags+'</div></div><div class="ps-field-actions"><button type="button" class="ps-field-action" onclick="psOpenFieldEditor(\''+esc(f.id)+'\')">'+tr('edit')+'</button>'+remove+'</div></div>';
  }).join('');
  const list=rows||'<div class="ps-fields-empty">'+tr('noFields')+'</div>';
  const body='<div class="ps-fields-manager"><div class="ps-fields-toolbar"><div><div class="ps-fields-title">'+tr('fieldOrderTitle')+'</div><div class="ps-fields-hint">'+(state.orderSaving?tr('savingOrder'):tr('fieldOrderHint'))+'</div></div><div class="ps-fields-toolbar-actions"><span class="ps-fields-count">'+state.fields.length+' '+tr('fieldCount')+'</span><button type="button" class="ps-fields-add" onclick="psOpenFieldEditor()" '+(state.orderSaving?'disabled':'')+'>＋ '+tr('add')+'</button></div></div><div class="ps-field-list">'+list+'</div><div class="ps-fields-footnote">'+tr('fieldOrderHint')+'</div></div>';
@@ -232,16 +232,17 @@ const FORMULA_BASE_FIELDS=[
  {key:'landing_cost',label:'systemLandingCost'},
  {key:'stock_qty',label:'stock'}
 ];
+function priceFieldDisplayName(field){return String(field&&field.field_name||'');}
 function formulaTokenLabel(token){
  const builtin=FORMULA_BASE_FIELDS.find(x=>x.key===token);
  if(builtin)return tr(builtin.label);
  if(token==='srp')return 'SRP';
  const field=state.fields.find(x=>x.field_key===token);
- return field?String(field.field_name||token):token;
+ return field?priceFieldDisplayName(field):token;
 }
 function formulaDisplayExpression(expression){
  let result=String(expression||'');
- const tokens=FORMULA_BASE_FIELDS.map(x=>[x.key,tr(x.label)]).concat(state.fields.map(x=>[x.field_key,String(x.field_name||x.field_key)]),[['srp','SRP']]);
+ const tokens=FORMULA_BASE_FIELDS.map(x=>[x.key,tr(x.label)]).concat(state.fields.map(x=>[x.field_key,priceFieldDisplayName(x)||x.field_key]),[['srp','SRP']]);
  tokens.sort((a,b)=>b[0].length-a[0].length);
  tokens.forEach(([key,label])=>{
   if(key&&key!==label)result=result.replace(new RegExp('(^|[^A-Za-z0-9_])'+key+'(?=$|[^A-Za-z0-9_])','g'),'$1'+label);
@@ -253,7 +254,7 @@ function formulaBuilderHtml(field){
  const baseKeys=new Set(FORMULA_BASE_FIELDS.map(x=>x.key));
  const base=FORMULA_BASE_FIELDS.map(x=>"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('"+x.key+"')\">"+tr(x.label)+"</button>").join('');
  const customFields=state.fields.filter(x=>x.field_key!==excluded&&x.field_key!=='srp'&&!x.is_builtin_srp&&!baseKeys.has(x.field_key)&&x.field_key!=='inventory_qty'&&Number(x.sync_wac||0)!==1);
- const custom=customFields.length?customFields.map(x=>"<button type=\"button\" class=\"ps-formula-token\" title=\""+esc(x.field_name)+"\" onclick=\"psInsertFormulaToken('"+esc(x.field_key)+"')\">"+esc(x.field_name)+"</button>").join(''):'<span class="ps-formula-empty">'+tr('formulaNoFeeFields')+'</span>';
+ const custom=customFields.length?customFields.map(x=>"<button type=\"button\" class=\"ps-formula-token\" title=\""+esc(priceFieldDisplayName(x))+"\" onclick=\"psInsertFormulaToken('"+esc(x.field_key)+"')\">"+esc(priceFieldDisplayName(x))+"</button>").join(''):'<span class="ps-formula-empty">'+tr('formulaNoFeeFields')+'</span>';
  const price=excluded==='srp'?'':"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('srp')\">SRP</button>";
  const functions=['MIN','MAX'].map(x=>"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('"+x+"')\">"+x+"( )</button>").join('');
  const operators=['+','-','*','/','(',')','%'].map(x=>"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('"+x+"')\">"+(x==='*'?'×':(x==='/'?'÷':x))+"</button>").join('');
