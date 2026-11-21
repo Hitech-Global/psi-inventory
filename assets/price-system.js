@@ -33,11 +33,11 @@ function styles(){
  '#ps-root th{position:sticky;top:0;z-index:2;background:#f7f7f9;color:#666;font-weight:600;text-align:left;padding:10px 9px;border-bottom:1px solid #e8e8ed;white-space:nowrap}',
  '#ps-root td{padding:7px 9px;border-bottom:1px solid #f0f0f2;white-space:nowrap;vertical-align:middle}#ps-root tbody tr:hover{background:#fafafa}',
  '#ps-root .ps-category{color:#666}#ps-root .ps-sku{font-weight:600;color:#252525}#ps-root .ps-name{color:#555;max-width:220px;overflow:hidden;text-overflow:ellipsis}',
- '#ps-root .ps-stock{text-align:right;font-variant-numeric:tabular-nums}#ps-root .ps-stock.zero{color:#ff3b30;font-weight:700}',
+ '#ps-root .ps-stock{text-align:left;font-variant-numeric:tabular-nums}#ps-root .ps-stock.zero{color:#ff3b30;font-weight:700}',
  '#ps-root .ps-landing{min-width:0;display:flex;align-items:center;justify-content:space-between;gap:8px}#ps-root .ps-landing-value{font-weight:650;color:#222}#ps-root .ps-landing-meta{font-size:9px;line-height:1.3;color:#a1a1a6;margin-top:1px}#ps-root .ps-btn.ps-mini{padding:4px 7px;font-size:11px}',
- '#ps-root .ps-value{text-align:right;font-variant-numeric:tabular-nums}#ps-root .ps-input{width:112px;height:29px;border:1px solid #dedee3;border-radius:5px;padding:3px 7px;text-align:right;font:inherit;background:#fff}',
+ '#ps-root .ps-value{text-align:left;font-variant-numeric:tabular-nums}#ps-root .ps-input{width:112px;height:29px;border:1px solid #dedee3;border-radius:5px;padding:3px 7px;text-align:left;font:inherit;background:#fff}',
  '#ps-root .ps-input:focus{outline:2px solid rgba(0,113,227,.18);border-color:#0071e3}#ps-root .ps-input.dirty{background:#fff8e7;border-color:#e5a000}',
- '#ps-root .ps-unit{color:#999;font-size:10px;margin-left:4px}#ps-root .ps-srp{font-weight:700;color:#1d1d1f;text-align:right}#ps-root .ps-muted{color:#aaa}#ps-root .ps-warning{margin:8px 0 12px;padding:8px 11px;border:1px solid #f3d28a;background:#fff9e8;color:#8a6500;border-radius:7px;font-size:12px}',
+ '#ps-root .ps-unit{color:#999;font-size:10px;margin-left:4px}#ps-root .ps-srp{font-weight:700;color:#1d1d1f;text-align:left}#ps-root .ps-muted{color:#aaa}#ps-root .ps-warning{margin:8px 0 12px;padding:8px 11px;border:1px solid #f3d28a;background:#fff9e8;color:#8a6500;border-radius:7px;font-size:12px}',
  '#ps-root .ps-empty{padding:42px 18px;text-align:center;color:#86868b}#ps-root .ps-empty strong{display:block;color:#444;font-size:15px;margin-bottom:6px}',
  '#ps-root .ps-bottom{display:flex;justify-content:space-between;align-items:center;padding:9px 12px;color:#888;font-size:11px;border-top:1px solid #eee}#ps-root .ps-dirty{color:#a66b00}',
  '#ps-root .ps-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}#ps-root .ps-form-group{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}#ps-root .ps-form-group.full{grid-column:1/-1}',
@@ -129,7 +129,7 @@ function main(){
  const missingCategoryCount=state.rows.filter(r=>!String(r.category||'').trim()).length;
  if(missingCategoryCount) html+='<div class="ps-warning">'+missingCategoryCount+tr('missingCategories')+'</div>';
  if(!state.rows.length){html+='<div class="ps-card"><div class="ps-empty"><strong>'+tr('noData')+'</strong></div></div>';el.innerHTML=html;return;}
-  const head='<th>'+tr('category')+'</th><th>'+tr('sku')+'</th><th style="text-align:right">'+tr('stock')+'</th>'+state.fields.map(f=>'<th style="text-align:right" title="'+esc(f.formula||'')+'">'+esc(f.field_name)+((f.unit||f.field_type==='amount')?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':'')+'</th>').join('');
+  const head='<th>'+tr('category')+'</th><th>'+tr('sku')+'</th><th>'+tr('stock')+'</th>'+state.fields.map(f=>'<th title="'+esc(f.formula||'')+'">'+esc(f.field_name)+((f.unit||f.field_type==='amount')?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':'')+'</th>').join('');
   const rows=state.rows.map(r=>{
    const cells=state.fields.map(f=>{
     if(!applies(f,r))return '<td class="ps-value ps-muted">&mdash;</td>';
