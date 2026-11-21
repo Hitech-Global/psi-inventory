@@ -59,3 +59,20 @@ test('price system resolves quotation primary categories for display and fee app
   assert.match(api, /skuMap\.forEach\(sku => \{ sku\.category = categoryBySku\.get/);
   assert.match(ui, /state\.rows\.map\(x=>String\(x\.category\|\|'\'\)/);
 });
+
+test('price system toolbar removes redundant page heading and combines Excel import actions', () => {
+  const shell = ui.slice(ui.indexOf('function shell(){'), ui.indexOf('async function meta()', ui.indexOf('function shell(){')));
+  assert.ok(shell.includes('<div id="ps-main">'));
+  assert.ok(!shell.includes('class="ps-head"'), 'redundant page title and subtitle should be removed');
+  assert.ok(!shell.includes("tr('title')") && !shell.includes("tr('subtitle')"));
+  const main = ui.slice(ui.indexOf('function main(){'), ui.indexOf('function updateSave()', ui.indexOf('function main(){')));
+  assert.ok(main.includes('class="ps-import-menu-wrap"'));
+  assert.ok(main.includes('id="ps-import-menu"'));
+  assert.ok(main.includes('psDownloadImportTemplate()'), 'template download should be in the import dropdown');
+  assert.ok(main.includes('psClickImport()'), 'Excel import should remain available in the dropdown');
+  assert.ok(!main.includes('onclick="psDownloadImportTemplate()"'), 'template download should no longer be a standalone toolbar button');
+  assert.ok(main.includes("onclick=\"psOpenSchemeModal()\""), 'new scheme action should move into the toolbar');
+  assert.match(ui, /window\.psToggleImportMenu=function\(event\)/);
+  assert.match(ui, /window\.psCloseImportMenu=function\(\)/);
+  assert.match(ui, /ps-import-menu\[hidden\]\{display:none\}/);
+});
