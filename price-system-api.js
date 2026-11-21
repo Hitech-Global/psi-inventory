@@ -307,7 +307,8 @@ function registerPriceSystemRoutes(app, deps) {
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name',
       [scheme.id]
     ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories), sync_wac: Number(f.sync_wac || 0) === 1 }));
-    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: 999999 });
+    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
+    fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
     const params = [scheme.country];
     let warehouseFilter = '';
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
@@ -568,6 +569,31 @@ function registerPriceSystemRoutes(app, deps) {
     res.json({ success: true, srp_formula: formula });
   }));
 
+  app.put('/api/price-system/schemes/:id/fields/order', canWrite, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const requested = Array.isArray(req.body && req.body.field_ids)
+      ? req.body.field_ids.map(value => String(value || '').trim()).filter(Boolean)
+      : [];
+    const feeFields = query('SELECT id FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const expected = feeFields.map(field => String(field.id)).concat(['builtin-srp']);
+    if (requested.length !== expected.length || new Set(requested).size !== requested.length || expected.some(id => !requested.includes(id))) {
+      return res.status(400).json({ error: '字段顺序数据不完整或包含无效字段，请刷新后重试' });
+    }
+    transaction(() => {
+      requested.forEach((id, index) => {
+        const sortOrder = (index + 1) * 10;
+        if (id === 'builtin-srp') {
+          run('UPDATE price_system_schemes SET srp_sort_order = ?, updated_at = datetime(\'now\') WHERE id = ?', [sortOrder, scheme.id]);
+        } else {
+          run('UPDATE price_system_fields SET sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?', [sortOrder, id, scheme.id]);
+        }
+      });
+    });
+    const versionNo = createVersion(scheme.id, userStamp(req), '调整费用字段顺序');
+    res.json({ success: true, field_ids: requested, version_no: versionNo });
+  }));
+
   app.post('/api/price-system/schemes/:id/fields', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
@@ -759,9 +785,10 @@ function registerPriceSystemRoutes(app, deps) {
     const snapshotLandingCosts = Array.isArray(snapshot.landingCosts) ? snapshot.landingCosts : [];
     const snapshotSrpValues = Array.isArray(snapshot.srpValues) ? snapshot.srpValues : [];
     transaction(() => {
-      run('UPDATE price_system_schemes SET srp_formula = ?, currency = ?, updated_at = datetime(\'now\') WHERE id = ?', [
+      run('UPDATE price_system_schemes SET srp_formula = ?, currency = ?, srp_sort_order = ?, updated_at = datetime(\'now\') WHERE id = ?', [
         snapshot.scheme && snapshot.scheme.srp_formula || '',
         snapshot.scheme && snapshot.scheme.currency || scheme.currency,
+        Number(snapshot.scheme && snapshot.scheme.srp_sort_order != null ? snapshot.scheme.srp_sort_order : 999999),
         scheme.id
       ]);
       run('DELETE FROM price_system_values WHERE scheme_id = ?', [scheme.id]);
