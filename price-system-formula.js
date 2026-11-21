@@ -8,6 +8,7 @@ const BUILTIN_PRICE_VARIABLES = Object.freeze([
   'inventory_wac',
   'reference_customs_rate',
   'landing_cost',
+  'srp',
   'stock_qty',
   'inventory_qty'
 ]);
@@ -31,7 +32,7 @@ function tokenize(expression) {
       i += identifier[0].length;
       continue;
     }
-    if ('+-*/()'.includes(source[i])) {
+    if ('+-*/()%'.includes(source[i])) {
       tokens.push({ type: source[i], value: source[i] });
       i++;
       continue;
@@ -82,7 +83,11 @@ function evaluateFormula(expression, variables) {
   function parseUnary() {
     if (peek('+')) { take(); return parseUnary(); }
     if (peek('-')) { take(); return -parseUnary(); }
-    return parsePrimary();
+    let value = parsePrimary();
+    // A trailing percent sign converts the preceding number/field to a ratio.
+    // Example: 7.2% * srp === 0.072 * srp.
+    if (peek('%')) { take(); value /= 100; }
+    return value;
   }
 
   function parseTerm() {

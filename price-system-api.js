@@ -300,7 +300,11 @@ function registerPriceSystemRoutes(app, deps) {
   }
 
   function allowedFormulaVariables(fields, excludeKey) {
-    return BUILTIN_PRICE_VARIABLES.concat(fields.filter(f => f.field_key !== excludeKey).map(f => f.field_key));
+    const allowed = new Set(BUILTIN_PRICE_VARIABLES.filter(key => key !== excludeKey));
+    (fields || []).forEach(field => {
+      if (field && field.field_key && field.field_key !== excludeKey) allowed.add(field.field_key);
+    });
+    return Array.from(allowed);
   }
 
   function primaryCategoryMapForSkus(skuRows, brand) {
@@ -589,7 +593,7 @@ function registerPriceSystemRoutes(app, deps) {
     if (!schemeAccess(req, res, scheme)) return;
     const formula = String(req.body.srp_formula || '').trim();
     const fields = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
-    try { if (formula) validateFormula(formula, allowedFormulaVariables(fields, null)); }
+    try { if (formula) validateFormula(formula, allowedFormulaVariables(fields, 'srp')); }
     catch (e) { return res.status(400).json({ error: e.message }); }
     run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新 SRP 公式');
