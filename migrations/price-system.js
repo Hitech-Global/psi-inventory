@@ -13,7 +13,7 @@ function ensurePriceSystemSchema(run, isPg) {
     status TEXT NOT NULL DEFAULT 'active',
     srp_formula TEXT NOT NULL DEFAULT '',
     srp_sort_order INTEGER NOT NULL DEFAULT 999999,
-    sync_wac INTEGER NOT NULL DEFAULT 0
+    sync_wac INTEGER NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
     created_by TEXT NOT NULL DEFAULT '',
     created_at TEXT DEFAULT ${now},
