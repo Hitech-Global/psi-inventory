@@ -8,6 +8,7 @@ const { BUILTIN_PRICE_VARIABLES, evaluateFormula } = require('../price-system-fo
 const root = path.join(__dirname, '..');
 const ui = fs.readFileSync(path.join(root, 'assets', 'price-system.js'), 'utf8');
 const api = fs.readFileSync(path.join(root, 'price-system-api.js'), 'utf8');
+const migration = fs.readFileSync(path.join(root, 'migrations', 'price-system.js'), 'utf8');
 
 test('formula editor groups base data, fee fields and SRP separately without duplicate aliases', () => {
   for (const key of ['purchase_price_rmb','purchase_price_usd','standard_purchase_price','weighted_avg_cost','inventory_wac','reference_customs_rate','landing_cost','stock_qty']) {
@@ -211,4 +212,20 @@ test('formula rule cards store one expression across all selected categories in 
   assert.ok(ui.includes('window.psSetRuleCategory=function(index,category,checked)'));
   assert.ok(ui.includes('const taken=(window.__psFormulaRulesDraft||[]).some'));
   assert.ok(ui.includes('this.dataset.category'));
+});
+
+
+test('formula fields support independent cell display format and decimal precision', () => {
+  assert.ok(ui.includes("displayFormat:'Cell Format'") || ui.includes("displayFormat:'单元格格式'"));
+  assert.ok(ui.includes('id="ps-field-display-format"'));
+  assert.ok(ui.includes('id="ps-field-decimal-places"'));
+  assert.ok(ui.includes("if(format==='percent')return number(f.field_type==='formula'?raw*100:raw)+'%'"));
+  assert.ok(ui.includes('display_format,decimal_places'));
+  assert.ok(ui.includes("f.display_format==='percent'?'<span class=\"ps-unit\">%</span>'"));
+  assert.ok(ui.includes("cell.z='0.00%'"));
+  assert.match(api, /display_format = \?, decimal_places = \?/);
+  assert.match(api, /display_format, decimal_places, syncWac/);
+  assert.match(api, /field\.display_format \|\| 'auto'/);
+  assert.match(migration, /display_format TEXT NOT NULL DEFAULT 'auto'/);
+  assert.match(migration, /decimal_places INTEGER NOT NULL DEFAULT 2/);
 });
