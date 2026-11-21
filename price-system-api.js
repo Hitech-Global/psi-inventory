@@ -695,6 +695,9 @@ function registerPriceSystemRoutes(app, deps) {
     const fieldKey = String(d.field_key || '').trim().toLowerCase();
     const fieldType = String(d.field_type || 'amount');
     const unit = String(d.unit || '').trim();
+    const displayFormat = ['auto', 'amount', 'number', 'percent'].includes(String(d.display_format || 'auto')) ? String(d.display_format || 'auto') : 'auto';
+    const decimalPlacesRaw = Number(d.decimal_places == null ? 2 : d.decimal_places);
+    const decimalPlaces = Number.isFinite(decimalPlacesRaw) ? Math.max(0, Math.min(6, Math.round(decimalPlacesRaw))) : 2;
     const categories = Array.isArray(d.applicable_categories) ? d.applicable_categories.map(v => String(v || '').trim()).filter(Boolean) : [];
     const formula = String(d.formula || '').trim();
     const formulaRules = parseFormulaRules(d.formula_rules);
@@ -759,13 +762,13 @@ function registerPriceSystemRoutes(app, deps) {
     if (syncWac) run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, fieldKey]);
     if (existing) {
       run(
-        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, formula_rules = ?, sync_wac = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
-        [fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), syncWac ? 1 : 0, sortOrder, id, scheme.id]
+        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, formula_rules = ?, display_format = ?, decimal_places = ?, sync_wac = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
+        [fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, sortOrder, id, scheme.id]
       );
     } else {
       run(
-        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, sync_wac, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), syncWac ? 1 : 0, sortOrder]
+        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, sortOrder]
       );
     }
     if (syncWac) {
@@ -906,8 +909,8 @@ function registerPriceSystemRoutes(app, deps) {
       run('DELETE FROM price_system_fields WHERE scheme_id = ?', [scheme.id]);
       snapshotFields.forEach(field => {
         run(
-          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', JSON.stringify(parseFormulaRules(field.formula_rules)), Number(field.sync_wac || 0), Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
+          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', JSON.stringify(parseFormulaRules(field.formula_rules)), field.display_format || 'auto', Number(field.decimal_places == null ? 2 : field.decimal_places), Number(field.sync_wac || 0), Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
         );
       });
       snapshotValues.forEach(value => {
