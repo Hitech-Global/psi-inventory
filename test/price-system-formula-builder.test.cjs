@@ -112,3 +112,16 @@ test('formula editor exposes MIN/MAX and a live server-validated SKU preview', (
   assert.match(api, /app\.post\('\/api\/price-system\/schemes\/:id\/formula\/preview'/);
   assert.match(api, /formula_context: Object\.assign\(\{\}, base, values\)/);
 });
+
+test('all price-system table fields, including dynamically added fields, are center aligned', () => {
+  assert.ok(ui.includes('#ps-root th{position:sticky;top:0;z-index:2;background:#f7f7f9;color:#666;font-weight:600;text-align:center;'));
+  assert.ok(ui.includes('#ps-root .ps-category{color:#666;text-align:center}'));
+  assert.ok(ui.includes('#ps-root .ps-sku{font-weight:600;color:#252525;text-align:center}'));
+  assert.ok(ui.includes('#ps-root .ps-stock{text-align:center;'));
+  assert.ok(ui.includes('#ps-root .ps-value{text-align:center;'));
+  assert.ok(ui.includes('padding:3px 7px;text-align:center;'));
+  assert.ok(ui.includes('#ps-root .ps-srp{font-weight:700;color:#1d1d1f;text-align:center}'));
+  assert.ok(ui.includes('justify-content:center;gap:8px;text-align:center}#ps-root .ps-landing-value'));
+  assert.ok(ui.includes("state.fields.map(f=>'<th"));
+  assert.ok(ui.includes("return '<td class=\"ps-value\"><input"));
+});
