@@ -226,9 +226,9 @@ const FORMULA_BASE_FIELDS=[
 function formulaBuilderHtml(field){
  const excluded=field&&field.field_key||'';
  const baseKeys=new Set(FORMULA_BASE_FIELDS.map(x=>x.key));
- const base=FORMULA_BASE_FIELDS.map(x=>'<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken(\\''+x.key+'\\')">'+tr(x.label)+' <code>'+x.key+'</code></button>').join('');
- const custom=state.fields.filter(x=>x.field_key!==excluded&&!baseKeys.has(x.field_key)).map(x=>'<button type="button" class="ps-formula-token" title="'+esc(x.field_name)+'" onclick="psInsertFormulaToken(\\''+esc(x.field_key)+'\\')">'+esc(x.field_name)+' <code>'+esc(x.field_key)+'</code></button>').join('');
- const operators=['+','-','*','/','(',')'].map(x=>'<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken(\\''+x+'\\')">'+(x==='*'?'×':(x==='/'?'÷':x))+'</button>').join('');
+ const base=FORMULA_BASE_FIELDS.map(x=>`<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken('${x.key}')">${tr(x.label)} <code>${x.key}</code></button>`).join('');
+ const custom=state.fields.filter(x=>x.field_key!==excluded&&!baseKeys.has(x.field_key)).map(x=>`<button type="button" class="ps-formula-token" title="${esc(x.field_name)}" onclick="psInsertFormulaToken('${esc(x.field_key)}')">${esc(x.field_name)} <code>${esc(x.field_key)}</code></button>`).join('');
+ const operators=['+','-','*','/','(',')'].map(x=>`<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken('${x}')">${x==='*'?'×':(x==='/'?'÷':x)}</button>`).join('');
  return '<div class="ps-formula-palette"><div><div class="ps-formula-palette-title">'+tr('formulaFields')+'</div><div class="ps-formula-chips">'+base+custom+'</div></div><div><div class="ps-formula-palette-title">'+tr('formulaOperators')+'</div><div class="ps-formula-chips ps-formula-operators">'+operators+'</div></div></div>';
 }
 window.psInsertFormulaToken=function(token){
@@ -243,7 +243,7 @@ window.psInsertFormulaToken=function(token){
 };
 window.psFormulaInputChanged=function(){
  const input=document.getElementById('ps-field-formula'),type=document.getElementById('ps-field-type');
- if(input&&type&&input.value.trim())type.value='formula';
+ if(input&&type&&input.value.trim()){type.value='formula';window.psToggleFormula();}
 };
 window.psOpenFieldEditor=function(id){
  const f=state.fields.find(x=>x.id===id)||null;
@@ -257,7 +257,7 @@ window.psOpenFieldEditor=function(id){
  openModal(f?tr('edit')+' · '+esc(f.field_name):tr('add')+' '+tr('fields'),body,footer,'modal-lg');
  const modal=document.getElementById('modal-content');if(modal)modal.classList.add('modal-price-field-editor');
 };
-window.psToggleFormula=function(){const t=document.getElementById('ps-field-type')?.value,w=document.getElementById('ps-formula-wrap'),a=document.getElementById('ps-field-wac-wrap'),c=document.getElementById('ps-field-sync-wac'),formula=document.getElementById('ps-field-formula');if(w)a.style.display=t==='amount'?'':'none';if(t!=='amount'&&c)c.checked=false;if(w)w.style.display=c&&c.checked?'none':'';if(t!=='formula'&&formula&&formula.value.trim())formula.value='';};
+window.psToggleFormula=function(){const t=document.getElementById('ps-field-type')?.value,w=document.getElementById('ps-formula-wrap'),a=document.getElementById('ps-field-wac-wrap'),c=document.getElementById('ps-field-sync-wac'),formula=document.getElementById('ps-field-formula');if(a)a.style.display=t==='amount'?'':'none';if(t!=='amount'&&c)c.checked=false;if(w)w.style.display=c&&c.checked?'none':'';if(t!=='formula'&&formula&&formula.value.trim())formula.value='';};
 window.psToggleWacField=function(){const c=document.getElementById('ps-field-sync-wac'),t=document.getElementById('ps-field-type');if(c&&t){if(c.checked)t.value='amount';t.disabled=!!c.checked;}window.psToggleFormula();};
 window.psSaveField=async function(id){const field_name=document.getElementById('ps-field-name')?.value.trim()||'',field_key=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'',unit=document.getElementById('ps-field-unit')?.value.trim()||'',formula=document.getElementById('ps-field-formula')?.value.trim()||'',sync_wac=!!document.getElementById('ps-field-sync-wac')?.checked,applicable_categories=Array.from(document.querySelectorAll('.ps-cat-check:checked')).map(x=>x.value);let field_type=document.getElementById('ps-field-type')?.value||'amount';if(formula)field_type='formula';try{if(id==='builtin-srp')await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula','PUT',{srp_formula:formula});else await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/fields','POST',{id:id||undefined,field_name,field_key,field_type,unit,formula,sync_wac,applicable_categories});await loadData(state.schemeId);window.psOpenFieldsModal();if(typeof showToast==='function')showToast(tr('fieldSaved'),'success');}catch(e){err(e);}};
 window.psDeleteField=async function(id){const f=state.fields.find(x=>x.id===id);if(!f||!confirm(tr('delete')+'：'+f.field_name+'？'))return;try{await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/fields/'+encodeURIComponent(id),'DELETE');await loadData(state.schemeId);window.psOpenFieldsModal();}catch(e){err(e);}};
