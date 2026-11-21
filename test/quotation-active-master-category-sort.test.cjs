@@ -4,6 +4,7 @@ const fs=require('node:fs');
 const path=require('node:path');
 const vm=require('node:vm');
 const Database=require('better-sqlite3');
+const {primaryQuotationCategory}=require('../quotation-category');
 
 const root=path.join(__dirname,'..');
 const server=fs.readFileSync(path.join(root,'quotation-server.js'),'utf8');
@@ -47,7 +48,7 @@ add('UNREGISTERED','Netac','Mouse',999,'2026-11-11','');
 add('WRONG-BRAND','Netac','Mouse',999,'2026-11-11','R-MOUSE');
 const query=(sql,params=[])=>({rows:db.prepare(sql).all(...params)});
 const context={
-  query,getBrandCurrencyMap:()=>new Map([['Netac','USD'],['Redragon','RMB']]),
+  primaryQuotationCategory,query,getBrandCurrencyMap:()=>new Map([['Netac','USD'],['Redragon','RMB']]),
   purchaseBaselines:()=>new Map(),
   pairKey:(brand,code)=>brand+'|'+code,
   isQuoted:r=>Number(r.quote_price)>0,
