@@ -1,5 +1,7 @@
 'use strict';
 
+const { primaryQuotationCategory } = require('./quotation-category');
+
 module.exports = function installQuotationManagement(deps) {
   const { app, query, queryOne, run, transaction, genId, asyncHandler, requireApiPermission } = deps;
   run("CREATE TABLE IF NOT EXISTS quotation_prices (id TEXT PRIMARY KEY, sku_code TEXT NOT NULL, brand TEXT NOT NULL, product_type TEXT NOT NULL, quote_price NUMERIC NOT NULL, currency TEXT NOT NULL, quote_date TEXT NOT NULL, remark TEXT DEFAULT '', import_batch_id TEXT, created_at TEXT, updated_at TEXT, supplier_id TEXT NOT NULL DEFAULT '', supplier_part_no TEXT NOT NULL DEFAULT '', supplier_part_no_key TEXT NOT NULL DEFAULT '', psi_sku_code TEXT NOT NULL DEFAULT '', match_status TEXT NOT NULL DEFAULT 'matched', model TEXT NOT NULL DEFAULT '', spec TEXT NOT NULL DEFAULT '', source_sheet TEXT NOT NULL DEFAULT '', source_row INTEGER NOT NULL DEFAULT 0)");
@@ -84,28 +86,6 @@ module.exports = function installQuotationManagement(deps) {
   const masterCategorySql = "COALESCE(NULLIF(TRIM(sm.category),''),'未分类')";
   const activeSkuJoinSql = ` INNER JOIN skus sm ON UPPER(TRIM(sm.sku_code))=UPPER(TRIM(COALESCE(NULLIF(q.psi_sku_code,''),q.sku_code))) AND LOWER(TRIM(sm.brand))=LOWER(TRIM(q.brand))`;
   const activeSkuWhereSql = "LOWER(TRIM(COALESCE(sm.status,'normal'))) NOT IN ('stopped','discontinued','inactive','停产','已停产','eol','end_of_life') AND LOWER(TRIM(COALESCE(sm.lifecycle_status,''))) NOT IN ('stopped','discontinued','停产','已停产','eol','end_of_life')";
-
-  // The SKU master is authoritative when its top-level category is filled.
-  // Legacy Netac SKUs have blank category fields, so fold supplier subcategories
-  // into stable parent categories without altering either source table.
-  function primaryQuotationCategory(masterCategory, importedType) {
-    const master = String(masterCategory || '').trim();
-    if (master && master !== '未分类') return master;
-    const type = String(importedType || '').trim();
-    if (!type) return '未分类';
-    const v = type.toLowerCase();
-    if (/dram|dimm|ddr[345]/i.test(v)) return 'DRAM';
-    if (/microsd|sdhc|sdxc|cfexpress|memory\s*card/i.test(v)) return 'Memory Card';
-    if (/card\s*reader/i.test(v)) return 'Card Reader';
-    if (/ssd\s*enclosure|usb\s*hub|mini\s*pc\s*hub|data\s*cable|charging\s*cable|power\s*bank/i.test(v)) return 'Accessories';
-    if (/ssd/i.test(v)) return 'SSD';
-    if (/hdd|hard\s*drive/i.test(v)) return 'HDD';
-    if (/usb|write\s*protect\s*drive/i.test(v)) return 'USB Flash';
-    if (/tws|headset|headphone|earphone|earbud/i.test(v)) return 'Audio';
-    if (/keyboard/i.test(v)) return 'Keyboard';
-    if (/mouse/i.test(v)) return 'Mouse';
-    return type;
-  }
 
   function buildSummary(req) {
     const brand = String(req.query.brand || '').trim(), type = String(req.query.product_type || '').trim(), kw = String(req.query.keyword || '').trim().toLowerCase(), from = String(req.query.date_from || '').trim(), to = String(req.query.date_to || '').trim();

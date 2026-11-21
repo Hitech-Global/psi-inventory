@@ -1,5 +1,7 @@
 'use strict';
 
+const { primaryQuotationCategory } = require('./quotation-category');
+
 const {
   BUILTIN_PRICE_VARIABLES,
   evaluateFormula,
@@ -301,6 +303,29 @@ function registerPriceSystemRoutes(app, deps) {
     return BUILTIN_PRICE_VARIABLES.concat(fields.filter(f => f.field_key !== excludeKey).map(f => f.field_key));
   }
 
+  function primaryCategoryMapForSkus(skuRows, brand) {
+    const quotationTypeBySku = new Map();
+    try {
+      const quotationCategoryRows = query(
+        "SELECT COALESCE(NULLIF(TRIM(q.psi_sku_code), ''), q.sku_code) AS sku_code, q.product_type FROM quotation_prices q WHERE LOWER(TRIM(q.brand)) = LOWER(TRIM(?)) ORDER BY q.quote_date DESC, q.created_at DESC",
+        [brand]
+      ).rows || [];
+      quotationCategoryRows.forEach(row => {
+        const skuCode = String(row.sku_code || '').trim().toUpperCase();
+        if (skuCode && !quotationTypeBySku.has(skuCode)) quotationTypeBySku.set(skuCode, String(row.product_type || '').trim());
+      });
+    } catch (e) {
+      // Keep Price System readable if quotation management is not initialized.
+      if (!/no such table|does not exist|undefined table/i.test(String(e && e.message || e))) throw e;
+    }
+    const categories = new Map();
+    (skuRows || []).forEach(sku => {
+      const code = String(sku.sku_code || '').trim();
+      categories.set(code, primaryQuotationCategory(sku.category, quotationTypeBySku.get(code.toUpperCase())));
+    });
+    return categories;
+  }
+
   function getSchemeData(req, res, scheme) {
     if (!schemeAccess(req, res, scheme)) return;
     const fields = query(
@@ -338,6 +363,7 @@ function registerPriceSystemRoutes(app, deps) {
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
       params.concat([scheme.brand])
     ).rows;
+    const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
     const storedRows = query(
       'SELECT sku_code, field_key, value FROM price_system_values WHERE scheme_id = ?',
       [scheme.id]
@@ -354,6 +380,7 @@ function registerPriceSystemRoutes(app, deps) {
     const fieldMap = new Map(fields.map(f => [f.field_key, f]));
 
     const rows = skuRows.map(sku => {
+      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, '');
       const stored = storedBySku.get(sku.sku_code) || {};
       const landingCost = landingCostBySku.get(sku.sku_code) || null;
       const base = {
@@ -375,7 +402,7 @@ function registerPriceSystemRoutes(app, deps) {
         if (Object.prototype.hasOwnProperty.call(resolved, key)) return resolved[key];
         const field = fieldMap.get(key);
         if (!field) return Object.prototype.hasOwnProperty.call(base, key) ? base[key] : 0;
-        if (!isCategoryApplicable(field, sku.category)) {
+        if (!isCategoryApplicable(field, skuCategory)) {
           resolved[key] = 0;
           return 0;
         }
@@ -407,7 +434,7 @@ function registerPriceSystemRoutes(app, deps) {
 
       const values = {};
       fields.forEach(field => {
-        if (!isCategoryApplicable(field, sku.category)) values[field.field_key] = null;
+        if (!isCategoryApplicable(field, skuCategory)) values[field.field_key] = null;
         else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
         else if (field.field_type === 'formula') values[field.field_key] = field.formula ? resolveField(field.field_key) : null;
         else values[field.field_key] = stored[field.field_key] == null ? null : Number(stored[field.field_key]);
@@ -421,7 +448,7 @@ function registerPriceSystemRoutes(app, deps) {
       }
       values.srp = srp;
       return {
-        sku_code: sku.sku_code, brand: sku.brand || '', category: sku.category || '', model: sku.model || '',
+        sku_code: sku.sku_code, brand: sku.brand || '', category: skuCategory, model: sku.model || '',
         stock_qty: Number(sku.stock_qty || 0), purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
         values, srp, srp_source:srpSource, formula_errors:errors
@@ -701,6 +728,8 @@ function registerPriceSystemRoutes(app, deps) {
       query('SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code IN (' + part.map(() => '?').join(',') + ')', [scheme.brand].concat(part))
         .rows.forEach(s => skuMap.set(s.sku_code, s));
     }
+    const categoryBySku = primaryCategoryMapForSkus(Array.from(skuMap.values()), scheme.brand);
+    skuMap.forEach(sku => { sku.category = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, ''); });
     const errors = [];
     const normalized = [];
     const normalizedSrp = [];
