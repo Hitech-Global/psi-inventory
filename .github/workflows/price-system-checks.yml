@@ -12,6 +12,8 @@ on:
       - 'app.js'
       - 'quotation-management.js'
       - 'index.html'
+      - 'quotation-category.js'
+      - 'quotation-server.js'
 
 jobs:
   checks:
