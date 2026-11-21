@@ -301,14 +301,17 @@ function collectFieldEditorValues(){
  return {field_name,field_key,unit,formula,sync_wac,applicable_categories,field_type};
 }
 window.psSelectAllCategories=function(){
- document.querySelectorAll('.ps-cat-check').forEach(x=>{x.checked=true;});
- const b=document.getElementById('ps-select-all-categories');if(b)b.classList.add('is-all');
+ const checks=Array.from(document.querySelectorAll('.ps-cat-check'));
+ if(!checks.length)return;
+ const selectAll=!checks.every(x=>x.checked);
+ checks.forEach(x=>{x.checked=selectAll;});
+ window.psUpdateCategorySelectAll();
 };
 window.psOpenFieldEditor=function(id,percentDefault){
  const f=state.fields.find(x=>x.id===id)||null;
  const selected=new Set(f?cats(f):[]);
  const categoryList=Array.from(new Set(state.rows.map(x=>String(x.category||'').trim()).filter(Boolean).concat(Array.from(selected)))).sort();
- const allScope=!f||!selected.size||selected.size===categoryList.length;
+ const allScope=categoryList.length>0&&selected.size===categoryList.length;
  const checks=categoryList.map(category=>'<label class="ps-category-chip"><input type="checkbox" class="ps-cat-check" value="'+esc(category)+'" '+((allScope||selected.has(category))?'checked':'')+' onchange="psUpdateCategorySelectAll()"> <span>'+esc(category)+'</span></label>').join('')||'<span class="ps-editor-help">—</span>';
  const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1);
  const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"><div class="ps-editor-section-title">'+tr('calculationInfo')+'</div>'+formulaBuilderHtml(f)+'<div class="ps-editor-control"><label>'+tr('formulaText')+'</label><textarea id="ps-field-formula" oninput="psFormulaInputChanged()" placeholder="'+esc('=MIN(srp*6.5%,80000)')+'">'+esc(f?f.formula:'')+'</textarea></div><div id="ps-formula-preview" class="ps-formula-preview" aria-live="polite"><div class="ps-formula-preview-meta">'+tr('formulaPreviewEmpty')+'</div></div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
@@ -320,9 +323,9 @@ window.psOpenFieldEditor=function(id,percentDefault){
  window.psFormulaInputChanged();
 };
 window.psUpdateCategorySelectAll=function(){
- const checks=Array.from(document.querySelectorAll('.ps-cat-check'));let checked=checks.filter(x=>x.checked).length;const button=document.getElementById('ps-select-all-categories');
- if(checks.length&&checked===0){checks.forEach(x=>{x.checked=true;});checked=checks.length;}
- if(button){const all=!checks.length||checked===checks.length;button.classList.toggle('is-all',all);const mark=button.querySelector('.ps-checkmark');if(mark)mark.textContent=all?'✓':'';}
+ const checks=Array.from(document.querySelectorAll('.ps-cat-check'));const checked=checks.filter(x=>x.checked).length;const button=document.getElementById('ps-select-all-categories');
+ const all=checks.length>0&&checked===checks.length;
+ if(button){button.classList.toggle('is-all',all);const mark=button.querySelector('.ps-checkmark');if(mark)mark.textContent=all?'✓':'';}
 };
 window.psToggleFormula=function(){
  const t=document.getElementById('ps-field-type')?.value,w=document.getElementById('ps-formula-wrap'),p=document.getElementById('ps-percent-wrap'),a=document.getElementById('ps-field-wac-wrap'),c=document.getElementById('ps-field-sync-wac'),formula=document.getElementById('ps-field-formula');
