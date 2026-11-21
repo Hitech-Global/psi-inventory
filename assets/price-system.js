@@ -285,7 +285,8 @@ window.psOpenFieldEditor=function(id,percentDefault){
  const modal=document.getElementById('modal-content');if(modal)modal.classList.add('modal-price-field-editor');
 };
 window.psUpdateCategorySelectAll=function(){
- const checks=Array.from(document.querySelectorAll('.ps-cat-check')),checked=checks.filter(x=>x.checked).length,button=document.getElementById('ps-select-all-categories');
+ const checks=Array.from(document.querySelectorAll('.ps-cat-check'));let checked=checks.filter(x=>x.checked).length;const button=document.getElementById('ps-select-all-categories');
+ if(checks.length&&checked===0){checks.forEach(x=>{x.checked=true;});checked=checks.length;}
  if(button){const all=!checks.length||checked===checks.length;button.classList.toggle('is-all',all);const mark=button.querySelector('.ps-checkmark');if(mark)mark.textContent=all?'✓':'';}
 };
 window.psToggleFormula=function(){
