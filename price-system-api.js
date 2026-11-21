@@ -17,6 +17,27 @@ function parseCategories(value) {
   } catch (e) { return []; }
 }
 
+function parseCategoryFormulas(value) {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try { parsed = JSON.parse(parsed || '{}'); } catch (e) { parsed = {}; }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const result = {};
+  Object.keys(parsed).forEach(category => {
+    const key = String(category || '').trim();
+    const formula = String(parsed[category] || '').trim();
+    if (key && formula) result[key] = formula;
+  });
+  return result;
+}
+
+function formulaForCategory(field, category) {
+  const key = String(category || '').trim();
+  const formulas = parseCategoryFormulas(field && field.category_formulas);
+  return String(formulas[key] || (field && field.formula) || '').trim();
+}
+
 function isCategoryApplicable(field, category) {
   const categories = parseCategories(field.applicable_categories);
   return categories.length === 0 || categories.includes(String(category || '').trim());
@@ -335,7 +356,7 @@ function registerPriceSystemRoutes(app, deps) {
     const fields = query(
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name',
       [scheme.id]
-    ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories), sync_wac: Number(f.sync_wac || 0) === 1 }));
+    ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories), category_formulas: parseCategoryFormulas(f.category_formulas), sync_wac: Number(f.sync_wac || 0) === 1 }));
     if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
     fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
     const params = [scheme.country];
@@ -410,7 +431,7 @@ function registerPriceSystemRoutes(app, deps) {
           resolved[key] = 0;
           return 0;
         }
-        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
+        const formula = field.field_type === 'formula' ? formulaForCategory(field, skuCategory) : '';\n        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
         if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
         if (field.field_type !== 'formula') {
           const raw = stored[key];
@@ -424,10 +445,10 @@ function registerPriceSystemRoutes(app, deps) {
         resolving.add(key);
         try {
           const vars = Object.assign({}, base, resolved);
-          getFormulaVariables(field.formula).forEach(dep => {
+          getFormulaVariables(formula).forEach(dep => {
             if (fieldMap.has(dep)) vars[dep] = resolveField(dep);
           });
-          resolved[key] = field.formula ? evaluateFormula(field.formula, vars) : 0;
+          resolved[key] = formula ? evaluateFormula(formula, vars) : 0;
         } catch (e) {
           errors[key] = e.message;
           resolved[key] = 0;
@@ -440,7 +461,7 @@ function registerPriceSystemRoutes(app, deps) {
       fields.forEach(field => {
         if (!isCategoryApplicable(field, skuCategory)) values[field.field_key] = null;
         else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
-        else if (field.field_type === 'formula') values[field.field_key] = field.formula ? resolveField(field.field_key) : null;
+        else if (field.field_type === 'formula') values[field.field_key] = formulaForCategory(field, skuCategory) ? resolveField(field.field_key) : null;
         else values[field.field_key] = stored[field.field_key] == null ? null : Number(stored[field.field_key]);
       });
 
@@ -659,12 +680,13 @@ function registerPriceSystemRoutes(app, deps) {
     const unit = String(d.unit || '').trim();
     const categories = Array.isArray(d.applicable_categories) ? d.applicable_categories.map(v => String(v || '').trim()).filter(Boolean) : [];
     const formula = String(d.formula || '').trim();
+    const categoryFormulas = fieldType === 'formula' ? parseCategoryFormulas(d.category_formulas) : {};
     const syncWac = d.sync_wac === true || Number(d.sync_wac || 0) === 1;
     const allowedTypes = ['amount', 'percent', 'number', 'formula'];
     if (!fieldName) return res.status(400).json({ error: '\u8d39\u7528\u5b57\u6bb5\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a' });
     if (!/^[a-z][a-z0-9_]{1,39}$/.test(fieldKey)) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u65e0\u6548' });
     if (!allowedTypes.includes(fieldType)) return res.status(400).json({ error: '\u5b57\u6bb5\u7c7b\u578b\u65e0\u6548' });
-    if (fieldType === 'formula' && !formula) return res.status(400).json({ error: '\u516c\u5f0f\u5b57\u6bb5\u5fc5\u987b\u586b\u5199\u8ba1\u7b97\u516c\u5f0f' });
+    if (fieldType === 'formula' && !formula && !Object.keys(categoryFormulas).length) return res.status(400).json({ error: '\u516c\u5f0f\u5b57\u6bb5\u81f3\u5c11\u9700\u8981\u8bbe\u7f6e\u4e00\u6761\u516c\u5f0f' });
     if (syncWac && fieldType !== 'amount') return res.status(400).json({ error: 'WAC \u81ea\u52a8\u540c\u6b65\u53ea\u80fd\u7528\u4e8e\u91d1\u989d\u5b57\u6bb5' });
     if (syncWac && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('inbound_view')) return res.status(403).json({ error: 'WAC \u81ea\u52a8\u540c\u6b65\u9700\u8981\u5165\u5e93\u67e5\u770b\u6743\u9650' });
 
@@ -692,8 +714,10 @@ function registerPriceSystemRoutes(app, deps) {
     const duplicate = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND id <> ?', [scheme.id, fieldKey, existing ? existing.id : '']);
     if (duplicate) return res.status(409).json({ error: '\u5b57\u6bb5\u7f16\u7801\u5df2\u5b58\u5728' });
     if (fieldType === 'formula') {
-      try { validateFormula(formula, allowedFormulaVariables(existingFields, fieldKey)); }
-      catch (e) { return res.status(400).json({ error: e.message }); }
+      try {
+        const allowedVariables = allowedFormulaVariables(existingFields, fieldKey);
+        [formula].concat(Object.values(categoryFormulas)).filter(Boolean).forEach(expression => validateFormula(expression, allowedVariables));
+      } catch (e) { return res.status(400).json({ error: e.message }); }
     }
 
     const id = existing ? existing.id : genId('psf');
@@ -708,13 +732,13 @@ function registerPriceSystemRoutes(app, deps) {
     if (syncWac) run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, fieldKey]);
     if (existing) {
       run(
-        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, sync_wac = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
-        [fieldName, fieldType, unit, JSON.stringify(categories), formula, syncWac ? 1 : 0, sortOrder, id, scheme.id]
+        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, category_formulas = ?, sync_wac = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
+        [fieldName, fieldType, unit, JSON.stringify(categories), formula, JSON.stringify(categoryFormulas), syncWac ? 1 : 0, sortOrder, id, scheme.id]
       );
     } else {
       run(
-        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sync_wac, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(categories), formula, syncWac ? 1 : 0, sortOrder]
+        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, category_formulas, sync_wac, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(categories), formula, JSON.stringify(categoryFormulas), syncWac ? 1 : 0, sortOrder]
       );
     }
     if (syncWac) {
@@ -855,8 +879,8 @@ function registerPriceSystemRoutes(app, deps) {
       run('DELETE FROM price_system_fields WHERE scheme_id = ?', [scheme.id]);
       snapshotFields.forEach(field => {
         run(
-          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', Number(field.sync_wac || 0), Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
+          'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, category_formulas, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [field.id || genId('psf'), scheme.id, field.field_key, field.field_name, field.field_type || 'amount', field.unit || '', typeof field.applicable_categories === 'string' ? field.applicable_categories : JSON.stringify(parseCategories(field.applicable_categories)), field.formula || '', JSON.stringify(parseCategoryFormulas(field.category_formulas)), Number(field.sync_wac || 0), Number(field.sort_order || 0), Number(field.is_active == null ? 1 : field.is_active)]
         );
       });
       snapshotValues.forEach(value => {
@@ -888,4 +912,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, parseCategoryFormulas, formulaForCategory, isCategoryApplicable };
