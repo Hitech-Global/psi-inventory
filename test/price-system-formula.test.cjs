@@ -48,6 +48,7 @@ test('supports Excel-style optional equals and MIN/MAX functions', () => {
 
 test('rejects unsupported functions, malformed function arguments and repeated equals', () => {
   assert.throws(() => evaluateFormula('SUM(1, 2)', {}), /不支持的公式函数/);
+  assert.throws(() => evaluateFormula('constructor(1)', {}), /不支持的公式函数/);
   assert.throws(() => evaluateFormula('MIN(1,)', {}), /参数不能为空/);
   assert.throws(() => evaluateFormula('MIN(1, 2', {}), /括号不匹配/);
   assert.throws(() => evaluateFormula('==MIN(1, 2)', {}), /一个等号/);
