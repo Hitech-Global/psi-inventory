@@ -34,3 +34,22 @@ test('supports percentage literals and SRP as a formula dependency', () => {
   assert.ok(Math.abs(evaluateFormula('-7.2% * srp', { srp: 1000 }) + 72) < 1e-9);
   assert.equal(validateFormula('7.2% * srp', BUILTIN_PRICE_VARIABLES).valid, true);
 });
+
+
+test('supports Excel-style optional equals and MIN/MAX functions', () => {
+  const formula = '=MIN(srp * 6.5%, 80000)';
+  assert.equal(evaluateFormula(formula, { srp: 1000000 }), 65000);
+  assert.equal(evaluateFormula('MIN(srp * 6.5%, 80000)', { srp: 2000000 }), 80000);
+  assert.equal(evaluateFormula('MAX(5, 10, 3)', {}), 10);
+  assert.equal(evaluateFormula('min(5, MAX(10, 3))', {}), 5);
+  assert.deepEqual(getFormulaVariables('=MIN(srp * 6.5%, MAX(platform_fee, 80000))'), ['srp', 'platform_fee']);
+  assert.equal(validateFormula(formula, ['srp']).valid, true);
+});
+
+test('rejects unsupported functions, malformed function arguments and repeated equals', () => {
+  assert.throws(() => evaluateFormula('SUM(1, 2)', {}), /不支持的公式函数/);
+  assert.throws(() => evaluateFormula('MIN(1,)', {}), /参数不能为空/);
+  assert.throws(() => evaluateFormula('MIN(1, 2', {}), /括号不匹配/);
+  assert.throws(() => evaluateFormula('==MIN(1, 2)', {}), /一个等号/);
+  assert.throws(() => evaluateFormula('1, 2', {}), /多余内容/);
+});
