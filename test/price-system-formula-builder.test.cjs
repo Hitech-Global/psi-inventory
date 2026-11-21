@@ -94,13 +94,15 @@ test('percentage field type displays percentage settings and hides formula calcu
   assert.ok(ui.includes("if(p)p.style.display=t==='percent'?'':'none';"));
 });
 
-test('category scope editor provides a select-all action and keeps empty scope as all categories', () => {
+test('category scope editor provides a reversible select-all action and keeps empty scope as all categories', () => {
   assert.ok(ui.includes('ps-category-select-all'));
   assert.ok(ui.includes('window.psSelectAllCategories=function()'));
-  assert.ok(ui.includes("document.querySelectorAll('.ps-cat-check').forEach(x=>{x.checked=true;})"));
+  assert.ok(ui.includes('const selectAll=!checks.every(x=>x.checked);'));
+  assert.ok(ui.includes('checks.forEach(x=>{x.checked=selectAll;})'));
+  assert.ok(ui.includes('window.psUpdateCategorySelectAll();'));
   assert.ok(ui.includes('(!checked.length||checked.length===total)?[]:checked'));
   assert.ok(ui.includes('allScope||selected.has(category)'));
-  assert.ok(ui.includes('if(checks.length&&checked===0)'));
+  assert.ok(!ui.includes('if(checks.length&&checked===0)'));
 });
 
 
