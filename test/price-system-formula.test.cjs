@@ -29,8 +29,8 @@ test('Landing Cost is available as a built-in SRP formula variable', () => {
 
 test('supports percentage literals and SRP as a formula dependency', () => {
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('srp'));
-  assert.equal(evaluateFormula('7.2% * srp', { srp: 1000 }), 72);
+  assert.ok(Math.abs(evaluateFormula('7.2% * srp', { srp: 1000 }) - 72) < 1e-9);
   assert.equal(evaluateFormula('8%', {}), 0.08);
-  assert.equal(evaluateFormula('-7.2% * srp', { srp: 1000 }), -72);
+  assert.ok(Math.abs(evaluateFormula('-7.2% * srp', { srp: 1000 }) + 72) < 1e-9);
   assert.equal(validateFormula('7.2% * srp', BUILTIN_PRICE_VARIABLES).valid, true);
 });
