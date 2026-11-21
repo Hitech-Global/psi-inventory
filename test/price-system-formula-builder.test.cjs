@@ -168,7 +168,7 @@ test('formula rule values can be different by category while preserving the shar
 test('formula editor displays readable field names instead of internal field keys', () => {
   assert.ok(ui.includes('function formulaTokenLabel(token)'));
   assert.ok(ui.includes('function formulaDisplayExpression(expression)'));
-  assert.ok(ui.includes("String(x.field_name||x.field_key)"));
+  assert.ok(ui.includes('function priceFieldDisplayName(field)'));
   assert.ok(ui.includes('"+esc(x.field_name)+"</button>'));
   assert.ok(!ui.includes('"+esc(x.field_name)+" <code>"+esc(x.field_key)+"</code></button>'));
   assert.ok(ui.includes('formulaRules[category]=formulaDisplayExpression(formulaRules[category])'));
