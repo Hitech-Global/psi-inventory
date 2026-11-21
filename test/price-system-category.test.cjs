@@ -33,3 +33,17 @@ test('category applicability uses the resolved quotation primary category', () =
   assert.equal(isCategoryApplicable(field, primaryQuotationCategory('', 'SO-DIMM')), true);
   assert.equal(isCategoryApplicable(field, primaryQuotationCategory('', 'Mouse')), false);
 });
+
+
+test('formula rules are bound to exact categories and do not fall back to the legacy formula', () => {
+  const field = {
+    field_type: 'formula',
+    formula: '99% * srp',
+    formula_rules: JSON.stringify({ Accessories: '8.5% * srp', SSD: 'MIN(7.2% * srp,80000)' }),
+    applicable_categories: []
+  };
+  assert.equal(isCategoryApplicable(field, 'Accessories'), true);
+  assert.equal(isCategoryApplicable(field, 'SSD'), true);
+  assert.equal(isCategoryApplicable(field, 'Memory Card'), false);
+  assert.equal(isCategoryApplicable(field, ''), false);
+});
