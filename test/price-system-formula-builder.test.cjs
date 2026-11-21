@@ -178,6 +178,7 @@ test('formula editor displays readable field names instead of internal field key
 test('backend normalizes localized readable formula labels to stable internal keys', () => {
   assert.match(api, /function normalizeFormulaExpression\(expression, fields\)/);
   assert.match(api, /purchase_price_rmb: \['采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'\]/);
+  assert.match(api, /stock_qty: \['库存数量', 'Stock Qty', 'Jumlah Stok'\]/);
   assert.match(api, /aliases\.forEach\(\(\[label, key\]\)/);
   assert.match(api, /normalizeFormulaExpression\(expression, existingFields\)/);
   assert.match(api, /normalizeFormulaExpression\(formula, fields\)/);
