@@ -4,6 +4,7 @@ module.exports=function installQuotationImportFast(deps){
   const {app,query,run,transaction,genId,asyncHandler,requireApiPermission}=deps;
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
+const {netacCategoryFromQuotationType}=require('./sku-category');
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
   const clean=v=>String(v??'').trim();
@@ -261,20 +262,70 @@ module.exports=function installQuotationImportFast(deps){
       await aq(updateSql,[now,mappings[0].supplier_id]);
     });
   }
-  async function bulkWritePg(rows,mode,importId,now){
-    if(!rows.length)return 0;
-    const payload=preparedRows(rows,importId,now);
-    return withGenerateClient(async(aq)=>{
-      const cols='id,sku_code,brand,product_type,quote_price,currency,quote_date,remark,import_batch_id,created_at,updated_at,supplier_id,supplier_part_no,supplier_part_no_key,psi_sku_code,match_status,model,spec,source_sheet,source_row';
-      let sql='INSERT INTO quotation_prices('+cols+') SELECT '+cols+' FROM jsonb_to_recordset(?::jsonb) AS x('+
-        'id TEXT,sku_code TEXT,brand TEXT,product_type TEXT,quote_price NUMERIC,currency TEXT,quote_date TEXT,remark TEXT,import_batch_id TEXT,created_at TEXT,updated_at TEXT,'+
-        'supplier_id TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,match_status TEXT,model TEXT,spec TEXT,source_sheet TEXT,source_row INTEGER) ';
-      if(mode==='overwrite')sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO UPDATE SET product_type=EXCLUDED.product_type,quote_price=EXCLUDED.quote_price,currency=EXCLUDED.currency,remark=EXCLUDED.remark,import_batch_id=EXCLUDED.import_batch_id,updated_at=EXCLUDED.updated_at,supplier_part_no=EXCLUDED.supplier_part_no,supplier_part_no_key=EXCLUDED.supplier_part_no_key,psi_sku_code=EXCLUDED.psi_sku_code,match_status=EXCLUDED.match_status,model=EXCLUDED.model,spec=EXCLUDED.spec,source_sheet=EXCLUDED.source_sheet,source_row=EXCLUDED.source_row ';
-      else sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO NOTHING ';
-      sql+='RETURNING sku_code';
-      return (await aq(sql,[JSON.stringify(payload)])).length;
+  function netacSkuCodesFromRows(rows){
+    const codes=new Set();
+    (rows||[]).forEach(r=>{
+      if(clean(r.brand).toLowerCase()==='netac'&&clean(r.psi_sku_code))codes.add(clean(r.psi_sku_code));
+    });
+    return [...codes];
+  }
+  async function syncNetacMasterCategoriesPg(aq,arun,skuCodes,now){
+    if(!skuCodes.length)return 0;
+    const latestRows=await aq(
+      'WITH incoming AS (SELECT * FROM jsonb_to_recordset(?::jsonb) AS x(sku_code TEXT)), ranked AS ('+
+      'SELECT COALESCE(NULLIF(TRIM(q.psi_sku_code), \'\'), q.sku_code) AS sku_code, q.product_type, '+
+      'ROW_NUMBER() OVER (PARTITION BY UPPER(TRIM(COALESCE(NULLIF(TRIM(q.psi_sku_code), \'\'), q.sku_code))) ORDER BY q.quote_date DESC, q.created_at DESC) AS rn '+
+      'FROM quotation_prices q JOIN incoming i ON UPPER(TRIM(COALESCE(NULLIF(TRIM(q.psi_sku_code), \'\'), q.sku_code)))=UPPER(TRIM(i.sku_code)) '+
+      'WHERE LOWER(TRIM(q.brand))=\'netac\' AND COALESCE(q.match_status, \'matched\')<>\'unlinked\') '+
+      'SELECT sku_code,product_type FROM ranked WHERE rn=1',
+      [JSON.stringify(skuCodes.map(sku_code=>({sku_code})))]
+    );
+    const updates=latestRows.map(row=>({
+      sku_code:clean(row.sku_code),
+      category:netacCategoryFromQuotationType(row.product_type)
+    })).filter(row=>row.sku_code&&row.category);
+    if(!updates.length)return 0;
+    await arun(
+      "UPDATE skus s SET category=x.category, updated_at=? FROM jsonb_to_recordset(?::jsonb) AS x(sku_code TEXT,category TEXT) WHERE LOWER(TRIM(s.brand))='netac' AND UPPER(TRIM(s.sku_code))=UPPER(TRIM(x.sku_code))",
+      [now,JSON.stringify(updates)]
+    );
+    return updates.length;
+  }
+  function syncNetacMasterCategoriesSqlite(skuCodes,now){
+    let changed=0;
+    skuCodes.forEach(code=>{
+      const latest=query(
+        "SELECT product_type FROM quotation_prices WHERE LOWER(TRIM(brand))='netac' AND UPPER(TRIM(COALESCE(NULLIF(TRIM(psi_sku_code),''),sku_code)))=UPPER(TRIM(?)) AND COALESCE(match_status,'matched')<>'unlinked' ORDER BY quote_date DESC,created_at DESC LIMIT 1",
+        [code]
+      ).rows[0];
+      const category=netacCategoryFromQuotationType(latest&&latest.product_type);
+      if(!category)return;
+      run("UPDATE skus SET category=?,updated_at=? WHERE LOWER(TRIM(brand))='netac' AND UPPER(TRIM(sku_code))=UPPER(TRIM(?))",[category,now,code]);
+      changed++;
+    });
+    return changed;
+  }
+
+  async function bulkWritePg(rows,mode,importId,now,netacSkuCodes=[]){
+    if(!rows.length&&!netacSkuCodes.length)return 0;
+    const payload=rows.length?preparedRows(rows,importId,now):[];
+    return withGenerateClient(async(aq,aqOne,arun)=>{
+      let written=0;
+      if(payload.length){
+        const cols='id,sku_code,brand,product_type,quote_price,currency,quote_date,remark,import_batch_id,created_at,updated_at,supplier_id,supplier_part_no,supplier_part_no_key,psi_sku_code,match_status,model,spec,source_sheet,source_row';
+        let sql='INSERT INTO quotation_prices('+cols+') SELECT '+cols+' FROM jsonb_to_recordset(?::jsonb) AS x('+
+          'id TEXT,sku_code TEXT,brand TEXT,product_type TEXT,quote_price NUMERIC,currency TEXT,quote_date TEXT,remark TEXT,import_batch_id TEXT,created_at TEXT,updated_at TEXT,'+
+          'supplier_id TEXT,supplier_part_no TEXT,supplier_part_no_key TEXT,psi_sku_code TEXT,match_status TEXT,model TEXT,spec TEXT,source_sheet TEXT,source_row INTEGER) ';
+        if(mode==='overwrite')sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO UPDATE SET product_type=EXCLUDED.product_type,quote_price=EXCLUDED.quote_price,currency=EXCLUDED.currency,remark=EXCLUDED.remark,import_batch_id=EXCLUDED.import_batch_id,updated_at=EXCLUDED.updated_at,supplier_part_no=EXCLUDED.supplier_part_no,supplier_part_no_key=EXCLUDED.supplier_part_no_key,psi_sku_code=EXCLUDED.psi_sku_code,match_status=EXCLUDED.match_status,model=EXCLUDED.model,spec=EXCLUDED.spec,source_sheet=EXCLUDED.source_sheet,source_row=EXCLUDED.source_row ';
+        else sql+='ON CONFLICT(supplier_id,sku_code,brand,quote_date) DO NOTHING ';
+        sql+='RETURNING sku_code';
+        written=(await aq(sql,[JSON.stringify(payload)])).length;
+      }
+      await syncNetacMasterCategoriesPg(aq,arun,netacSkuCodes,now);
+      return written;
     });
   }
+
   function saveMappingsSqlite(mappings,now){
     for(const m of mappings){
       run('INSERT INTO quotation_sku_mappings(id,supplier_id,brand,supplier_part_no,supplier_part_no_key,psi_sku_code,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) '+
@@ -311,11 +362,12 @@ module.exports=function installQuotationImportFast(deps){
       await savePgRun(importId,{status:'running',phase:'validating',percent:15,processed_count:0,message:'报价数据校验完成'});
       await savePgRun(importId,{phase:'matching',percent:35,message:'正在匹配 SKU 主数据和历史料号映射'});
       await saveMappingsPgAndApply(mappings,nowIso());
+      const netacSkuCodes=netacSkuCodesFromRows(rows);
       const existing=await existingPg(collapsed),c=counts(rows,collapsed,existing,mode);
       const no_quote=rows.filter(r=>r.quote_price===0).length;
       const writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
       await savePgRun(importId,{...c,no_quote,phase:'writing',percent:68,processed_count:0,message:'正在批量写入报价和料号映射'});
-      const written=await bulkWritePg(writeRows,mode,importId,nowIso());
+      const written=await bulkWritePg(writeRows,mode,importId,nowIso(),netacSkuCodes);
       await savePgRun(importId,{...c,no_quote,phase:'finalizing',percent:92,processed_count:rows.length,message:'报价写入完成，正在确认结果'});
       const expected=mode==='overwrite'?c.inserted+c.updated:c.inserted;
       if(written!==expected)console.warn('[quotation-import] written count differs',{importId,written,expected,mode});
@@ -401,6 +453,7 @@ module.exports=function installQuotationImportFast(deps){
         return;
       }
       const now=nowIso();
+      const netacSkuCodes=netacSkuCodesFromRows(rows);
       let c,no_quote,writeRows;
       transaction(()=>{
         saveMappingsSqlite(mappings,now);
@@ -410,6 +463,7 @@ module.exports=function installQuotationImportFast(deps){
         no_quote=rows.filter(r=>r.quote_price===0).length;
         writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
         bulkWriteSqlite(writeRows,mode,importId,now);
+        syncNetacMasterCategoriesSqlite(netacSkuCodes,now);
       });
       return res.json({success:true,import_id:importId,status:'completed',phase:'completed',percent:100,total_count:rows.length,processed_count:rows.length,...c,no_quote,message:'导入完成'});
     }catch(e){

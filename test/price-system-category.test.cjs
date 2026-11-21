@@ -1,8 +1,19 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseCategories, isCategoryApplicable } = require('../price-system-api');
+const { parseCategories, isCategoryApplicable, primaryCategoryMapForSkus } = require('../price-system-api');
 const { primaryQuotationCategory } = require('../quotation-category');
+
+test('price system categories are sourced only from SKU master data', () => {
+  const categories = primaryCategoryMapForSkus([
+    { sku_code: 'RDM724B', category: '游戏鼠标' },
+    { sku_code: 'NT01Z11-001T-32SL', category: 'SSD' },
+    { sku_code: 'UNKNOWN', category: '' }
+  ]);
+  assert.equal(categories.get('RDM724B'), '游戏鼠标');
+  assert.equal(categories.get('NT01Z11-001T-32SL'), 'SSD');
+  assert.equal(categories.get('UNKNOWN'), '未分类');
+});
 
 test('empty category rules apply to every SKU', () => {
   assert.deepEqual(parseCategories('[]'), []);

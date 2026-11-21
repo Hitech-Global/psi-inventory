@@ -13,6 +13,9 @@ on:
       - 'quotation-management.js'
       - 'index.html'
       - 'quotation-category.js'
+      - 'sku-category.js'
+      - 'quotation-import-fast.js'
+      - 'test/sku-category.test.cjs'
       - 'quotation-server.js'
 
 jobs:
@@ -27,6 +30,8 @@ jobs:
         run: |
           node --check price-system-formula.js
           node --check quotation-category.js
+          node --check sku-category.js
+          node --check quotation-import-fast.js
           node --check quotation-server.js
           node --check price-system-api.js
           node --check migrations/price-system.js
@@ -35,4 +40,4 @@ jobs:
           node --check app.js
           node --check quotation-management.js
       - name: Price system unit tests
-        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/price-system-schema.test.cjs test/price-system-sidebar-order.test.cjs test/price-system-landing-cost-srp.test.cjs test/price-system-auto-wac-sync.test.cjs test/price-system-field-order.test.cjs test/price-system-wac-date-display.test.cjs test/price-system-content-fit-columns.test.cjs test/price-system-all-fields-left-aligned.test.cjs test/price-system-formula-builder.test.cjs
+        run: node --test test/price-system-formula.test.cjs test/price-system-category.test.cjs test/sku-category.test.cjs test/price-system-schema.test.cjs test/price-system-sidebar-order.test.cjs test/price-system-landing-cost-srp.test.cjs test/price-system-auto-wac-sync.test.cjs test/price-system-field-order.test.cjs test/price-system-wac-date-display.test.cjs test/price-system-content-fit-columns.test.cjs test/price-system-all-fields-left-aligned.test.cjs test/price-system-formula-builder.test.cjs

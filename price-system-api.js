@@ -1,7 +1,5 @@
 'use strict';
 
-const { primaryQuotationCategory } = require('./quotation-category');
-
 const {
   BUILTIN_PRICE_VARIABLES,
   evaluateFormula,
@@ -343,25 +341,12 @@ function registerPriceSystemRoutes(app, deps) {
     return Array.from(allowed);
   }
 
-  function primaryCategoryMapForSkus(skuRows, brand) {
-    const quotationTypeBySku = new Map();
-    try {
-      const quotationCategoryRows = query(
-        "SELECT COALESCE(NULLIF(TRIM(q.psi_sku_code), ''), q.sku_code) AS sku_code, q.product_type FROM quotation_prices q WHERE LOWER(TRIM(q.brand)) = LOWER(TRIM(?)) ORDER BY q.quote_date DESC, q.created_at DESC",
-        [brand]
-      ).rows || [];
-      quotationCategoryRows.forEach(row => {
-        const skuCode = String(row.sku_code || '').trim().toUpperCase();
-        if (skuCode && !quotationTypeBySku.has(skuCode)) quotationTypeBySku.set(skuCode, String(row.product_type || '').trim());
-      });
-    } catch (e) {
-      // Keep Price System readable if quotation management is not initialized.
-      if (!/no such table|does not exist|undefined table/i.test(String(e && e.message || e))) throw e;
-    }
+  function primaryCategoryMapForSkus(skuRows) {
     const categories = new Map();
     (skuRows || []).forEach(sku => {
       const code = String(sku.sku_code || '').trim();
-      categories.set(code, primaryQuotationCategory(sku.category, quotationTypeBySku.get(code.toUpperCase())));
+      if (!code) return;
+      categories.set(code, String(sku.category || '').trim() || '未分类');
     });
     return categories;
   }
@@ -403,7 +388,7 @@ function registerPriceSystemRoutes(app, deps) {
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
       params.concat([scheme.brand])
     ).rows;
-    const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
+    const categoryBySku = primaryCategoryMapForSkus(skuRows);
     const storedRows = query(
       'SELECT sku_code, field_key, value FROM price_system_values WHERE scheme_id = ?',
       [scheme.id]
@@ -942,4 +927,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus };
