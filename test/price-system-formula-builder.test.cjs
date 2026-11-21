@@ -24,10 +24,13 @@ test('formula editor groups base data, fee fields and SRP separately without dup
   assert.match(ui, /oninput="psFormulaInputChanged\(\)"/);
 });
 
-test('formula builder is available while editing ordinary fee fields and auto-selects formula type', () => {
+test('formula editor exposes one independent rule editor for every product category', () => {
   assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"`));
-  assert.match(ui, /if\(formula\)field_type='formula'/);
-  assert.match(ui, /window\.psFormulaInputChanged=function\(\)[\s\S]*type\.value='formula'/);
+  assert.ok(ui.includes('formulaRuleCategories=Array.from(new Set(categoryList.concat(Object.keys(formulaRules))))'));
+  assert.ok(ui.includes('class="ps-category-formula-input"'));
+  assert.ok(ui.includes('formula_rules[category]=expression'));
+  assert.match(ui, /window\.psPreviewCategoryFormula=async function\(category\)/);
+  assert.ok(ui.includes("applicable_categories=field_type==='formula'?[]"));
 });
 
 test('formula evaluation can combine WAC, percentage fees and other calculated fields', () => {
@@ -109,8 +112,8 @@ test('category scope editor provides a reversible select-all action and keeps em
 test('formula editor exposes MIN/MAX and a live server-validated SKU preview', () => {
   assert.ok(ui.includes("const functions=['MIN','MAX']"));
   assert.ok(ui.includes("const isFunction=['MIN','MAX'].includes(token)"));
-  assert.match(ui, /id="ps-formula-preview"/);
-  assert.match(ui, /window\.psRunFormulaPreview=async function/);
+  assert.match(ui, /data-preview-category=/);
+  assert.match(ui, /window\.psPreviewCategoryFormula=async function\(category\)/);
   assert.match(api, /app\.post\('\/api\/price-system\/schemes\/:id\/formula\/preview'/);
   assert.match(api, /formula_context: Object\.assign\(\{\}, base, values\)/);
 });
@@ -137,4 +140,24 @@ test('category scope starts unselected and select-all toggles both ways', () => 
   assert.ok(ui.includes('window.psUpdateCategorySelectAll();'));
   assert.ok(!ui.includes('if(checks.length&&checked===0){checks.forEach(x=>{x.checked=true;});'));
   assert.ok(ui.includes('const applicable_categories=(!checked.length||checked.length===total)?[]:checked;'));
+});
+
+
+test('category formula rules are persisted, validated and restored without falling back to another category', () => {
+  assert.match(api, /function parseFormulaRules\(value\)/);
+  assert.match(api, /function formulaForCategory\(field, category\)/);
+  assert.match(api, /formula_rules TEXT NOT NULL DEFAULT '\{\}'/);
+  assert.match(api, /if \(field\.field_type === 'formula' && Object\.keys\(parseFormulaRules\(field\.formula_rules\)\)\.length && !categoryFormula\)/);
+  assert.match(api, /Object\.keys\(formulaRules\)\.forEach\(category =>/);
+  assert.match(api, /formula_rules = \?/);
+  assert.match(api, /JSON\.stringify\(parseFormulaRules\(field\.formula_rules\)\)/);
+  assert.match(api, /getFormulaVariables\(expression\)/);
+});
+
+test('formula rule values can be different by category while preserving the shared fee key', () => {
+  const accessories = evaluateFormula('8.5% * srp', { srp: 1000000 });
+  const memoryCard = evaluateFormula('MIN(8.5% * srp,60000)', { srp: 1000000 });
+  const ssd = evaluateFormula('MIN(7.2% * srp,80000)', { srp: 1000000 });
+  const dram = evaluateFormula('6% * srp', { srp: 1000000 });
+  assert.deepEqual([accessories,memoryCard,ssd,dram],[85000,60000,72000,60000]);
 });
