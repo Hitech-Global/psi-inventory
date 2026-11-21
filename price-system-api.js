@@ -40,7 +40,7 @@ const BUILTIN_FORMULA_LABELS = Object.freeze({
   inventory_wac: ['库存 WAC', 'Inventory WAC', 'WAC Persediaan'],
   reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
   landing_cost: ['系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
-  stock_qty: ['库存数量', 'Stock Quantity', 'Jumlah Persediaan'],
+  stock_qty: ['库存数量', 'Stock Qty', 'Jumlah Stok'],
   srp: ['SRP']
 });
 
