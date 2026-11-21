@@ -300,7 +300,11 @@ function registerPriceSystemRoutes(app, deps) {
   }
 
   function allowedFormulaVariables(fields, excludeKey) {
-    return BUILTIN_PRICE_VARIABLES.concat(fields.filter(f => f.field_key !== excludeKey).map(f => f.field_key));
+    const allowed = new Set(BUILTIN_PRICE_VARIABLES.filter(key => key !== excludeKey));
+    (fields || []).forEach(field => {
+      if (field && field.field_key && field.field_key !== excludeKey) allowed.add(field.field_key);
+    });
+    return Array.from(allowed);
   }
 
   function primaryCategoryMapForSkus(skuRows, brand) {
