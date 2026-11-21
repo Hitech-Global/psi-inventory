@@ -21,17 +21,26 @@ test('formula editor groups base data, fee fields and SRP separately without dup
   assert.ok(ui.includes("psInsertFormulaToken('srp')"), 'SRP should be available as a separate price variable');
   assert.ok(ui.includes("operators=['+','-','*','/','(',')','%']"), 'percent operator must be available');
   assert.match(ui, /window\.psInsertFormulaToken=function\(token\)/);
-  assert.match(ui, /oninput="psCategoryFormulaChanged\(this\)"/);
+  assert.ok(ui.includes('oninput="psFormulaRuleChanged(\'+index+\',this)"'));
   assert.match(ui, /onfocus="window\.__psFormulaTargetInput=this"/);
 });
 
-test('formula editor exposes one independent rule editor for every product category', () => {
+test('formula rules support multiple formulas with multi-category selection and quick actions', () => {
   assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"`));
-  assert.ok(ui.includes('formulaRuleCategories=Array.from(new Set(categoryList.concat(Object.keys(formulaRules))))'));
-  assert.ok(ui.includes('class="ps-category-formula-input"'));
+  assert.ok(ui.includes('window.__psFormulaRulesDraft='));
+  assert.ok(ui.includes('function formulaRuleDraftsFromMap(map,legacyFormula,legacyCategories,categoryList)'));
+  assert.ok(ui.includes('window.psAddFormulaRule=function()'));
+  assert.ok(ui.includes('window.psCopyFormulaRule=function(index)'));
+  assert.ok(ui.includes('window.psDeleteFormulaRule=function(index)'));
+  assert.ok(ui.includes('window.psSelectAllRuleCategories=function(index)'));
+  assert.ok(ui.includes('window.psClearRuleCategories=function(index)'));
+  assert.ok(ui.includes('window.psFilterRuleCategories=function(index,query)'));
+  assert.ok(ui.includes('class="ps-formula-rule-input"'));
   assert.ok(ui.includes('formula_rules[category]=expression'));
-  assert.match(ui, /window\.psPreviewCategoryFormula=async function\(category\)/);
-  assert.ok(ui.includes("applicable_categories=field_type==='formula'?[]"));
+  assert.ok(ui.includes('window.psPreviewFormulaRule=async function(index)'));
+  assert.ok(ui.includes('每条公式规则都需要填写公式并至少选择一个适用类目。'));
+  assert.ok(ui.includes('被多个公式规则重复选择'));
+  assert.ok(ui.includes('applicable_categories=field_type===\'formula\'?[]'));
 });
 
 test('formula evaluation can combine WAC, percentage fees and other calculated fields', () => {
@@ -110,11 +119,11 @@ test('category scope editor provides a reversible select-all action and keeps em
 });
 
 
-test('formula editor exposes MIN/MAX and a live server-validated SKU preview', () => {
+test('formula rules expose MIN/MAX and a server-validated preview for the selected category', () => {
   assert.ok(ui.includes("const functions=['MIN','MAX']"));
   assert.ok(ui.includes("const isFunction=['MIN','MAX'].includes(token)"));
-  assert.match(ui, /data-preview-category=/);
-  assert.match(ui, /window\.psPreviewCategoryFormula=async function\(category\)/);
+  assert.match(ui, /window\.psPreviewFormulaRule=async function\(index\)/);
+  assert.match(ui, /formula\/preview','POST'/);
   assert.match(api, /app\.post\('\/api\/price-system\/schemes\/:id\/formula\/preview'/);
   assert.match(api, /formula_context: Object\.assign\(\{\}, base, values\)/);
 });
@@ -171,7 +180,7 @@ test('formula editor displays readable field names instead of internal field key
   assert.ok(ui.includes('function priceFieldDisplayName(field)'));
   assert.ok(ui.includes('esc(priceFieldDisplayName(x))+"</button>"'));
   assert.ok(!ui.includes('esc(x.field_key)+"</code></button>'));
-  assert.ok(ui.includes('formulaRules[category]=formulaDisplayExpression(formulaRules[category])'));
+  assert.ok(ui.includes('rule.formula=String(input.value||\'\')'));
   assert.ok(ui.includes('const displayToken='));
 });
 
@@ -190,4 +199,14 @@ test('formula editor and field list share the exact configured field display nam
   assert.ok(ui.includes('priceFieldDisplayName(x))+"</button>"'));
   assert.ok(ui.includes("esc(priceFieldDisplayName(f))+'</div><code"));
   assert.ok(ui.includes('state.fields.map(x=>[x.field_key,priceFieldDisplayName(x)||x.field_key])'));
+});
+
+
+test('formula rule cards store one expression across all selected categories in the existing category map', () => {
+  assert.ok(ui.includes('categories.forEach(category=>{'));
+  assert.ok(ui.includes('formula_rules[category]=expression'));
+  assert.ok(ui.includes('grouped.find(x=>x.formula===expression)'));
+  assert.ok(ui.includes('window.psSetRuleCategory=function(index,category,checked)'));
+  assert.ok(ui.includes('const taken=(window.__psFormulaRulesDraft||[]).some'));
+  assert.ok(ui.includes('this.dataset.category'));
 });
