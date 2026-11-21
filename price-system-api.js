@@ -455,7 +455,7 @@ function registerPriceSystemRoutes(app, deps) {
         sku_code: sku.sku_code, brand: sku.brand || '', category: skuCategory, model: sku.model || '',
         stock_qty: Number(sku.stock_qty || 0), purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
-        values, srp, srp_source:srpSource, formula_errors:errors
+        values, formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
       };
     });
 
@@ -586,6 +586,30 @@ function registerPriceSystemRoutes(app, deps) {
     run('UPDATE price_system_schemes SET currency = ?, notes = ?, updated_at = datetime(\'now\') WHERE id = ?', [currency, notes, scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新价格方案信息');
     res.json(getSchemeOrNull(scheme.id));
+  }));
+
+  app.post('/api/price-system/schemes/:id/formula/preview', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const body = req.body || {};
+    const formula = String(body.formula || '').trim();
+    const excludeKey = String(body.exclude_key || '').trim();
+    const fields = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    try {
+      const validation = validateFormula(formula, allowedFormulaVariables(fields, excludeKey));
+      const supplied = body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables) ? body.variables : {};
+      const variables = {};
+      validation.variables.forEach(key => {
+        const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
+        const value = raw == null || raw === '' ? 0 : Number(raw);
+        if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
+        variables[key] = value;
+      });
+      const result = evaluateFormula(formula, variables);
+      res.json({ valid: true, variables: validation.variables, result });
+    } catch (e) {
+      res.status(400).json({ valid: false, error: e.message });
+    }
   }));
 
   app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
