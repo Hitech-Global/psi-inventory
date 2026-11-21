@@ -13,8 +13,22 @@ const BUILTIN_PRICE_VARIABLES = Object.freeze([
   'inventory_qty'
 ]);
 
+const SUPPORTED_FORMULA_FUNCTIONS = Object.freeze({
+  MIN: (...values) => Math.min(...values),
+  MAX: (...values) => Math.max(...values)
+});
+
+function normalizeExpression(expression) {
+  let source = String(expression == null ? '' : expression).trim();
+  if (source.startsWith('=')) {
+    source = source.slice(1).trim();
+    if (source.startsWith('=')) throw new Error('公式开头只能有一个等号');
+  }
+  return source;
+}
+
 function tokenize(expression) {
-  const source = String(expression || '');
+  const source = normalizeExpression(expression);
   const tokens = [];
   let i = 0;
   while (i < source.length) {
@@ -32,20 +46,24 @@ function tokenize(expression) {
       i += identifier[0].length;
       continue;
     }
-    if ('+-*/()%'.includes(source[i])) {
+    if ('+-*/()%,' .includes(source[i])) {
       tokens.push({ type: source[i], value: source[i] });
       i++;
       continue;
     }
     throw new Error('公式包含不支持的字符：' + source[i]);
   }
+  if (tokens.length > 500) throw new Error('公式过长，请拆分计算');
   return tokens;
 }
 
 function getFormulaVariables(expression) {
   const seen = new Set();
-  tokenize(expression).forEach(token => {
-    if (token.type === 'identifier') seen.add(token.value);
+  const tokens = tokenize(expression);
+  tokens.forEach((token, index) => {
+    if (token.type !== 'identifier') return;
+    if (tokens[index + 1] && tokens[index + 1].type === '(') return;
+    seen.add(token.value);
   });
   return Array.from(seen);
 }
@@ -63,6 +81,31 @@ function evaluateFormula(expression, variables) {
     if (peek('number')) return take().value;
     if (peek('identifier')) {
       const name = take().value;
+      if (peek('(')) {
+        const functionName = name.toUpperCase();
+        const formulaFunction = SUPPORTED_FORMULA_FUNCTIONS[functionName];
+        if (!formulaFunction) throw new Error('不支持的公式函数：' + name);
+        take();
+        if (peek(')')) throw new Error(functionName + ' 函数至少需要一个参数');
+        const args = [];
+        while (true) {
+          args.push(parseExpression());
+          if (peek(',')) {
+            take();
+            if (peek(')') || cursor >= tokens.length) throw new Error('函数参数不能为空');
+            continue;
+          }
+          if (peek(')')) {
+            take();
+            break;
+          }
+          if (cursor >= tokens.length) throw new Error('公式括号不匹配');
+          throw new Error('函数参数之间请使用逗号');
+        }
+        const result = formulaFunction(...args);
+        if (!Number.isFinite(result)) throw new Error('公式计算结果不是有效数字');
+        return result;
+      }
       if (!Object.prototype.hasOwnProperty.call(values, name)) {
         throw new Error('公式引用了未知字段：' + name);
       }
@@ -84,8 +127,6 @@ function evaluateFormula(expression, variables) {
     if (peek('+')) { take(); return parseUnary(); }
     if (peek('-')) { take(); return -parseUnary(); }
     let value = parsePrimary();
-    // A trailing percent sign converts the preceding number/field to a ratio.
-    // Example: 7.2% * srp === 0.072 * srp.
     if (peek('%')) { take(); value /= 100; }
     return value;
   }
@@ -128,4 +169,11 @@ function validateFormula(expression, allowedVariables) {
   return { valid: true, variables };
 }
 
-module.exports = { BUILTIN_PRICE_VARIABLES, tokenize, getFormulaVariables, evaluateFormula, validateFormula };
+module.exports = {
+  BUILTIN_PRICE_VARIABLES,
+  SUPPORTED_FORMULA_FUNCTIONS,
+  tokenize,
+  getFormulaVariables,
+  evaluateFormula,
+  validateFormula
+};
