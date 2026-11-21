@@ -202,7 +202,7 @@ test('creating a WAC-backed amount field immediately imports the latest confirme
   };
   const run = (sql, params=[]) => {
     runs.push({sql,params});
-    if (sql.includes('INSERT INTO price_system_fields')) fields.push({id:params[0],scheme_id:params[1],field_key:params[2],field_name:params[3],field_type:params[4],unit:params[5],applicable_categories:params[6],formula:params[7],sync_wac:params[8],sort_order:params[9],is_active:1});
+    if (sql.includes('INSERT INTO price_system_fields')) fields.push({id:params[0],scheme_id:params[1],field_key:params[2],field_name:params[3],field_type:params[4],unit:params[5],applicable_categories:params[6],formula:params[7],formula_rules:params[8],sync_wac:params[9],sort_order:params[10],is_active:1});
     if (sql.includes('INSERT INTO price_system_landing_costs')) landing.push({id:params[0],scheme_id:params[1],sku_code:params[2],wac_history_id:params[3],value:params[4],currency:params[5],warehouse:params[6],ci_no:params[7],version_no:params[8],confirmed_at:params[9],last_inbound_date:params[10]});
     if (sql.includes('INSERT INTO price_system_versions')) versions.push({scheme_id:params[1],version_no:params[2],note:params[4]});
   };
