@@ -25,7 +25,7 @@ test('formula editor groups base data, fee fields and SRP separately without dup
 });
 
 test('formula builder is available while editing ordinary fee fields and auto-selects formula type', () => {
-  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac?'display:none':'')+'"`));
+  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"`));
   assert.match(ui, /if\(formula\)field_type='formula'/);
   assert.match(ui, /window\.psFormulaInputChanged=function\(\)[\s\S]*type\.value='formula'/);
 });
@@ -84,7 +84,7 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
   assert.match(ui, /window\.psApplyPercentToSkus=async function\(id\)/);
   assert.match(ui, /values:\{\[data\.field_key\]:percent\}/);
   assert.match(ui, /api\('\/api\/price-system\/schemes\/'\+encodeURIComponent\(state\.schemeId\)\+'\/values','POST'/);
-  assert.match(ui, /field_type==='percent'\?'%'/);
+  assert.match(ui, /f\.field_type==='percent'\?'%'/);
   assert.match(ui, /data-field=\\"\'+esc\(f\.field_key\)/);
   assert.match(ui, /window\.psMarkDirty=function\(input\)/);
 });
