@@ -259,10 +259,34 @@ window.psInsertFormulaToken=function(token){
  const caret=start+text.length;input.focus();input.setSelectionRange(caret,caret);
  window.psFormulaInputChanged();
 };
+const DEFAULT_FORMULA_CATEGORY='__default_formula__';
+window.psCommitActiveFormula=function(){
+ const input=document.getElementById('ps-field-formula');if(!input)return;
+ const active=window.__psFormulaEditorCategory||DEFAULT_FORMULA_CATEGORY,current=input.value.trim();
+ if(active===DEFAULT_FORMULA_CATEGORY)window.__psDefaultFormula=current;
+ else{
+  const formulas=window.__psCategoryFormulas||{};
+  if(current&&current!==String(window.__psDefaultFormula||'').trim())formulas[active]=current;
+  else delete formulas[active];
+  window.__psCategoryFormulas=formulas;
+ }
+};
+window.psFormulaCategoryChanged=function(){
+ const select=document.getElementById('ps-formula-category'),input=document.getElementById('ps-field-formula');if(!select||!input)return;
+ window.psCommitActiveFormula();
+ const next=select.value||DEFAULT_FORMULA_CATEGORY;
+ window.__psFormulaEditorCategory=next;
+ const isDefault=next===DEFAULT_FORMULA_CATEGORY,formulas=window.__psCategoryFormulas||{},hasOverride=!isDefault&&Object.prototype.hasOwnProperty.call(formulas,next);
+ const fallback=String(window.__psDefaultFormula||'').trim();
+ input.value=isDefault?fallback:(hasOverride?formulas[next]:fallback);
+ const hint=document.getElementById('ps-formula-category-hint');
+ if(hint)hint.textContent=isDefault?tr('formulaDefaultHint'):(hasOverride?tr('formulaCategoryOverrideHint'):tr('formulaCategoryHint'));
+ window.psFormulaInputChanged();
+};
 window.psFormulaInputChanged=function(){
  const input=document.getElementById('ps-field-formula'),type=document.getElementById('ps-field-type');
  const preview=document.getElementById('ps-formula-preview');
- if(input&&type&&input.value.trim()){type.value='formula';window.psToggleFormula();}
+ if(input&&type&&input.value.trim()&&type.value!=='formula'){type.value='formula';window.psToggleFormula();}
  if(window.__psFormulaPreviewTimer)clearTimeout(window.__psFormulaPreviewTimer);
  const seq=(Number(window.__psFormulaPreviewSeq)||0)+1;window.__psFormulaPreviewSeq=seq;
  if(!preview)return;
@@ -277,18 +301,21 @@ window.psRunFormulaPreview=async function(seq){
  const input=document.getElementById('ps-field-formula'),preview=document.getElementById('ps-formula-preview');
  if(!input||!preview||!input.value.trim()||seq!==window.__psFormulaPreviewSeq)return;
  const fieldKey=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'';
- const row=state.rows.find(x=>x&&x.sku_code)||null;
+ const selectedCategory=document.getElementById('ps-formula-category')?.value||DEFAULT_FORMULA_CATEGORY;
+ const row=selectedCategory===DEFAULT_FORMULA_CATEGORY
+  ?(state.rows.find(x=>x&&x.sku_code)||null)
+  :(state.rows.find(x=>x&&String(x.category||'').trim()===selectedCategory)||null);
  const variables=Object.assign({},row&&row.formula_context||{},row&&row.values||{});
  if(row&&row.srp!=null)variables.srp=Number(row.srp);
  if(fieldKey)delete variables[fieldKey];
  try{
   const result=await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula/preview','POST',{
-   formula:input.value.trim(),exclude_key:fieldKey,variables
+   formula:input.value.trim(),exclude_key:fieldKey,variables,category:selectedCategory===DEFAULT_FORMULA_CATEGORY?'':selectedCategory
   });
   if(seq!==window.__psFormulaPreviewSeq||document.getElementById('ps-formula-preview')!==preview)return;
   const money=state.scheme&&state.scheme.currency?esc(state.scheme.currency)+' ':'';
   const sample=row?row.sku_code:tr('formulaPreviewNoSku');
-  preview.innerHTML='<div class="ps-formula-preview-head"><span class="ps-formula-preview-ok">'+tr('formulaPreviewValid')+'</span><strong class="ps-formula-preview-result">'+tr('formulaPreviewResult')+'：'+money+fmt(result.result)+'</strong></div><div class="ps-formula-preview-meta">'+tr('formulaPreviewSample')+'：'+esc(sample)+'</div>';
+  preview.innerHTML='<div class="ps-formula-preview-head"><span class="ps-formula-preview-ok">'+tr('formulaPreviewValid')+'</span><strong class="ps-formula-preview-result">'+tr('formulaPreviewResult')+'：'+money+fmt(result.result)+'</strong></div><div class="ps-formula-preview-meta">'+tr('formulaPreviewSample')+'：'+esc(sample)+(selectedCategory===DEFAULT_FORMULA_CATEGORY?'':' · '+esc(selectedCategory))+'</div>';
  }catch(e){
   if(seq!==window.__psFormulaPreviewSeq||document.getElementById('ps-formula-preview')!==preview)return;
   const message=e&&e.message?e.message:String(e||'');
