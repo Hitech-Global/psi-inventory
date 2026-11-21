@@ -326,7 +326,8 @@ function collectFieldEditorValues(){
  const field_key=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'';
  const unit=document.getElementById('ps-field-unit')?.value.trim()||'';
  const display_format=document.getElementById('ps-field-display-format')?.value||'auto';
- const decimal_places=Math.max(0,Math.min(6,Math.round(Number(document.getElementById('ps-field-decimal-places')?.value||2))));
+ const decimalPlacesInput=document.getElementById('ps-field-decimal-places')?.value;
+ const decimal_places=Math.max(0,Math.min(6,Math.round(decimalPlacesInput==null||decimalPlacesInput===''?2:Number(decimalPlacesInput))));
  const formula=document.getElementById('ps-field-formula')?.value.trim()||'';
  const sync_wac=!!document.getElementById('ps-field-sync-wac')?.checked;
  const checked=Array.from(document.querySelectorAll('.ps-cat-check:checked')).map(x=>x.value);
