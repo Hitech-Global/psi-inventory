@@ -46,7 +46,7 @@ function tokenize(expression) {
       i += identifier[0].length;
       continue;
     }
-    if ('+-*/()%,' .includes(source[i])) {
+    if ('+-*/(),%'.includes(source[i])) {
       tokens.push({ type: source[i], value: source[i] });
       i++;
       continue;
@@ -83,7 +83,7 @@ function evaluateFormula(expression, variables) {
       const name = take().value;
       if (peek('(')) {
         const functionName = name.toUpperCase();
-        const formulaFunction = SUPPORTED_FORMULA_FUNCTIONS[functionName];
+        const formulaFunction = Object.prototype.hasOwnProperty.call(SUPPORTED_FORMULA_FUNCTIONS, functionName) ? SUPPORTED_FORMULA_FUNCTIONS[functionName] : null;
         if (!formulaFunction) throw new Error('不支持的公式函数：' + name);
         take();
         if (peek(')')) throw new Error(functionName + ' 函数至少需要一个参数');
