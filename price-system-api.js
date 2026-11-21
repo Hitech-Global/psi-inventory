@@ -796,7 +796,7 @@ function registerPriceSystemRoutes(app, deps) {
         .rows.forEach(s => skuMap.set(s.sku_code, s));
     }
     const categoryBySku = primaryCategoryMapForSkus(Array.from(skuMap.values()), scheme.brand);
-    skuMap.forEach(sku => { sku.category = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, ''); });
+    skuMap.forEach(sku => { sku.category = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类'; });
     const errors = [];
     const normalized = [];
     const normalizedSrp = [];
