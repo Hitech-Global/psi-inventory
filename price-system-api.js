@@ -405,7 +405,7 @@ function registerPriceSystemRoutes(app, deps) {
     const fieldMap = new Map(fields.map(f => [f.field_key, f]));
 
     const rows = skuRows.map(sku => {
-      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, '');
+      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类';
       const stored = storedBySku.get(sku.sku_code) || {};
       const landingCost = landingCostBySku.get(sku.sku_code) || null;
       const base = {
