@@ -54,7 +54,7 @@ test('SRP can be edited inline and is saved through the dedicated SRP payload fi
 
 test('SRP is allowed as a dependency for fee formulas but cannot reference itself', () => {
   assert.match(api, /BUILTIN_PRICE_VARIABLES\.filter\(key => key !== excludeKey\)/);
-  assert.match(api, /validateFormula\(formula, allowedFormulaVariables\(fields, 'srp'\)\)/);
+  assert.match(api, /validateFormula\(normalizeFormulaExpression\(formula, fields\), allowedFormulaVariables\(fields, 'srp'\)\)/);
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('srp'));
 });
 
