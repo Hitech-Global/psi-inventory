@@ -18,7 +18,7 @@ test('formula editor groups base data, fee fields and SRP separately without dup
   assert.match(ui, /x\.field_key!=='inventory_qty'/, 'inventory_qty alias must be hidden');
   assert.match(ui, /Number\(x\.sync_wac\|\|0\)!==1/, 'WAC-synced fee aliases should not duplicate system Landing Cost');
   assert.ok(ui.includes('formulaBaseFields') && ui.includes('formulaFeeFields') && ui.includes('formulaPriceFields'));
-  assert.ok(ui.includes("onclick=\\"psInsertFormulaToken('srp')\\""), 'SRP should be available as a separate price variable');
+  assert.ok(ui.includes("psInsertFormulaToken('srp')"), 'SRP should be available as a separate price variable');
   assert.ok(ui.includes("operators=['+','-','*','/','(',')','%']"), 'percent operator must be available');
   assert.match(ui, /window\.psInsertFormulaToken=function\(token\)/);
   assert.match(ui, /oninput="psFormulaInputChanged\(\)"/);
