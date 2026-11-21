@@ -163,3 +163,22 @@ test('formula rule values can be different by category while preserving the shar
   assert.deepEqual([accessories,memoryCard,dram],[85000,60000,60000]);
   assert.ok(Math.abs(ssd-72000)<1e-8);
 });
+
+
+test('formula editor displays readable field names instead of internal field keys', () => {
+  assert.ok(ui.includes('function formulaTokenLabel(token)'));
+  assert.ok(ui.includes('function formulaDisplayExpression(expression)'));
+  assert.ok(ui.includes("String(x.field_name||x.field_key)"));
+  assert.ok(ui.includes('"+esc(x.field_name)+"</button>'));
+  assert.ok(!ui.includes('"+esc(x.field_name)+" <code>"+esc(x.field_key)+"</code></button>'));
+  assert.ok(ui.includes('formulaRules[category]=formulaDisplayExpression(formulaRules[category])'));
+  assert.ok(ui.includes('const displayToken='));
+});
+
+test('backend normalizes localized readable formula labels to stable internal keys', () => {
+  assert.match(api, /function normalizeFormulaExpression\(expression, fields\)/);
+  assert.match(api, /purchase_price_rmb: \['采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'\]/);
+  assert.match(api, /aliases\.forEach\(\(\[label, key\]\)/);
+  assert.match(api, /normalizeFormulaExpression\(expression, existingFields\)/);
+  assert.match(api, /normalizeFormulaExpression\(formula, fields\)/);
+});
