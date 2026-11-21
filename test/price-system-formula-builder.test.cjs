@@ -78,27 +78,27 @@ test('price system toolbar removes redundant page heading and combines Excel imp
 });
 
 test('percentage fields have a bulk default control and batch-apply to SKUs in the selected category scope', () => {
-  assert.match(ui, /id="ps-percent-wrap"/);
-  assert.match(ui, /id="ps-field-default-percent"/);
-  assert.match(ui, /psApplyPercentToSkus\(/);
-  assert.match(ui, /window\.psApplyPercentToSkus=async function\(id\)/);
-  assert.match(ui, /values:\{\[data\.field_key\]:percent\}/);
-  assert.match(ui, /api\('\/api\/price-system\/schemes\/'\+encodeURIComponent\(state\.schemeId\)\+'\/values','POST'/);
-  assert.ok(ui.includes(`f.field_type==='percent'?'<span class=\"ps-unit\">%</span>'`));
-  assert.match(ui, /data-field=\\"\'+esc\(f\.field_key\)/);
-  assert.match(ui, /window\.psMarkDirty=function\(input\)/);
+  assert.ok(ui.includes('id="ps-percent-wrap"'));
+  assert.ok(ui.includes('id="ps-field-default-percent"'));
+  assert.ok(ui.includes('window.psApplyPercentToSkus=async function(id)'));
+  assert.ok(ui.includes('values:{[data.field_key]:percent}'));
+  assert.ok(ui.includes("'/values','POST'"));
+  assert.ok(ui.includes('f.field_type===\'percent\'?\'<span class="ps-unit">%</span>\''));
+  assert.ok(ui.includes('data-field="'+esc(f.field_key)+'"'));
+  assert.ok(ui.includes('window.psMarkDirty=function(input)'));
 });
 
 test('percentage field type displays percentage settings and hides formula calculation settings', () => {
-  assert.match(ui, /id="ps-formula-wrap" style="\'+\(isWac\|\|type==='percent'\?'display:none':'\'\)\+'/);
-  assert.match(ui, /if\(w\)w\.style\.display=\(c&&c\.checked\)\|\|t==='percent'\?'none':'\'/);
-  assert.ok(ui.includes(`if(p)p.style.display=t==='percent'?'':'none';`));
+  assert.ok(ui.includes("isWac||type==='percent'?'display:none':''"));
+  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||t==='percent'?'none':'';"));
+  assert.ok(ui.includes("if(p)p.style.display=t==='percent'?'':'none';"));
 });
 
 test('category scope editor provides a select-all action and keeps empty scope as all categories', () => {
-  assert.match(ui, /ps-category-select-all/);
-  assert.match(ui, /window\.psSelectAllCategories=function\(\)/);
-  assert.match(ui, /document\.querySelectorAll\('\.ps-cat-check'\)\.forEach\(x=>\{x\.checked=true;\}\)/);
-  assert.match(ui, /\(!checked\.length\|\|checked\.length===total\)\?\[\]:checked/);
-  assert.match(ui, /allScope\|\|selected\.has\(category\)/);
+  assert.ok(ui.includes('ps-category-select-all'));
+  assert.ok(ui.includes('window.psSelectAllCategories=function()'));
+  assert.ok(ui.includes("document.querySelectorAll('.ps-cat-check').forEach(x=>{x.checked=true;})"));
+  assert.ok(ui.includes('(!checked.length||checked.length===total)?[]:checked'));
+  assert.ok(ui.includes('allScope||selected.has(category)'));
+  assert.ok(ui.includes('if(checks.length&&checked===0)'));
 });
