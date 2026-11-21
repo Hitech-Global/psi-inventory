@@ -169,8 +169,8 @@ test('formula editor displays readable field names instead of internal field key
   assert.ok(ui.includes('function formulaTokenLabel(token)'));
   assert.ok(ui.includes('function formulaDisplayExpression(expression)'));
   assert.ok(ui.includes('function priceFieldDisplayName(field)'));
-  assert.ok(ui.includes('"+esc(x.field_name)+"</button>'));
-  assert.ok(!ui.includes('"+esc(x.field_name)+" <code>"+esc(x.field_key)+"</code></button>'));
+  assert.ok(ui.includes('esc(priceFieldDisplayName(x))+"</button>"'));
+  assert.ok(!ui.includes('esc(x.field_key)+"</code></button>'));
   assert.ok(ui.includes('formulaRules[category]=formulaDisplayExpression(formulaRules[category])'));
   assert.ok(ui.includes('const displayToken='));
 });
@@ -188,6 +188,6 @@ test('backend normalizes localized readable formula labels to stable internal ke
 test('formula editor and field list share the exact configured field display name', () => {
   assert.ok(ui.includes('function priceFieldDisplayName(field)'));
   assert.ok(ui.includes('priceFieldDisplayName(x))+"</button>"'));
-  assert.ok(ui.includes("esc(priceFieldDisplayName(f))+'</div>'"));
+  assert.ok(ui.includes("esc(priceFieldDisplayName(f))+'</div><code"));
   assert.ok(ui.includes('state.fields.map(x=>[x.field_key,priceFieldDisplayName(x)||x.field_key])'));
 });
