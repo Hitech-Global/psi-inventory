@@ -10,6 +10,14 @@ function tr(k){const l=typeof getLang==='function'?getLang():'zh';return (TXT[l]
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fmt(v){const n=Number(v);return v==null||v===''||!Number.isFinite(n)?'—':n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function cats(f){if(Array.isArray(f.applicable_categories))return f.applicable_categories;try{const x=JSON.parse(f.applicable_categories||'[]');return Array.isArray(x)?x:[];}catch(e){return [];}}
+function formulaMap(f){
+ const value=f&&f.category_formulas;let parsed=value;
+ if(typeof parsed==='string'){try{parsed=JSON.parse(parsed||'{}');}catch(e){parsed={};}}
+ if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return {};
+ const result={};Object.keys(parsed).forEach(category=>{const key=String(category||'').trim(),formula=String(parsed[category]||'').trim();if(key&&formula)result[key]=formula;});return result;
+}
+function formulaForCategory(f,category){const map=formulaMap(f);return String(map[String(category||'').trim()]||f&&f.formula||'').trim();}
+function formulaTitle(f){const map=formulaMap(f),parts=[];if(String(f&&f.formula||'').trim())parts.push(tr('formulaDefault')+': '+String(f.formula).trim());Object.keys(map).sort().forEach(category=>parts.push(category+': '+map[category]));return parts.join('\n');}
 function applies(f,r){const a=cats(f);return !a.length||a.includes(String(r.category||'').trim());}
 function currency(){return esc(state.scheme&&state.scheme.currency||'');}
 function err(e){if(typeof showToast==='function')showToast(e&&e.message||String(e),'danger');else if(typeof showFlash==='function')showFlash(e&&e.message||String(e),'danger');}
