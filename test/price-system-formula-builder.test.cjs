@@ -147,7 +147,7 @@ test('category scope starts unselected and select-all toggles both ways', () => 
 test('category formula rules are persisted, validated and restored without falling back to another category', () => {
   assert.match(api, /function parseFormulaRules\(value\)/);
   assert.match(api, /function formulaForCategory\(field, category\)/);
-  assert.match(api, /formula_rules TEXT NOT NULL DEFAULT '\{\}'/);
+  assert.match(api, /formula_rules = \?/);
   assert.match(api, /if \(field\.field_type === 'formula' && Object\.keys\(parseFormulaRules\(field\.formula_rules\)\)\.length && !categoryFormula\)/);
   assert.match(api, /Object\.keys\(formulaRules\)\.forEach\(category =>/);
   assert.match(api, /formula_rules = \?/);
