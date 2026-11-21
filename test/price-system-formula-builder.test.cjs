@@ -18,7 +18,7 @@ test('formula editor offers every base variable, dynamic fee fields and arithmet
 });
 
 test('formula builder is available while editing ordinary fee fields and auto-selects formula type', () => {
-  assert.match(ui, /id="ps-formula-wrap" style="\'\+\(isWac\?'display:none':''\)/);
+  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac?'display:none':'')+'"`));
   assert.match(ui, /if\(formula\)field_type='formula'/);
   assert.match(ui, /window\.psFormulaInputChanged=function\(\)[\s\S]*type\.value='formula'/);
 });
