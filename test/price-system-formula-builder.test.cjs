@@ -76,3 +76,29 @@ test('price system toolbar removes redundant page heading and combines Excel imp
   assert.match(ui, /window\.psCloseImportMenu=function\(\)/);
   assert.match(ui, /ps-import-menu\[hidden\]\{display:none\}/);
 });
+
+test('percentage fields have a bulk default control and batch-apply to SKUs in the selected category scope', () => {
+  assert.match(ui, /id="ps-percent-wrap"/);
+  assert.match(ui, /id="ps-field-default-percent"/);
+  assert.match(ui, /psApplyPercentToSkus\(/);
+  assert.match(ui, /window\.psApplyPercentToSkus=async function\(id\)/);
+  assert.match(ui, /values:\{\[data\.field_key\]:percent\}/);
+  assert.match(ui, /api\('\/api\/price-system\/schemes\/'\+encodeURIComponent\(state\.schemeId\)\+'\/values','POST'/);
+  assert.match(ui, /field_type==='percent'\?'%'/);
+  assert.match(ui, /data-field=\\"\'+esc\(f\.field_key\)/);
+  assert.match(ui, /window\.psMarkDirty=function\(input\)/);
+});
+
+test('percentage field type displays percentage settings and hides formula calculation settings', () => {
+  assert.match(ui, /id="ps-formula-wrap" style="\'+\(isWac\|\|type==='percent'\?'display:none':'\'\)\+'/);
+  assert.match(ui, /if\(w\)w\.style\.display=\(c&&c\.checked\)\|\|t==='percent'\?'none':'\'/);
+  assert.match(ui, /if\(p\)p\.style\.display=t==='percent'\?'':'none'/);
+});
+
+test('category scope editor provides a select-all action and keeps empty scope as all categories', () => {
+  assert.match(ui, /ps-category-select-all/);
+  assert.match(ui, /window\.psSelectAllCategories=function\(\)/);
+  assert.match(ui, /document\.querySelectorAll\('\.ps-cat-check'\)\.forEach\(x=>\{x\.checked=true;\}\)/);
+  assert.match(ui, /\(!checked\.length\|\|checked\.length===total\)\?\[\]:checked/);
+  assert.match(ui, /allScope\|\|selected\.has\(category\)/);
+});
