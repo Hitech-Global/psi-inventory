@@ -219,24 +219,25 @@ const FORMULA_BASE_FIELDS=[
  {key:'weighted_avg_cost',label:'weightedAvgCost'},
  {key:'inventory_wac',label:'inventoryWac'},
  {key:'reference_customs_rate',label:'customsRate'},
- {key:'landing_cost',label:'landingCost'},
- {key:'stock_qty',label:'stock'},
- {key:'inventory_qty',label:'inventoryQty'}
+ {key:'landing_cost',label:'systemLandingCost'},
+ {key:'stock_qty',label:'stock'}
 ];
 function formulaBuilderHtml(field){
  const excluded=field&&field.field_key||'';
  const baseKeys=new Set(FORMULA_BASE_FIELDS.map(x=>x.key));
- const base=FORMULA_BASE_FIELDS.map(x=>`<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken('${x.key}')">${tr(x.label)} <code>${x.key}</code></button>`).join('');
- const custom=state.fields.filter(x=>x.field_key!==excluded&&!baseKeys.has(x.field_key)).map(x=>`<button type="button" class="ps-formula-token" title="${esc(x.field_name)}" onclick="psInsertFormulaToken('${esc(x.field_key)}')">${esc(x.field_name)} <code>${esc(x.field_key)}</code></button>`).join('');
- const operators=['+','-','*','/','(',')'].map(x=>`<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken('${x}')">${x==='*'?'×':(x==='/'?'÷':x)}</button>`).join('');
- return '<div class="ps-formula-palette"><div><div class="ps-formula-palette-title">'+tr('formulaFields')+'</div><div class="ps-formula-chips">'+base+custom+'</div></div><div><div class="ps-formula-palette-title">'+tr('formulaOperators')+'</div><div class="ps-formula-chips ps-formula-operators">'+operators+'</div></div></div>';
+ const base=FORMULA_BASE_FIELDS.map(x=>'<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken(\\''+x.key+'\\')">'+tr(x.label)+' <code>'+x.key+'</code></button>').join('');
+ const customFields=state.fields.filter(x=>x.field_key!==excluded&&x.field_key!=='srp'&&!x.is_builtin_srp&&!baseKeys.has(x.field_key)&&x.field_key!=='inventory_qty'&&Number(x.sync_wac||0)!==1);
+ const custom=customFields.length?customFields.map(x=>'<button type="button" class="ps-formula-token" title="'+esc(x.field_name)+'" onclick="psInsertFormulaToken(\\''+esc(x.field_key)+'\\')">'+esc(x.field_name)+' <code>'+esc(x.field_key)+'</code></button>').join(''):'<span class="ps-formula-empty">'+tr('formulaNoFeeFields')+'</span>';
+ const price=excluded==='srp'?'':'<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken(\\'srp\\')">SRP <code>srp</code></button>';
+ const operators=['+','-','*','/','(',')','%'].map(x=>'<button type="button" class="ps-formula-token" onclick="psInsertFormulaToken(\\''+x+'\\')">'+(x==='*'?'×':(x==='/'?'÷':x))+'</button>').join('');
+ return '<div class="ps-formula-palette"><div><div class="ps-formula-palette-title">'+tr('formulaBaseFields')+'</div><div class="ps-formula-chips">'+base+'</div></div><div><div class="ps-formula-palette-title">'+tr('formulaFeeFields')+'</div><div class="ps-formula-chips">'+custom+'</div></div>'+(price?'<div><div class="ps-formula-palette-title">'+tr('formulaPriceFields')+'</div><div class="ps-formula-chips">'+price+'</div></div>':'')+'<div><div class="ps-formula-palette-title">'+tr('formulaOperators')+'</div><div class="ps-formula-chips ps-formula-operators">'+operators+'</div></div></div>';
 }
 window.psInsertFormulaToken=function(token){
  const input=document.getElementById('ps-field-formula');if(!input)return;
  const start=Number.isInteger(input.selectionStart)?input.selectionStart:input.value.length;
  const end=Number.isInteger(input.selectionEnd)?input.selectionEnd:start;
  const operator=['+','-','*','/'].includes(token);
- const text=operator?' '+token+' ':(token==='('? '(': (token===')'?')':token+' '));
+ const text=token==='%'?'%':(operator?' '+token+' ':(token==='('? '(': (token===')'?')':token+' ')));
  input.value=input.value.slice(0,start)+text+input.value.slice(end);
  const caret=start+text.length;input.focus();input.setSelectionRange(caret,caret);
  window.psFormulaInputChanged();
