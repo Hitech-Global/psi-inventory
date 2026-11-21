@@ -21,7 +21,8 @@ test('formula editor groups base data, fee fields and SRP separately without dup
   assert.ok(ui.includes("psInsertFormulaToken('srp')"), 'SRP should be available as a separate price variable');
   assert.ok(ui.includes("operators=['+','-','*','/','(',')','%']"), 'percent operator must be available');
   assert.match(ui, /window\.psInsertFormulaToken=function\(token\)/);
-  assert.match(ui, /oninput="psFormulaInputChanged\(\)"/);
+  assert.match(ui, /oninput="psCategoryFormulaChanged\(this\)"/);
+  assert.match(ui, /onfocus="window\.__psFormulaTargetInput=this"/);
 });
 
 test('formula editor exposes one independent rule editor for every product category', () => {
