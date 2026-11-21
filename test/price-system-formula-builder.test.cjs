@@ -125,3 +125,14 @@ test('all price-system table fields, including dynamically added fields, are cen
   assert.ok(ui.includes("state.fields.map(f=>'<th"));
   assert.ok(ui.includes("return '<td class=\"ps-value\"><input"));
 });
+
+
+test('category scope starts unselected and select-all toggles both ways', () => {
+  assert.ok(ui.includes('const allScope=categoryList.length>0&&selected.size===categoryList.length;'));
+  assert.ok(ui.includes("((allScope||selected.has(category))?'checked':'')"));
+  assert.ok(ui.includes('const selectAll=!checks.every(x=>x.checked);'));
+  assert.ok(ui.includes('checks.forEach(x=>{x.checked=selectAll;});'));
+  assert.ok(ui.includes('window.psUpdateCategorySelectAll();'));
+  assert.ok(!ui.includes('if(checks.length&&checked===0){checks.forEach(x=>{x.checked=true;});'));
+  assert.ok(ui.includes('const applicable_categories=(!checked.length||checked.length===total)?[]:checked;'));
+});
