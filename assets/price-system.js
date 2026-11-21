@@ -303,7 +303,7 @@ function collectFieldEditorValues(){
  const total=document.querySelectorAll('.ps-cat-check').length;
  let field_type=document.getElementById('ps-field-type')?.value||'amount';
  const formula_rules={};
- document.querySelectorAll('.ps-category-formula-input').forEach(input=>{const category=String(input.getAttribute('data-category')||'').trim(),expression=String(input.value||'').trim();if(category&&expression)formula_rules[category]=expression;});
+ if(field_type==='formula')document.querySelectorAll('.ps-category-formula-input').forEach(input=>{const category=String(input.getAttribute('data-category')||'').trim(),expression=String(input.value||'').trim();if(category&&expression)formula_rules[category]=expression;});
  const applicable_categories=field_type==='formula'?[]:((!checked.length||checked.length===total)?[]:checked);
  return {field_name,field_key,unit,formula:'',formula_rules,sync_wac,applicable_categories,field_type};
 }
@@ -341,6 +341,8 @@ window.psOpenFieldEditor=function(id,percentDefault){
 };
 window.psCategoryFormulaChanged=function(input){
  const category=String(input&&input.getAttribute('data-category')||'');
+ const type=document.getElementById('ps-field-type');
+ if(input&&String(input.value||'').trim()&&type&&type.value!=='formula'){type.value='formula';window.psToggleFormula();}
  const preview=Array.from(document.querySelectorAll('.ps-category-formula-preview')).find(x=>x.getAttribute('data-preview-category')===category);
  if(preview)preview.textContent=tr('categoryFormulaPreviewEmpty');
 };
