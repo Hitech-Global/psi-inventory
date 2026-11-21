@@ -1,7 +1,5 @@
 'use strict';
 
-const { primaryQuotationCategory } = require('./quotation-category');
-
 const {
   BUILTIN_PRICE_VARIABLES,
   evaluateFormula,
@@ -57,6 +55,16 @@ function isCategoryApplicable(field, category) {
   if (field && field.field_type === 'formula' && Object.keys(parseFormulaRules(field.formula_rules)).length) return !!formulaForCategory(field, category);
   const categories = parseCategories(field.applicable_categories);
   return categories.length === 0 || categories.includes(String(category || '').trim());
+}
+
+function primaryCategoryMapForSkus(skuRows) {
+  const categories = new Map();
+  (skuRows || []).forEach(sku => {
+    const code = String(sku.sku_code || '').trim();
+    if (!code) return;
+    categories.set(code, String(sku.category || '').trim() || '未分类');
+  });
+  return categories;
 }
 
 function createPriceSystemWacSync(deps) {
@@ -343,29 +351,6 @@ function registerPriceSystemRoutes(app, deps) {
     return Array.from(allowed);
   }
 
-  function primaryCategoryMapForSkus(skuRows, brand) {
-    const quotationTypeBySku = new Map();
-    try {
-      const quotationCategoryRows = query(
-        "SELECT COALESCE(NULLIF(TRIM(q.psi_sku_code), ''), q.sku_code) AS sku_code, q.product_type FROM quotation_prices q WHERE LOWER(TRIM(q.brand)) = LOWER(TRIM(?)) ORDER BY q.quote_date DESC, q.created_at DESC",
-        [brand]
-      ).rows || [];
-      quotationCategoryRows.forEach(row => {
-        const skuCode = String(row.sku_code || '').trim().toUpperCase();
-        if (skuCode && !quotationTypeBySku.has(skuCode)) quotationTypeBySku.set(skuCode, String(row.product_type || '').trim());
-      });
-    } catch (e) {
-      // Keep Price System readable if quotation management is not initialized.
-      if (!/no such table|does not exist|undefined table/i.test(String(e && e.message || e))) throw e;
-    }
-    const categories = new Map();
-    (skuRows || []).forEach(sku => {
-      const code = String(sku.sku_code || '').trim();
-      categories.set(code, primaryQuotationCategory(sku.category, quotationTypeBySku.get(code.toUpperCase())));
-    });
-    return categories;
-  }
-
   function getSchemeData(req, res, scheme) {
     if (!schemeAccess(req, res, scheme)) return;
     const fields = query(
@@ -420,7 +405,7 @@ function registerPriceSystemRoutes(app, deps) {
     const fieldMap = new Map(fields.map(f => [f.field_key, f]));
 
     const rows = skuRows.map(sku => {
-      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, '');
+      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类';
       const stored = storedBySku.get(sku.sku_code) || {};
       const landingCost = landingCostBySku.get(sku.sku_code) || null;
       const base = {
@@ -811,7 +796,7 @@ function registerPriceSystemRoutes(app, deps) {
         .rows.forEach(s => skuMap.set(s.sku_code, s));
     }
     const categoryBySku = primaryCategoryMapForSkus(Array.from(skuMap.values()), scheme.brand);
-    skuMap.forEach(sku => { sku.category = categoryBySku.get(String(sku.sku_code || '').trim()) || primaryQuotationCategory(sku.category, ''); });
+    skuMap.forEach(sku => { sku.category = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类'; });
     const errors = [];
     const normalized = [];
     const normalizedSrp = [];
@@ -942,4 +927,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus };

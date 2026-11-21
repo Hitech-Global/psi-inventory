@@ -27,6 +27,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { query, queryOne, run, transaction, genId, initDatabase } = require('./db');
 const priceSystemApi = require('./price-system-api');
+const { resolveSkuMasterCategory } = require('./sku-category');
 const syncPriceSystemLandingCostsForWacKeys = priceSystemApi.createPriceSystemWacSync({ query, queryOne, run, genId });
 const { withGenerateClient, withAsyncPoolClient } = require('./pg-async'); // 专用异步 Pool：generate / 销售导入库存重算不阻塞主线程
 const { importCommercialInvoicesPg } = require('./wave2a-ci-batch-import-pg.js'); // Wave 2A: CI batch-import PG async path
@@ -3799,6 +3800,22 @@ app.post('/api/system-config', requireApiPermission('system_config'), asyncHandl
 }));
 
 // ==================== SKU 主数据 ====================
+function resolveSkuMasterCategoryFromSources(brand, skuCode, currentCategory) {
+  let quotationType = '';
+  if (String(brand || '').trim().toLowerCase() === 'netac') {
+    try {
+      const quote = queryOne(
+        "SELECT product_type FROM quotation_prices WHERE LOWER(TRIM(brand)) = 'netac' AND UPPER(TRIM(COALESCE(NULLIF(TRIM(psi_sku_code), ''), sku_code))) = UPPER(TRIM(?)) AND COALESCE(match_status, 'matched') <> 'unlinked' ORDER BY quote_date DESC, created_at DESC LIMIT 1",
+        [skuCode]
+      );
+      quotationType = quote && quote.product_type || '';
+    } catch (e) {
+      if (!/no such table|does not exist|undefined table/i.test(String(e && e.message || e))) throw e;
+    }
+  }
+  return resolveSkuMasterCategory({ brand, skuCode, currentCategory, quotationType });
+}
+
 app.get('/api/skus', requireApiPermission('sku_view'), asyncHandler((req, res) => {
   const { keyword, status, brand, lifecycle_status, category } = req.query;
   let sql = 'SELECT * FROM skus WHERE 1=1';
@@ -3835,9 +3852,10 @@ app.post('/api/skus', requireApiPermission('sku_create'), asyncHandler((req, res
       if (!Number.isFinite(rate) || rate < 0) return res.status(400).json({ error: '参考关税税率必须为不小于0的数字' });
     }
     const sId = d.id || genId('sku');
+    const category = resolveSkuMasterCategoryFromSources(d.brand, d.sku_code, d.category || '');
     run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, default_supplier_id, default_supplier_name, purchase_currency, standard_purchase_price, purchase_price_rmb, purchase_price_usd, reference_customs_rate, carton_spec, qty_per_carton, unit_weight, unit_cbm, is_new_product, launch_date, new_product_protection_days, lifecycle_status, auto_replenish, status, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sId, d.sku_code, d.product_name || '', d.brand || '', d.category || '', d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.reference_customs_rate === '' || d.reference_customs_rate == null ? null : Number(d.reference_customs_rate), d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
-    res.json({ id: sId, ...d });
+      [sId, d.sku_code, d.product_name || '', d.brand || '', category, d.model || '', d.color_spec || '', d.barcode || '', d.default_supplier_id || '', d.default_supplier_name || '', d.purchase_currency || 'USD', d.standard_purchase_price || 0, parseFloat(d.purchase_price_rmb) || 0, parseFloat(d.purchase_price_usd) || 0, d.reference_customs_rate === '' || d.reference_customs_rate == null ? null : Number(d.reference_customs_rate), d.carton_spec || '', d.qty_per_carton || 0, d.unit_weight || 0, d.unit_cbm || 0, d.is_new_product || 0, d.launch_date || '', d.new_product_protection_days || 90, d.lifecycle_status || 'new_test', d.auto_replenish !== undefined ? d.auto_replenish : 1, d.status || 'normal', d.remark || '']);
+    res.json({ id: sId, ...d, category });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -3845,6 +3863,13 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), asyncHandler((req, re
   try {
     const d = req.body;
     const { id } = req.params;
+    const existingSku = queryOne('SELECT sku_code, brand, category FROM skus WHERE id = ?', [id]);
+    if (!existingSku) return res.status(404).json({ error: 'SKU不存在' });
+    const effectiveBrand = d.brand !== undefined ? d.brand : existingSku.brand;
+    const effectiveCategory = d.category !== undefined ? d.category : existingSku.category;
+    if (d.category !== undefined || ['redragon', 'netac'].includes(String(effectiveBrand || '').trim().toLowerCase())) {
+      d.category = resolveSkuMasterCategoryFromSources(effectiveBrand, existingSku.sku_code, effectiveCategory);
+    }
     if (d.reference_customs_rate !== undefined && d.reference_customs_rate !== '' && d.reference_customs_rate !== null) {
       const rate = Number(d.reference_customs_rate);
       if (!Number.isFinite(rate) || rate < 0) return res.status(400).json({ error: '参考关税税率必须为不小于0的数字' });
@@ -3939,15 +3964,16 @@ app.post('/api/skus/bulk-import', requireApiPermission('sku_import'), asyncHandl
           // 映射生命周期和状态
           const lifecycle = LIFECYCLE_MAP[String(item.lifecycle_status||'').trim()] || (item.lifecycle_status || 'new_test');
           const status = STATUS_MAP[String(item.status||'').trim()] || (item.status || 'normal');
+          const category = resolveSkuMasterCategoryFromSources(item.brand, sku, item.category || '');
 
           const exist = queryOne('SELECT id FROM skus WHERE sku_code = ?', [sku]);
           if (exist) {
             run(`UPDATE skus SET product_name=?, brand=?, category=?, model=?, color_spec=?, barcode=?, purchase_price_rmb=?, purchase_price_usd=?, carton_spec=?, qty_per_carton=?, unit_weight=?, unit_cbm=?, lifecycle_status=?, launch_date=?, remark=?, status=?, updated_at=datetime('now') WHERE id=?`,
-              [item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status, exist.id]);
+              [item.product_name || '', item.brand || '', category, item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status, exist.id]);
             result.updated++;
           } else {
             run(`INSERT INTO skus (id, sku_code, product_name, brand, category, model, color_spec, barcode, purchase_price_rmb, purchase_price_usd, carton_spec, qty_per_carton, unit_weight, unit_cbm, lifecycle_status, launch_date, remark, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-              [genId('sku'), sku, item.product_name || '', item.brand || '', item.category || '', item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status]);
+              [genId('sku'), sku, item.product_name || '', item.brand || '', category, item.model || '', item.color_spec || '', item.barcode || '', parseFloat(item.purchase_price_rmb) || 0, parseFloat(item.purchase_price_usd) || 0, item.carton_spec || '', parseInt(item.qty_per_carton) || 0, parseFloat(item.unit_weight) || 0, parseFloat(item.unit_cbm) || 0, lifecycle, item.launch_date || '', item.remark || '', status]);
             result.created++;
           }
         } catch (e) { result.failed++; result.errors.push({ row: i + 2, reason: e.message }); }
@@ -3987,6 +4013,15 @@ app.post('/api/skus/batch-update', requireApiPermission('sku_edit'), asyncHandle
     const placeholders = ids.map(() => '?').join(',');
     values.push(...ids);
     const result = run(`UPDATE skus SET ${fields.join(', ')} WHERE id IN (${placeholders})`, values);
+    if (data.brand !== undefined || data.category !== undefined) {
+      const updatedRows = query('SELECT id, sku_code, brand, category FROM skus WHERE id IN (' + placeholders + ')', ids).rows;
+      updatedRows.forEach(row => {
+        const category = resolveSkuMasterCategoryFromSources(row.brand, row.sku_code, row.category);
+        if (category !== String(row.category || '')) {
+          run("UPDATE skus SET category = ?, updated_at = datetime('now') WHERE id = ?", [category, row.id]);
+        }
+      });
+    }
     res.json({ success: true, updated: result.changes || ids.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
