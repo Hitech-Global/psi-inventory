@@ -123,6 +123,8 @@ on:
       - 'test/wac-history-import.test.cjs'
       - 'test/wac-batch-exclusion.test.cjs'
       - 'quotation-server.js'
+      - 'quotation-category.js'
+      - 'test/quotation-category.test.cjs'
       - 'quotation-import-fast.js'
       - 'quotation-import-normalizer.js'
       - 'quotation-import-progress.js'
@@ -249,6 +251,7 @@ jobs:
           node --check test/wac-bigseller-old-inventory.test.cjs
           node --check wac-notification.js
           node --check quotation-server.js
+          node --check quotation-category.js
           node --check quotation-import-fast.js
           node --check quotation-import-normalizer.js
           node --check quotation-import-progress.js
@@ -392,7 +395,7 @@ jobs:
       - name: Test quotation procurement brief observer idempotence
         run: node test/quotation-procurement-brief-observer.test.cjs
       - name: Test quote master-category eligibility and price priority sort
-        run: node test/quotation-active-master-category-sort.test.cjs
+        run: node test/quotation-category.test.cjs && node test/quotation-active-master-category-sort.test.cjs
       - name: Test smart quotation import and supplier SKU mapping
         run: node test/quotation-smart-import.test.cjs
       - name: Test quotation English navigation and content
