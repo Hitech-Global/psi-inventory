@@ -642,11 +642,8 @@ function registerPriceSystemRoutes(app, deps) {
     }
 
     const id = existing ? existing.id : genId('psf');
-    const maxFieldOrder = existingFields.reduce((max, field) => Math.max(max, Number(field.sort_order || 0)), 0);
+    const maxFieldOrder = existingFields.reduce((max, field) => Math.max(max, Number(field.sort_order || 0)), Number(scheme.srp_sort_order == null ? 999999 : scheme.srp_sort_order));
     const sortOrder = Number.isFinite(Number(d.sort_order)) ? Number(d.sort_order) : (existing ? existing.sort_order : maxFieldOrder + 10);
-    if (!existing && Number(scheme.srp_sort_order == null ? 999999 : scheme.srp_sort_order) <= sortOrder) {
-      run('UPDATE price_system_schemes SET srp_sort_order = ?, updated_at = datetime(\\'now\\') WHERE id = ?', [sortOrder + 10, scheme.id]);
-    }
     if (existing && Number(existing.sync_wac || 0) === 1 && !syncWac) {
       if (fieldType === 'amount') query('SELECT sku_code, value FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]).rows.forEach(row => {
         run("INSERT INTO price_system_values (id, scheme_id, sku_code, field_key, value, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(scheme_id, sku_code, field_key) DO UPDATE SET value = excluded.value, updated_by = excluded.updated_by, updated_at = datetime('now')", [genId('psv'), scheme.id, row.sku_code, fieldKey, Number(row.value), req.currentUserId || '']);
