@@ -441,10 +441,10 @@ function registerPriceSystemRoutes(app, deps) {
         resolving.add(key);
         try {
           const vars = Object.assign({}, base, resolved);
-          getFormulaVariables(field.formula).forEach(dep => {
+          const expression = categoryFormula || field.formula;
+          getFormulaVariables(expression).forEach(dep => {
             if (fieldMap.has(dep)) vars[dep] = resolveField(dep);
           });
-          const expression = categoryFormula || field.formula;
           resolved[key] = expression ? evaluateFormula(expression, vars) : 0;
         } catch (e) {
           errors[key] = e.message;
