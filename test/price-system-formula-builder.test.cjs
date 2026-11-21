@@ -140,7 +140,7 @@ test('category scope starts unselected and select-all toggles both ways', () => 
   assert.ok(ui.includes('checks.forEach(x=>{x.checked=selectAll;});'));
   assert.ok(ui.includes('window.psUpdateCategorySelectAll();'));
   assert.ok(!ui.includes('if(checks.length&&checked===0){checks.forEach(x=>{x.checked=true;});'));
-  assert.ok(ui.includes('const applicable_categories=(!checked.length||checked.length===total)?[]:checked;'));
+  assert.ok(ui.includes("const applicable_categories=field_type==='formula'?[]:((!checked.length||checked.length===total)?[]:checked);"));
 });
 
 
@@ -160,5 +160,6 @@ test('formula rule values can be different by category while preserving the shar
   const memoryCard = evaluateFormula('MIN(8.5% * srp,60000)', { srp: 1000000 });
   const ssd = evaluateFormula('MIN(7.2% * srp,80000)', { srp: 1000000 });
   const dram = evaluateFormula('6% * srp', { srp: 1000000 });
-  assert.deepEqual([accessories,memoryCard,ssd,dram],[85000,60000,72000,60000]);
+  assert.deepEqual([accessories,memoryCard,dram],[85000,60000,60000]);
+  assert.ok(Math.abs(ssd-72000)<1e-8);
 });
