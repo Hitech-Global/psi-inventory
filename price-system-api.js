@@ -431,7 +431,8 @@ function registerPriceSystemRoutes(app, deps) {
           resolved[key] = 0;
           return 0;
         }
-        const formula = field.field_type === 'formula' ? formulaForCategory(field, skuCategory) : '';\n        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
+        const formula = field.field_type === 'formula' ? formulaForCategory(field, skuCategory) : ''; 
+        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
         if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
         if (field.field_type !== 'formula') {
           const raw = stored[key];
