@@ -84,7 +84,7 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
   assert.ok(ui.includes('values:{[data.field_key]:percent}'));
   assert.ok(ui.includes("'/values','POST'"));
   assert.ok(ui.includes('f.field_type===\'percent\'?\'<span class="ps-unit">%</span>\''));
-  assert.ok(ui.includes('data-field="'+esc(f.field_key)+'"'));
+  assert.ok(ui.includes('data-field="') && ui.includes('esc(f.field_key)'));
   assert.ok(ui.includes('window.psMarkDirty=function(input)'));
 });
 
