@@ -41,7 +41,6 @@ const BUILTIN_FORMULA_LABELS = Object.freeze({
   reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
   landing_cost: ['系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
   stock_qty: ['库存数量', 'Stock Quantity', 'Jumlah Persediaan'],
-  inventory_qty: ['库存数量', 'Inventory Quantity', 'Jumlah Persediaan'],
   srp: ['SRP']
 });
 
@@ -713,7 +712,7 @@ function registerPriceSystemRoutes(app, deps) {
     // the existing scheme-level storage for backward compatibility with old versions.
     if (fieldKey === 'srp' || d.id === 'builtin-srp') {
       if (fieldKey !== 'srp' || fieldType !== 'formula' || !formula) return res.status(400).json({ error: 'SRP \u5fc5\u987b\u914d\u7f6e\u4e3a\u516c\u5f0f\u5b57\u6bb5' });
-      const existingFieldsForSrp = query('SELECT field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+      const existingFieldsForSrp = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
       try { validateFormula(normalizeFormulaExpression(formula, existingFieldsForSrp), allowedFormulaVariables(existingFieldsForSrp, 'srp')); }
       catch (e) { return res.status(400).json({ error: e.message }); }
       run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
