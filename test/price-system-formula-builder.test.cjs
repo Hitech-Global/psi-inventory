@@ -37,7 +37,7 @@ test('formula evaluation can combine WAC, percentage fees and other calculated f
     customs_duty: 5
   });
   assert.equal(result, 113);
-  assert.equal(evaluateFormula('7.2% * srp', { srp: 1000 }), 72);
+  assert.ok(Math.abs(evaluateFormula('7.2% * srp', { srp: 1000 }) - 72) < 1e-9);
   assert.equal(BUILTIN_PRICE_VARIABLES.includes('srp'), true);
 });
 
