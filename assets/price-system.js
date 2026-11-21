@@ -326,14 +326,19 @@ function collectFieldEditorValues(){
  const field_name=document.getElementById('ps-field-name')?.value.trim()||'';
  const field_key=document.getElementById('ps-field-key')?.value.trim().toLowerCase()||'';
  const unit=document.getElementById('ps-field-unit')?.value.trim()||'';
- const formula=document.getElementById('ps-field-formula')?.value.trim()||'';
+ let field_type=document.getElementById('ps-field-type')?.value||'amount';
+ let formula='',category_formulas={};
+ if(field_type==='formula'){
+  window.psCommitActiveFormula();
+  formula=String(window.__psDefaultFormula||'').trim();
+  category_formulas=Object.assign({},window.__psCategoryFormulas||{});
+ }
  const sync_wac=!!document.getElementById('ps-field-sync-wac')?.checked;
  const checked=Array.from(document.querySelectorAll('.ps-cat-check:checked')).map(x=>x.value);
  const total=document.querySelectorAll('.ps-cat-check').length;
  const applicable_categories=(!checked.length||checked.length===total)?[]:checked;
- let field_type=document.getElementById('ps-field-type')?.value||'amount';
- if(formula)field_type='formula';
- return {field_name,field_key,unit,formula,sync_wac,applicable_categories,field_type};
+ if(formula||Object.keys(category_formulas).length)field_type='formula';
+ return {field_name,field_key,unit,formula,category_formulas,sync_wac,applicable_categories,field_type};
 }
 window.psSelectAllCategories=function(){
  const checks=Array.from(document.querySelectorAll('.ps-cat-check'));
@@ -368,7 +373,14 @@ window.psToggleFormula=function(){
  if(t!=='amount'&&c)c.checked=false;
  if(w)w.style.display=(c&&c.checked)||t==='percent'?'none':'';
  if(p)p.style.display=t==='percent'?'':'none';
- if(t!=='formula'&&formula&&formula.value.trim())formula.value='';
+ if(t!=='formula'){
+  if(formula)formula.value='';
+  window.__psDefaultFormula='';
+  window.__psCategoryFormulas={};
+  window.__psFormulaEditorCategory=DEFAULT_FORMULA_CATEGORY;
+  const selector=document.getElementById('ps-formula-category');if(selector)selector.value=DEFAULT_FORMULA_CATEGORY;
+  const hint=document.getElementById('ps-formula-category-hint');if(hint)hint.textContent=tr('formulaDefaultHint');
+ }
 };
 window.psToggleWacField=function(){const c=document.getElementById('ps-field-sync-wac'),t=document.getElementById('ps-field-type');if(c&&t){if(c.checked)t.value='amount';t.disabled=!!c.checked;}window.psToggleFormula();};
 window.psSaveField=async function(id){
