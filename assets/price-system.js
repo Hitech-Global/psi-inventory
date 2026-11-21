@@ -243,13 +243,9 @@ function formulaDisplayExpression(expression){
  let result=String(expression||'');
  const tokens=FORMULA_BASE_FIELDS.map(x=>[x.key,tr(x.label)]).concat(state.fields.map(x=>[x.field_key,String(x.field_name||x.field_key)]),[['srp','SRP']]);
  tokens.sort((a,b)=>b[0].length-a[0].length);
- tokens.forEach(([key,label])=>{if(key&&key!==label)result=result.replace(new RegExp('(^|[^A-Za-z0-9_])'+key.replace(/[.*+?^${}()|[\]\\]/g,'\\function formulaBuilderHtml(field){
- const excluded=field&&field.field_key||'';
- const baseKeys=new Set(FORMULA_BASE_FIELDS.map(x=>x.key));
- const base=FORMULA_BASE_FIELDS.map(x=>"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('"+x.key+"')\">"+tr(x.label)+" <code>"+x.key+"</code></button>").join('');
- const customFields=state.fields.filter(x=>x.field_key!==excluded&&x.field_key!=='srp'&&!x.is_builtin_srp&&!baseKeys.has(x.field_key)&&x.field_key!=='inventory_qty'&&Number(x.sync_wac||0)!==1);
- const custom=customFields.length?customFields.map(x=>"<button type=\"button\" class=\"ps-formula-token\" title=\""+esc(x.field_name)+"\" onclick=\"psInsertFormulaToken('"+esc(x.field_key)+"')\">"+esc(x.field_name)+" <code>"+esc(x.field_key)+"</code></button>").join(''):'<span class="ps-formula-empty">'+tr('formulaNoFeeFields')+'</span>';
- const price=excluded==='srp'?'':"<button type=\"button\" class=\"ps-formula-token\" onclick=\"psInsertFormulaToken('srp')\">SRP <code>srp</code></button>";')+'(?=$|[^A-Za-z0-9_])','g'),'$1'+label);});
+ tokens.forEach(([key,label])=>{
+  if(key&&key!==label)result=result.replace(new RegExp('(^|[^A-Za-z0-9_])'+key+'(?=$|[^A-Za-z0-9_])','g'),'$1'+label);
+ });
  return result;
 }
 function formulaBuilderHtml(field){
