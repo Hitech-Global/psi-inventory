@@ -21,31 +21,36 @@ function parseFormulaRules(value) {
   catch (e) { return {}; }
 }
 
-function buildCopiedFieldRows(sourceFields, targetSchemeId, genId, targetCategories) {
+function remapFieldCategorySettings(field, targetCategories) {
   const hasTargetCategories = Array.isArray(targetCategories);
   const destinationCategories = hasTargetCategories
     ? Array.from(new Set(targetCategories.map(category => String(category || '').trim()).filter(Boolean)))
     : [];
   const destinationCategorySet = new Set(destinationCategories);
+  const sourceApplicableCategories = parseCategories(field && field.applicable_categories);
+  const matchedApplicableCategories = hasTargetCategories
+    ? sourceApplicableCategories.filter(category => destinationCategorySet.has(category))
+    : sourceApplicableCategories;
+  // Empty scope means "all categories" in the price system. If none of the source
+  // categories exist in the destination brand, apply the field to destination categories
+  // rather than retaining invalid category names from the source scheme.
+  const applicableCategories = sourceApplicableCategories.length && hasTargetCategories && !matchedApplicableCategories.length
+    ? destinationCategories
+    : matchedApplicableCategories;
+  const sourceFormulaRules = parseFormulaRules(field && field.formula_rules);
+  const formulaRules = hasTargetCategories
+    ? Object.fromEntries(Object.entries(sourceFormulaRules).filter(([category, expression]) =>
+      destinationCategorySet.has(String(category || '').trim()) && String(expression || '').trim()
+    ))
+    : sourceFormulaRules;
+  return { applicable_categories: applicableCategories, formula_rules: formulaRules };
+}
+
+function buildCopiedFieldRows(sourceFields, targetSchemeId, genId, targetCategories) {
   return (Array.isArray(sourceFields) ? sourceFields : []).map(field => {
     const decimalPlaces = Number(field.decimal_places == null ? 2 : field.decimal_places);
     const sortOrder = Number(field.sort_order == null ? 0 : field.sort_order);
-    const sourceApplicableCategories = parseCategories(field.applicable_categories);
-    const matchedApplicableCategories = hasTargetCategories
-      ? sourceApplicableCategories.filter(category => destinationCategorySet.has(category))
-      : sourceApplicableCategories;
-    // Empty scope means "all categories" in the price system. If none of the source
-    // categories exist in the destination brand, apply the copied field to its categories
-    // rather than retaining invalid category names from the source scheme.
-    const applicableCategories = sourceApplicableCategories.length && hasTargetCategories && !matchedApplicableCategories.length
-      ? destinationCategories
-      : matchedApplicableCategories;
-    const sourceFormulaRules = parseFormulaRules(field.formula_rules);
-    const formulaRules = hasTargetCategories
-      ? Object.fromEntries(Object.entries(sourceFormulaRules).filter(([category, expression]) =>
-        destinationCategorySet.has(String(category || '').trim()) && String(expression || '').trim()
-      ))
-      : sourceFormulaRules;
+    const categorySettings = remapFieldCategorySettings(field, targetCategories);
     return {
       id: genId('psf'),
       scheme_id: targetSchemeId,
@@ -53,9 +58,9 @@ function buildCopiedFieldRows(sourceFields, targetSchemeId, genId, targetCategor
       field_name: String(field.field_name || '').trim(),
       field_type: String(field.field_type || 'amount'),
       unit: String(field.unit || ''),
-      applicable_categories: JSON.stringify(applicableCategories),
+      applicable_categories: JSON.stringify(categorySettings.applicable_categories),
       formula: String(field.formula || ''),
-      formula_rules: JSON.stringify(formulaRules),
+      formula_rules: JSON.stringify(categorySettings.formula_rules),
       display_format: String(field.display_format || 'auto'),
       decimal_places: Number.isFinite(decimalPlaces) ? decimalPlaces : 2,
       sync_wac: Number(field.sync_wac || 0) === 1 ? 1 : 0,
@@ -412,12 +417,10 @@ function registerPriceSystemRoutes(app, deps) {
 
   function getSchemeData(req, res, scheme) {
     if (!schemeAccess(req, res, scheme)) return;
-    const fields = query(
+    const rawFields = query(
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name',
       [scheme.id]
-    ).rows.map(f => Object.assign({}, f, { applicable_categories: parseCategories(f.applicable_categories), formula_rules: parseFormulaRules(f.formula_rules), sync_wac: Number(f.sync_wac || 0) === 1 }));
-    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
-    fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
+    ).rows;
     const params = [scheme.country];
     let warehouseFilter = '';
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
@@ -447,6 +450,17 @@ function registerPriceSystemRoutes(app, deps) {
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
       params.concat([scheme.brand])
     ).rows;
+    const currentCategories = Array.from(new Set(primaryCategoryMapForSkus(skuRows, scheme.brand).values()));
+    const fields = rawFields.map(field => {
+      const categorySettings = remapFieldCategorySettings(field, currentCategories);
+      return Object.assign({}, field, {
+        applicable_categories: categorySettings.applicable_categories,
+        formula_rules: categorySettings.formula_rules,
+        sync_wac: Number(field.sync_wac || 0) === 1
+      });
+    });
+    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
+    fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
     const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
     const storedRows = query(
       'SELECT sku_code, field_key, value FROM price_system_values WHERE scheme_id = ?',
@@ -1060,4 +1074,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, buildCopiedFieldRows, deletePriceSystemSchemeRecords };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords };
