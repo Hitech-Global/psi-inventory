@@ -100,6 +100,9 @@ test('sales and inventory imports refresh forecast rows and publish a shared rev
   assert.match(server, /async function writeSuggestionRefreshInsertsSqlite/);
   assert.match(server, /app\.get\('\/api\/replenishment-suggestions\/revision'/);
   assert.match(server, /function bumpForecastDataRevision\(\)/);
+  assert.match(server, /preserveManualOverrides: true/);
+  assert.match(server, /keepOnlineTurnover = preserveManualOverrides/);
+  assert.match(server, /keepOfflineTurnover = preserveManualOverrides/);
 });
 
 test('forecast page invalidates the L0 snapshot and reloads automatically across sessions', () => {

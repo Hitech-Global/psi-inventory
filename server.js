@@ -8463,7 +8463,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
 // 仅调用已确认无 DB side effect 的 helper（calculateSuggestion/resolveChannelRatio/
 // getDimTurnover/detectStockoutDistortion/classifySkuState/shouldBlockReplenish/
 // buildSuggestionText/genId）。
-function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now }) {
+function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false }) {
       // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
       const salesMap = {};
       const onlineSalesMap = {};
@@ -8547,9 +8547,17 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
       // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
       // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
       const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
-      const online_target_turnover = dimHit.online_turnover;
-      const offline_target_turnover = dimHit.offline_turnover;
-      const classifyTarget = dimHit.online_turnover;
+      // Auto-refresh preserves a per-SKU target-turnover override when it differs
+      // from the current DIM default. Explicit full generate still applies DIM defaults.
+      const oldOnlineTurnover = existing_rs && existing_rs.online_target_turnover != null ? Number(existing_rs.online_target_turnover) : NaN;
+      const oldOfflineTurnover = existing_rs && existing_rs.offline_target_turnover != null ? Number(existing_rs.offline_target_turnover) : NaN;
+      const keepOnlineTurnover = preserveManualOverrides && Number.isFinite(oldOnlineTurnover) && oldOnlineTurnover >= 0 &&
+        Math.abs(oldOnlineTurnover - Number(dimHit.online_turnover)) > 0.000001;
+      const keepOfflineTurnover = preserveManualOverrides && Number.isFinite(oldOfflineTurnover) && oldOfflineTurnover >= 0 &&
+        Math.abs(oldOfflineTurnover - Number(dimHit.offline_turnover)) > 0.000001;
+      const online_target_turnover = keepOnlineTurnover ? oldOnlineTurnover : dimHit.online_turnover;
+      const offline_target_turnover = keepOfflineTurnover ? oldOfflineTurnover : dimHit.offline_turnover;
+      const classifyTarget = online_target_turnover;
 
       // 生命周期策略系数
       const lifecycle = sku.lifecycle_status || 'stable';
@@ -9041,7 +9049,7 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, in
     const result = computeSuggestionForTarget({
       inv: target.inv, sku: target.sku, existing_rs: target.er, brandStopped: target.brandStopped,
       months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
-      channelConfigMap, countriesCache, now
+      channelConfigMap, countriesCache, now, preserveManualOverrides: true
     });
     const key = target.inv.sku_code + '|' + target.inv.country + '|' + target.inv.warehouse;
     if (result.mode === 'update') {
