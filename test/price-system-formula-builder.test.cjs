@@ -74,21 +74,27 @@ test('price system resolves quotation primary categories for display and fee app
   assert.match(ui, /state\.rows\.map\(x=>String\(x\.category\|\|'\'\)/);
 });
 
-test('price system toolbar removes redundant page heading and combines Excel import actions', () => {
+test('price system toolbar keeps fee settings separate and groups remaining actions in one menu', () => {
   const shell = ui.slice(ui.indexOf('function shell(){'), ui.indexOf('async function meta()', ui.indexOf('function shell(){')));
   assert.ok(shell.includes('<div id="ps-main">'));
   assert.ok(!shell.includes('class="ps-head"'), 'redundant page title and subtitle should be removed');
   assert.ok(!shell.includes("tr('title')") && !shell.includes("tr('subtitle')"));
   const main = ui.slice(ui.indexOf('function main(){'), ui.indexOf('function updateSave()', ui.indexOf('function main(){')));
-  assert.ok(main.includes('class="ps-import-menu-wrap"'));
-  assert.ok(main.includes('id="ps-import-menu"'));
-  assert.ok(main.includes('psDownloadImportTemplate()'), 'template download should be in the import dropdown');
-  assert.ok(main.includes('psClickImport()'), 'Excel import should remain available in the dropdown');
-  assert.ok(!main.includes('onclick="psDownloadImportTemplate()"'), 'template download should no longer be a standalone toolbar button');
-  assert.ok(main.includes("onclick=\"psOpenSchemeModal()\""), 'new scheme action should move into the toolbar');
-  assert.match(ui, /window\.psToggleImportMenu=function\(event\)/);
-  assert.match(ui, /window\.psCloseImportMenu=function\(\)/);
-  assert.match(ui, /ps-import-menu\[hidden\]\{display:none\}/);
+  assert.ok(main.includes('onclick="psOpenFieldsModal()"'), 'fee field settings should remain a standalone button');
+  assert.ok(main.includes('class="ps-actions-menu-wrap"'));
+  assert.ok(main.includes('id="ps-actions-menu"'));
+  assert.ok(main.includes('psDownloadImportTemplate()'), 'template download should be in the actions menu');
+  assert.ok(main.includes('psClickImport()'), 'Excel import should be in the actions menu');
+  assert.ok(main.includes('psOpenSchemeModal()'), 'new scheme should be in the actions menu');
+  assert.ok(main.includes('psOpenVersionsModal()'));
+  assert.ok(main.includes('psDeactivateScheme()'));
+  assert.ok(main.includes('psExportExcel()'));
+  assert.ok(main.includes('psSaveChanges()'));
+  assert.ok(main.includes('psDeleteScheme()'));
+  assert.match(ui, /window\.psToggleActionsMenu=function\(event\)/);
+  assert.match(ui, /window\.psCloseActionsMenu=function\(\)/);
+  assert.match(ui, /ps-actions-menu\[hidden\]\{display:none\}/);
+  assert.ok(!main.includes('ps-import-menu'));
 });
 
 test('percentage fields have a bulk default control and batch-apply to SKUs in the selected category scope', () => {
