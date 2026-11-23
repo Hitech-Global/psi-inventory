@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildCopiedFieldRows } = require('../price-system-api');
+const { buildCopiedFieldRows, remapFieldCategorySettings } = require('../price-system-api');
 
 test('copies reusable field configuration with new field IDs and target scheme ID', () => {
   const sourceFields = [
@@ -153,4 +153,18 @@ test('scoped fields with no matching source category use only destination catego
   }], 'target', () => 'new-field', ['Mouse', 'Keyboard']);
 
   assert.deepEqual(JSON.parse(rows[0].applicable_categories), ['Mouse', 'Keyboard']);
+});
+
+test('filters stale categories from already-copied scheme data using current SKU master categories', () => {
+  const settings = remapFieldCategorySettings({
+    applicable_categories: '[]',
+    formula_rules: JSON.stringify({
+      Accessories: 'srp*8%',
+      'Card Reader': 'srp*9%',
+      '未分类': 'srp*10%'
+    })
+  }, ['未分类']);
+
+  assert.deepEqual(settings.applicable_categories, []);
+  assert.deepEqual(settings.formula_rules, { '未分类': 'srp*10%' });
 });
