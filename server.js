@@ -3783,7 +3783,7 @@ app.post('/api/payment-subcategory-sources', requireApiPermission('system_config
 
 // ==================== 系统配置 ====================
 app.get('/api/system-config', requireApiPermission('system_config'), asyncHandler((req, res) => {
-  res.json(query('SELECT * FROM system_config').rows);
+  res.json(query("SELECT * FROM system_config WHERE key <> '__internal_replenishment_data_revision'").rows);
 }));
 app.post('/api/system-config', requireApiPermission('system_config'), asyncHandler((req, res) => {
   const { configs } = req.body;
@@ -4311,7 +4311,10 @@ function inventoryImportProgressBody(run) {
     skipped_count: run.skipped_count || 0,
     started_at: run.started_at,
     updated_at: run.updated_at,
-    finished_at: run.finished_at || null
+    finished_at: run.finished_at || null,
+    forecast_sync_status: run.forecast_sync_status || '',
+    forecast_refreshed_count: run.forecast_refreshed_count || 0,
+    forecast_sync_error: run.forecast_sync_error || ''
   };
 }
 function cleanupInventoryImportRuns(nowMs) {
@@ -4346,6 +4349,47 @@ function finishInventoryImportProgress(importId, status, patch) {
   }));
 }
 function yieldInventoryImportProgress() { return new Promise(resolve => setImmediate(resolve)); }
+
+async function syncInventoryImportForecast(importId, keys, totalCount, created, skippedCount) {
+  const affectedKeys = normalizeForecastAffectedKeys(keys);
+  if (!affectedKeys.length) {
+    return { status: 'skipped', refreshed_count: 0, error: '', revision: '' };
+  }
+  setInventoryImportProgress(importId, {
+    phase: 'forecast_syncing', percent: 88, processed_count: totalCount,
+    total_count: totalCount, created, skipped_count: skippedCount,
+    forecast_sync_status: 'running',
+    message: '库存已更新，正在同步订单预测'
+  });
+  await yieldInventoryImportProgress();
+
+  const sync = { status: 'completed', refreshed_count: 0, error: '', revision: '' };
+  try {
+    const refreshed = await refreshForecastSuggestionsForKeys(affectedKeys);
+    sync.refreshed_count = (refreshed.updated || 0) + (refreshed.inserted || 0);
+  } catch (e) {
+    sync.status = 'failed';
+    sync.error = e && e.message ? e.message : String(e);
+    console.error('[inventory-import] forecast sync failed:', sync.error);
+  }
+  try {
+    // The inventory import is already committed. Bump even on a forecast
+    // calculation warning so open forecast pages refresh their live inventory view.
+    sync.revision = bumpForecastDataRevision();
+  } catch (e) {
+    sync.status = 'failed';
+    const revisionError = e && e.message ? e.message : String(e);
+    sync.error = sync.error ? sync.error + '；版本通知失败：' + revisionError : '版本通知失败：' + revisionError;
+    console.error('[inventory-import] forecast revision bump failed:', revisionError);
+  }
+  setInventoryImportProgress(importId, {
+    forecast_sync_status: sync.status,
+    forecast_refreshed_count: sync.refreshed_count,
+    forecast_sync_error: sync.error,
+    forecast_revision: sync.revision
+  });
+  return sync;
+}
 
 app.get('/api/inventory-imports/bulk-import/:importId/status', requireApiPermission('inventory_import'), asyncHandler(async (req, res) => {
   const run = inventoryImportRuns.get(String(req.params.importId || ''));
@@ -4419,6 +4463,7 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
     await yieldInventoryImportProgress();
 
     const result = { created: 0, updated: 0, failed: 0, skipped_count: skippedCount, tombstones_lifted: 0, errors: [], skipped_rows: skippedRows, blocking: precheck.blocking || [], summary: precheck.summary || [] };
+    const inventoryForecastKeyMap = new Map();
     if (isPgDriver()) {
       const validated = [];
       for (let i = 0; i < importEntries.length; i++) {
@@ -4471,10 +4516,24 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
       setInventoryImportProgress(importId, { phase: 'refreshing_inventory', percent: 76, processed_count: totalCount, total_count: totalCount, skipped_count: skippedCount, message: '正在更新库存总表' });
       await yieldInventoryImportProgress();
       const refreshResult = await refreshInventoryTotalsForKeys(keys, snapshotCutoffDate);
+      const forecastSync = await syncInventoryImportForecast(importId, keys, totalCount, result.created, skippedCount);
       setInventoryImportProgress(importId, { phase: 'finalizing', percent: 96, processed_count: totalCount, created: result.created, skipped_count: skippedCount, message: '正在完成导入校验' });
       await yieldInventoryImportProgress();
-      const body = { ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] };
-      finishInventoryImportProgress(importId, 'completed', { phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed, skipped_count: skippedCount, message: skippedCount > 0 ? `导入完成，跳过 ${skippedCount} 条异常数据` : '导入完成' });
+      const body = {
+        ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate,
+        wac_warnings: refreshResult.warnings || [],
+        forecast_sync_status: forecastSync.status,
+        forecast_refreshed_count: forecastSync.refreshed_count,
+        forecast_sync_error: forecastSync.error,
+        forecast_revision: forecastSync.revision
+      };
+      finishInventoryImportProgress(importId, 'completed', {
+        phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed,
+        skipped_count: skippedCount, forecast_sync_status: forecastSync.status,
+        forecast_refreshed_count: forecastSync.refreshed_count, forecast_sync_error: forecastSync.error,
+        message: forecastSync.status === 'failed' ? '库存已导入，但订单预测自动同步失败' :
+          (skippedCount > 0 ? `导入完成，跳过 ${skippedCount} 条异常数据` : '导入完成')
+      });
       return res.json(body);
     }
 
@@ -4500,6 +4559,7 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
           if (!lifted) throw new Error('tombstone 解除执行失败');
           if (Number(lifted.changes || 0) > 0) result.tombstones_lifted++;
           result.created++;
+          inventoryForecastKeyMap.set(item.sku_code + '\\0' + (item.country || ''), { sku_code: item.sku_code, country: item.country || '' });
         } catch (e) {
           if (imported) throw new Error(`第 ${sourceRow} 行：库存导入已写入但 tombstone 解除失败，整批回滚 — ${e.message}`);
           result.failed++; result.errors.push({ row: sourceRow, reason: e.message });
@@ -4511,10 +4571,24 @@ app.post('/api/inventory-imports/bulk-import', requireApiPermission('inventory_i
     setInventoryImportProgress(importId, { phase: 'refreshing_inventory', percent: 76, processed_count: totalCount, total_count: totalCount, skipped_count: skippedCount, message: '正在更新库存总表' });
     await yieldInventoryImportProgress();
     const refreshResult = await refreshInventoryTotals(snapshotCutoffDate);
+    const forecastSync = await syncInventoryImportForecast(importId, Array.from(inventoryForecastKeyMap.values()), totalCount, result.created, skippedCount);
     setInventoryImportProgress(importId, { phase: 'finalizing', percent: 96, processed_count: totalCount, created: result.created, failed: result.failed, skipped_count: skippedCount, message: '正在完成导入校验' });
     await yieldInventoryImportProgress();
-    const body = { ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate, wac_warnings: refreshResult.warnings || [] };
-    finishInventoryImportProgress(importId, 'completed', { phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed, skipped_count: skippedCount, message: skippedCount > 0 ? `导入完成，跳过 ${skippedCount} 条异常数据` : '导入完成' });
+    const body = {
+      ...result, import_id: importId, snapshot_cutoff_date: snapshotCutoffDate,
+      wac_warnings: refreshResult.warnings || [],
+      forecast_sync_status: forecastSync.status,
+      forecast_refreshed_count: forecastSync.refreshed_count,
+      forecast_sync_error: forecastSync.error,
+      forecast_revision: forecastSync.revision
+    };
+    finishInventoryImportProgress(importId, 'completed', {
+      phase: 'completed', processed_count: totalCount, created: result.created, failed: result.failed,
+      skipped_count: skippedCount, forecast_sync_status: forecastSync.status,
+      forecast_refreshed_count: forecastSync.refreshed_count, forecast_sync_error: forecastSync.error,
+      message: forecastSync.status === 'failed' ? '库存已导入，但订单预测自动同步失败' :
+        (skippedCount > 0 ? `导入完成，跳过 ${skippedCount} 条异常数据` : '导入完成')
+    });
     res.json(body);
   } catch (e) {
     finishInventoryImportProgress(importId, 'failed', { phase: 'failed', message: e.message || '导入失败' });
@@ -6695,6 +6769,20 @@ function salesImportResultBody(run) {
   };
 }
 
+function collectSalesImportAffectedKeys(applied) {
+  const classified = applied && applied.classification && applied.classification.classified || [];
+  const map = new Map();
+  for (const item of classified) {
+    if (!item || (item.action !== 'insert' && item.action !== 'update')) continue;
+    const row = item.row || {};
+    const sku = String(row.sku_code || '').trim();
+    const country = String(row.country || '').trim();
+    if (!sku || !country) continue;
+    map.set(JSON.stringify([sku, country]), { sku_code: sku, country });
+  }
+  return Array.from(map.values());
+}
+
 function isUncertainSalesImportError(error) {
   const code = String(error && error.code || '').toUpperCase();
   const message = String(error && error.message || '');
@@ -7083,6 +7171,7 @@ app.delete('/api/sales-records', requireApiPermission('outbound_delete'), asyncH
   }
   try {
     const result = await runSalesDeletionInTx(req, requestedIds);
+    if (result.deletedCount > 0) bumpForecastDataRevision();
     return res.json({
       success: true,
       deleted_count: result.deletedCount,
@@ -7192,40 +7281,64 @@ app.post('/api/sales-records/bulk-import', requireApiPermission('outbound_import
     // === 销售数据已提交 ===
     // PG 模式：立即返回导入完成，库存重算异步后台执行（不阻塞 HTTP 响应、不阻塞事件循环）
     // SQLite 模式：同步重算（本地快速，无阻塞问题）
-    const affectedSkus = [...new Set(items.filter(i => i.sku_code).map(i => i.sku_code))];
+    const affectedKeys = collectSalesImportAffectedKeys(applied);
+    const affectedSkus = [...new Set(affectedKeys.map(k => k.sku_code))];
     const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
 
-    if (isPg) {
+    if (isPg && affectedKeys.length > 0) {
+      const processing = await store.update(importId, {
+        status: 'inventory_recalc', phase: 'inventory_recalc', percent: 92,
+        processed_count: items.length, total_count: items.length,
+        inserted: applied.result.inserted, updated: applied.result.updated,
+        skipped: applied.result.skipped, failed: applied.result.failed,
+        errors: applied.result.errors, timings: applied.timings, metrics: applied.metrics,
+        result: { ...applied.result, forecast_refreshed_count: 0 },
+        commit_state: 'committed', recalc_status: 'pending'
+      });
+      res.status(202).json(salesImportResultBody(processing));
+
+      // Keep the import active until inventory and forecast rows are both synchronized.
+      recalcInventoryForSkusBackground(importId, affectedSkus, affectedKeys).catch(e => {
+        console.error('[sales-import] background inventory/forecast sync unhandled:', e.message);
+      });
+    } else if (isPg) {
       const completed = await store.update(importId, {
         status: 'completed', phase: 'completed', percent: 100,
         processed_count: items.length, total_count: items.length,
         inserted: applied.result.inserted, updated: applied.result.updated,
         skipped: applied.result.skipped, failed: applied.result.failed,
         errors: applied.result.errors, timings: applied.timings, metrics: applied.metrics,
-        result: applied.result, commit_state: 'committed', recalc_status: 'pending'
+        result: { ...applied.result, forecast_refreshed_count: 0 },
+        commit_state: 'committed', recalc_status: 'completed'
       });
       res.json(salesImportResultBody(completed));
-
-      // 后台异步库存重算（不阻塞 HTTP 响应）
-      recalcInventoryForSkusBackground(importId, affectedSkus).catch(e => {
-        console.error('[sales-import] background recalc unhandled:', e.message);
-      });
     } else {
       affectedSkus.forEach(sku => {
         const invs = query('SELECT country, warehouse FROM inventory WHERE sku_code = ?', [sku]).rows;
         invs.forEach(inv => recalcInventoryForSku(sku, inv.country, inv.warehouse));
       });
+      const forecastRefresh = affectedKeys.length
+        ? await refreshForecastSuggestionsForKeys(affectedKeys)
+        : { updated: 0, inserted: 0 };
+      const revision = affectedKeys.length ? bumpForecastDataRevision() : '';
+      const refreshedCount = (forecastRefresh.updated || 0) + (forecastRefresh.inserted || 0);
       const completed = await store.update(importId, {
         status: 'completed', phase: 'completed', percent: 100,
         processed_count: items.length, total_count: items.length,
         inserted: applied.result.inserted, updated: applied.result.updated,
         skipped: applied.result.skipped, failed: applied.result.failed,
         errors: applied.result.errors, timings: applied.timings, metrics: applied.metrics,
-        result: applied.result, commit_state: 'committed', recalc_status: 'completed'
+        result: { ...applied.result, forecast_refreshed_count: refreshedCount, forecast_revision: revision },
+        commit_state: 'committed', recalc_status: 'completed'
       });
       res.json(salesImportResultBody(completed));
     }
   } catch (e) {
+    if (salesCommitted) {
+      try { bumpForecastDataRevision(); } catch (revisionError) {
+        console.error('[sales-import] forecast revision bump failed:', revisionError.message);
+      }
+    }
     const uncertain = !salesCommitted && isUncertainSalesImportError(e);
     const status = salesCommitted ? 'sales_committed_recalc_failed' : (uncertain ? 'unknown_pending_reconcile' : 'failed_uncommitted');
     const commitState = salesCommitted ? 'committed' : (uncertain ? 'unknown' : 'uncommitted');
@@ -7805,6 +7918,12 @@ app.get('/api/replenishment-suggestions/review-lifecycle', requireApiPermission(
 }));
 
 // 补货建议汇总统计（用于SKU动销与订单预测页面顶部指标卡）
+app.get('/api/replenishment-suggestions/revision', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
+  res.set('Cache-Control', 'private, no-store, max-age=0');
+  const row = queryOne('SELECT value FROM system_config WHERE key = ?', ['__internal_replenishment_data_revision']);
+  res.json({ revision: row && row.value ? String(row.value) : '0' });
+}));
+
 app.get('/api/replenishment-suggestions/summary', requireApiPermission('replenishment_view'), asyncHandler((req, res) => {
   const { country, warehouse, brand, keyword, sales_status, lifecycle_status } = req.query;
   let where = '';
@@ -8344,7 +8463,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
 // 仅调用已确认无 DB side effect 的 helper（calculateSuggestion/resolveChannelRatio/
 // getDimTurnover/detectStockoutDistortion/classifySkuState/shouldBlockReplenish/
 // buildSuggestionText/genId）。
-function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now }) {
+function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false }) {
       // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
       const salesMap = {};
       const onlineSalesMap = {};
@@ -8428,9 +8547,17 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
       // A-Step1 收口：目标周转值来源——dim 命中（预检已保证非 null，不再回退旧逻辑/兜底值）
       // 品牌停采时可能无命中规则（预检已跳过），用中性兜底仅供展示列，不影响采购（建议采购会强制为 0）
       const dimHit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg) || { online_turnover: 3, offline_turnover: 3 };
-      const online_target_turnover = dimHit.online_turnover;
-      const offline_target_turnover = dimHit.offline_turnover;
-      const classifyTarget = dimHit.online_turnover;
+      // Auto-refresh preserves a per-SKU target-turnover override when it differs
+      // from the current DIM default. Explicit full generate still applies DIM defaults.
+      const oldOnlineTurnover = existing_rs && existing_rs.online_target_turnover != null ? Number(existing_rs.online_target_turnover) : NaN;
+      const oldOfflineTurnover = existing_rs && existing_rs.offline_target_turnover != null ? Number(existing_rs.offline_target_turnover) : NaN;
+      const keepOnlineTurnover = preserveManualOverrides && Number.isFinite(oldOnlineTurnover) && oldOnlineTurnover >= 0 &&
+        Math.abs(oldOnlineTurnover - Number(dimHit.online_turnover)) > 0.000001;
+      const keepOfflineTurnover = preserveManualOverrides && Number.isFinite(oldOfflineTurnover) && oldOfflineTurnover >= 0 &&
+        Math.abs(oldOfflineTurnover - Number(dimHit.offline_turnover)) > 0.000001;
+      const online_target_turnover = keepOnlineTurnover ? oldOnlineTurnover : dimHit.online_turnover;
+      const offline_target_turnover = keepOfflineTurnover ? oldOfflineTurnover : dimHit.offline_turnover;
+      const classifyTarget = online_target_turnover;
 
       // 生命周期策略系数
       const lifecycle = sku.lifecycle_status || 'stable';
@@ -8615,6 +8742,23 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
 }
 
 // 刷新引擎与 full generate 共用的建议列（写入顺序与 computeSuggestionForTarget 的 update/insert values 完全一致）
+const RS_INSERT_COLS = [
+  'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
+  'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
+  'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
+  'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
+  'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
+  'current_turnover_months', 'suggested_qty', 'moq_qty', 'carton_adjusted_qty',
+  'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty',
+  'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
+  'target_stock_months', 'risk_level', 'arrival_month', 'suggestion',
+  'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
+  'online_target_turnover', 'offline_target_turnover',
+  'online_target_stock', 'offline_target_stock', 'other_target_stock', 'final_order_qty',
+  'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
+  'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
+];
+
 const RS_SET_COLS = [
   'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
   'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
@@ -8648,6 +8792,50 @@ function assertRefreshUpdateOnly(result, key) {
   if (!result.id) {
     throw new Error('SALES_REFRESH_MISSING_ID:' + key);
   }
+}
+
+function assertRefreshInsertOnly(result, key) {
+  if (!result || result.mode !== 'insert' || !Array.isArray(result.values) ||
+      result.values.length !== RS_INSERT_COLS.length || !result.values[0]) {
+    throw new Error('SALES_REFRESH_INSERT_INVALID:' + key);
+  }
+}
+
+// A channel's write-sequence delta over recalc_revision represents user-saved
+// suggested quantity overrides. Auto refresh must preserve those values while
+// recalculating the other channel and all derived sales/stock metrics.
+function preserveManualSuggestedQtyForRefresh(result, existingRow, brandStopped) {
+  if (!result || result.mode !== 'update' || !existingRow || !Array.isArray(result.values)) return result;
+  const revision = Number(existingRow.recalc_revision) || 0;
+  const preserveOnline = (Number(existingRow.online_write_seq) || 0) > revision;
+  const preserveOffline = (Number(existingRow.offline_write_seq) || 0) > revision;
+  if (!preserveOnline && !preserveOffline) return result;
+
+  const idx = name => {
+    const index = RS_SET_COLS.indexOf(name);
+    if (index < 0) throw new Error('SALES_REFRESH_COLUMN_MISSING:' + name);
+    return index;
+  };
+  const salesStatus = result.values[idx('sales_status')];
+  const riskTags = result.values[idx('risk_tags')];
+  const lifecycle = result.values[idx('lifecycle_status')];
+  const blocked = !!brandStopped || shouldBlockReplenish(salesStatus, riskTags) ||
+    salesStatus === '停采/清库存' || salesStatus === '停采/停产' ||
+    lifecycle === 'clearance' || lifecycle === 'stopped';
+  if (blocked) return result;
+
+  if (preserveOnline) {
+    result.values[idx('online_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0));
+  }
+  if (preserveOffline) {
+    result.values[idx('offline_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0));
+  }
+  const total = Math.max(0, Number(result.values[idx('online_suggested_qty')]) || 0) +
+    Math.max(0, Number(result.values[idx('offline_suggested_qty')]) || 0) +
+    Math.max(0, Number(result.values[idx('other_suggested_qty')]) || 0);
+  result.values[idx('suggested_qty')] = total;
+  result.values[idx('suggestion')] = buildSuggestionText(salesStatus, lifecycle, total, brandStopped);
+  return result;
 }
 
 // §13 SQLite refresh writer：逐行 UPDATE，SQL 方言 = SQLite，复用 RS_SET_COLS 与
@@ -8686,13 +8874,40 @@ async function writeSuggestionRefreshPg(exec, updateRows) {
   );
 }
 
+async function writeSuggestionRefreshInsertsSqlite(exec, insertRows) {
+  for (const r of insertRows) {
+    assertRefreshInsertOnly(r, r.values && r.values[1] || '(unknown-sku)');
+    const placeholders = Array(RS_INSERT_COLS.length).fill('?').join(', ');
+    await exec.run(
+      'INSERT INTO replenishment_suggestions (' + RS_INSERT_COLS.join(', ') + ') VALUES (' + placeholders + ')',
+      r.values
+    );
+  }
+}
+
+async function writeSuggestionRefreshInsertsPg(exec, insertRows) {
+  const chunkSize = 100;
+  for (let offset = 0; offset < insertRows.length; offset += chunkSize) {
+    const chunk = insertRows.slice(offset, offset + chunkSize);
+    chunk.forEach(r => assertRefreshInsertOnly(r, r.values && r.values[1] || '(unknown-sku)'));
+    const valueRows = chunk.map(r => '(' + Array(RS_INSERT_COLS.length).fill('?').join(', ') + ')').join(', ');
+    const params = [];
+    chunk.forEach(r => r.values.forEach(v => params.push(v)));
+    await exec.run(
+      'INSERT INTO replenishment_suggestions (' + RS_INSERT_COLS.join(', ') + ') VALUES ' + valueRows,
+      params
+    );
+  }
+}
+
 // §4/§6/§7/§8 共享校验（DELETE 前 precheck 与 refresh engine 共用，单一真源，杜绝规则漂移）：
 // 读取 affected keys 的 existing suggestion 快照 + 当前 inventory（寄售排除）+ SKU master + brand 状态 + DIM，
 // 构建经过 fail-closed 校验的 exact targets。任意 orphan / missing SKU / stopped / DIM 未命中 → 抛错。
 // 仅 SELECT（不 DELETE / 不 INSERT / 不写 inventory）。空 affectedKeys 直接返回空（S6/S9 合法）。
-async function resolveAndValidateRefreshTargets(exec, affectedKeys) {
+async function resolveAndValidateRefreshTargets(exec, affectedKeys, includeMissing = false) {
   if (!affectedKeys || affectedKeys.length === 0) return { targets: [], existingCount: 0, dimCfg: null };
 
+  const affectedPairSet = new Set(affectedKeys.map(k => k.sku_code + '|' + k.country));
   const ors = affectedKeys.map(() => '(sku_code = ? AND country = ?)').join(' OR ');
   const exParams = [];
   affectedKeys.forEach(k => { exParams.push(k.sku_code); exParams.push(k.country); });
@@ -8709,56 +8924,75 @@ async function resolveAndValidateRefreshTargets(exec, affectedKeys) {
 
   const skuRows = await exec.all('SELECT * FROM skus WHERE sku_code IN (' + inPh + ')', skuCodes.slice());
   const skuMap = {};
-  for (const s of skuRows) skuMap[s.sku_code] = s;
+  for (const sku of skuRows) skuMap[sku.sku_code] = sku;
 
   const bsRows = await exec.all('SELECT brand, procurement_status FROM brand_settings');
   const bstatus = {};
-  for (const r of bsRows) bstatus[(r.brand || '').trim()] = (r.procurement_status || 'active');
+  for (const row of bsRows) bstatus[(row.brand || '').trim()] = (row.procurement_status || 'active');
 
   const dimRaw = await exec.one("SELECT value FROM system_config WHERE key = 'dim_default_config'");
   const dimCfg = dimRaw ? JSON.parse(dimRaw.value) : null;
 
   const targets = [];
+  const existingTargetSet = new Set();
   for (const er of existingRows) {
     const sku = skuMap[er.sku_code];
-    if (!sku) throw new Error('SALES_REFRESH_SKU_MISSING:' + er.sku_code); // §7 missing SKU master
-    if (sku.status === 'stopped') throw new Error('SALES_REFRESH_SKU_STOPPED:' + er.sku_code); // §7 stopped SKU
-    const inv = invMap[er.sku_code + '|' + er.country + '|' + er.target_warehouse];
-    if (!inv) throw new Error('SALES_REFRESH_ORPHAN_SUGGESTION:' + er.sku_code + '|' + er.country + '|' + er.target_warehouse); // §6 orphan
+    if (!sku) throw new Error('SALES_REFRESH_SKU_MISSING:' + er.sku_code);
+    if (sku.status === 'stopped') throw new Error('SALES_REFRESH_SKU_STOPPED:' + er.sku_code);
+    const targetKey = er.sku_code + '|' + er.country + '|' + er.target_warehouse;
+    const inv = invMap[targetKey];
+    if (!inv) throw new Error('SALES_REFRESH_ORPHAN_SUGGESTION:' + er.sku_code + '|' + er.country + '|' + er.target_warehouse);
+    existingTargetSet.add(targetKey);
     const brandStopped = (bstatus[(sku.brand || '').trim()] || 'active') === 'stopped';
-    // §8 DIM precheck：仅对 existing ∩ inventory 的 exact target；品牌停采免检（与 generate 预检跳过一致），禁用 3/3 fallback
     if (!brandStopped) {
       const hit = getDimTurnover(sku.brand, er.country, er.target_warehouse, dimCfg);
       if (!hit) throw new Error('SALES_REFRESH_DIM_UNMATCHED:' + (sku.brand || '') + '|' + er.country + '|' + er.target_warehouse);
     }
     targets.push({ er, sku, inv, brandStopped });
   }
-  return { targets, existingCount: targets.length, dimCfg };
+
+  if (includeMissing) {
+    for (const inv of inventoryItems) {
+      const pairKey = inv.sku_code + '|' + inv.country;
+      if (!affectedPairSet.has(pairKey)) continue;
+      const targetKey = inv.sku_code + '|' + inv.country + '|' + inv.warehouse;
+      if (existingTargetSet.has(targetKey)) continue;
+      const sku = skuMap[inv.sku_code];
+      if (!sku || sku.status === 'stopped') continue;
+      const brandStopped = (bstatus[(sku.brand || '').trim()] || 'active') === 'stopped';
+      if (!brandStopped) {
+        const hit = getDimTurnover(sku.brand, inv.country, inv.warehouse, dimCfg);
+        if (!hit) throw new Error('SALES_REFRESH_DIM_UNMATCHED:' + (sku.brand || '') + '|' + inv.country + '|' + inv.warehouse);
+      }
+      targets.push({ er: null, sku, inv, brandStopped });
+    }
+  }
+  return { targets, existingCount: existingRows.length, dimCfg };
 }
 
 // §1/§2/§5-§11 主入口：刷新已有 suggestion。transaction-bound（exec 由调用方提供）。
-async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect }) {
+async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, includeMissing = false }) {
   if (!exec) throw new Error('SALES_REFRESH_NO_EXEC');
-  if (!Array.isArray(affectedKeys) || affectedKeys.length === 0) return { updated: 0 };
+  if (!Array.isArray(affectedKeys) || affectedKeys.length === 0) return { updated: 0, inserted: 0 };
 
-  // §4/§5/§6/§8 单一真源校验（orphan / missing SKU / stopped / DIM）；DELETE 后由调用方再次触发以最终保证边界
-  const { targets, dimCfg } = await resolveAndValidateRefreshTargets(exec, affectedKeys);
-  if (targets.length === 0) return { updated: 0 }; // §6 affected 无 existing suggestion → 0 行不 INSERT
+  const { targets, dimCfg } = await resolveAndValidateRefreshTargets(exec, affectedKeys, includeMissing);
+  if (targets.length === 0) return { updated: 0, inserted: 0 };
 
   const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
   const inPh = skuCodes.map(() => '?').join(',');
-  // §10 context（仅 compute 所需；校验已由 helper 完成）
   const now = new Date();
-  const oneVal = async (key) => { const r = await exec.one("SELECT value FROM system_config WHERE key = ?", [key]); return r ? r.value : null; };
+  const oneVal = async key => {
+    const row = await exec.one("SELECT value FROM system_config WHERE key = ?", [key]);
+    return row ? row.value : null;
+  };
   const targetMonths = Number(await oneVal('target_stock_months')) || 4;
   const leadTimeMonths = Number(await oneVal('lead_time_months')) || 2;
   const salesStatsDays = Number(await oneVal('sales_stats_days')) || 90;
   const countriesCache = await exec.all('SELECT id, name, code FROM countries ORDER BY sort_order');
   const channelConfigRows = await exec.all("SELECT sku_code, country_id, online_pct, offline_pct, status FROM sku_channel_configs WHERE status = 'active'");
   const channelConfigMap = {};
-  for (const r of channelConfigRows) channelConfigMap[r.sku_code + '|' + r.country_id] = r;
+  for (const row of channelConfigRows) channelConfigMap[row.sku_code + '|' + row.country_id] = row;
 
-  // §9 月份 + 日期口径（与 generate 完全一致；now 冻结由调用方环境保证）
   const months = [];
   for (let i = 0; i < 4; i++) {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -8772,7 +9006,6 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect }) 
   const d120 = new Date(now.getTime() - 120 * 86400000).toISOString().split('T')[0];
   const salesDate = salesOrderDateExpr('order_date');
 
-  // §9 销量聚合（与 generate 逐字一致的 SQL：近4月按月 + 周期/d30/d90/累计；is_valid_order=1）
   const monthlyRows = await exec.all(
     'SELECT sku_code, COALESCE(country, \'\') AS country, substr(' + salesDate + ', 1, 4) AS y, substr(' + salesDate + ', 6, 2) AS mo, ' +
     'COALESCE(SUM(quantity), 0) AS total, ' +
@@ -8783,14 +9016,16 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect }) 
     skuCodes.concat([m4Start, periodEnd])
   );
   const monthlyMap = {};
-  for (const r of monthlyRows) {
-    const ry = String(r.y); const rmo = String(r.mo);
+  for (const row of monthlyRows) {
+    const ry = String(row.y); const rmo = String(row.mo);
     let key = null;
-    for (const m of months) { if (String(m.year) === ry && m.month === rmo) { key = m.key; break; } }
+    for (const month of months) {
+      if (String(month.year) === ry && month.month === rmo) { key = month.key; break; }
+    }
     if (!key) continue;
-    const mapKey = r.sku_code + '|' + (r.country || '');
+    const mapKey = row.sku_code + '|' + (row.country || '');
     if (!monthlyMap[mapKey]) monthlyMap[mapKey] = {};
-    monthlyMap[mapKey][key] = { total: Number(r.total) || 0, online: Number(r.online) || 0, offline: Number(r.offline) || 0 };
+    monthlyMap[mapKey][key] = { total: Number(row.total) || 0, online: Number(row.online) || 0, offline: Number(row.offline) || 0 };
   }
   const aggRows = await exec.all(
     'SELECT sku_code, COALESCE(country, \'\') AS country, ' +
@@ -8806,30 +9041,75 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect }) 
     [periodStart, periodEnd, periodStart, periodEnd, periodStart, periodEnd, d30, d90, d120, d120].concat(skuCodes)
   );
   const aggMap = {};
-  for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
+  for (const row of aggRows) aggMap[row.sku_code + '|' + (row.country || '')] = row;
 
-  // §6/§7/§8 targets 与 fail-closed 校验已由 resolveAndValidateRefreshTargets 构建（单一真源，无重复规则）
-
-  // §10/§11 调用已验明等价的 computeSuggestionForTarget（禁止复制 per-row 公式）；assert 仅 update
   const updateRows = [];
-  for (const t of targets) {
+  const insertRows = [];
+  for (const target of targets) {
     const result = computeSuggestionForTarget({
-      inv: t.inv, sku: t.sku, existing_rs: t.er, brandStopped: t.brandStopped,
-      months, monthlyMap, aggMap,
-      targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
-      channelConfigMap, countriesCache, now
+      inv: target.inv, sku: target.sku, existing_rs: target.er, brandStopped: target.brandStopped,
+      months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
+      channelConfigMap, countriesCache, now, preserveManualOverrides: true
     });
-    assertRefreshUpdateOnly(result, t.er.sku_code + '|' + t.er.country + '|' + t.er.target_warehouse);
-    updateRows.push(result);
+    const key = target.inv.sku_code + '|' + target.inv.country + '|' + target.inv.warehouse;
+    if (result.mode === 'update') {
+      preserveManualSuggestedQtyForRefresh(result, target.er, target.brandStopped);
+      assertRefreshUpdateOnly(result, key);
+      updateRows.push(result);
+    } else if (includeMissing && result.mode === 'insert') {
+      assertRefreshInsertOnly(result, key);
+      insertRows.push(result);
+    } else {
+      assertRefreshUpdateOnly(result, key);
+    }
   }
 
-  // §14 dialect-aware writer（仅 UPDATE；dialect 由调用方明确传入，禁止在 pure compute 内判断连接类型）
   if (dialect === 'pg') {
-    await writeSuggestionRefreshPg(exec, updateRows);
+    if (updateRows.length) await writeSuggestionRefreshPg(exec, updateRows);
+    if (insertRows.length) await writeSuggestionRefreshInsertsPg(exec, insertRows);
   } else {
-    await writeSuggestionRefreshSqlite(exec, updateRows);
+    if (updateRows.length) await writeSuggestionRefreshSqlite(exec, updateRows);
+    if (insertRows.length) await writeSuggestionRefreshInsertsSqlite(exec, insertRows);
   }
-  return { updated: updateRows.length };
+  return { updated: updateRows.length, inserted: insertRows.length };
+}
+
+function normalizeForecastAffectedKeys(keys) {
+  const map = new Map();
+  for (const item of Array.isArray(keys) ? keys : []) {
+    const sku = String(item && item.sku_code || '').trim();
+    const country = String(item && item.country || '').trim();
+    if (!sku || !country) continue;
+    map.set(JSON.stringify([sku, country]), { sku_code: sku, country });
+  }
+  return Array.from(map.values());
+}
+
+async function refreshForecastSuggestionsForKeys(keys) {
+  const affectedKeys = normalizeForecastAffectedKeys(keys);
+  if (!affectedKeys.length) return { updated: 0, inserted: 0 };
+  if (isPgDriver()) {
+    return await withGenerateClient(async (aq, aqOne, run) => {
+      const exec = buildPgExec(aq, aqOne, run);
+      return await refreshExistingSalesSuggestions({ exec, affectedKeys, dialect: 'pg', includeMissing: true });
+    });
+  }
+  return await transaction(async () => {
+    const exec = buildSqliteExec();
+    return await refreshExistingSalesSuggestions({ exec, affectedKeys, dialect: 'sqlite', includeMissing: true });
+  });
+}
+
+function bumpForecastDataRevision() {
+  const key = '__internal_replenishment_data_revision';
+  const revision = String(Date.now()) + '-' + genId('rp_rev');
+  const now = new Date().toISOString();
+  run(
+    'INSERT INTO system_config (key, value, description, updated_at) VALUES (?, ?, ?, ?) ' +
+    'ON CONFLICT(key) DO UPDATE SET value = excluded.value, description = excluded.description, updated_at = excluded.updated_at',
+    [key, revision, 'Internal order-forecast data revision marker', now]
+  );
+  return revision;
 }
 
 // 生成/刷新补货建议
@@ -8981,23 +9261,6 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     }
 
     // P0-2 批量写：列定义（RS_SET_COLS 已提升至模块作用域，full generate 与刷新引擎共用）
-    const RS_INSERT_COLS = [
-      'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
-      'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
-      'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
-      'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
-      'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
-      'current_turnover_months', 'suggested_qty', 'moq_qty', 'carton_adjusted_qty',
-      'online_suggested_qty', 'offline_suggested_qty', 'other_suggested_qty',
-      'after_order_turnover_months', 'online_after_order_turnover_months', 'offline_after_order_turnover_months',
-      'target_stock_months', 'risk_level', 'arrival_month', 'suggestion',
-      'is_new_product', 'lifecycle_status', 'sales_group', 'user_adjusted_qty', 'generate_po',
-      'online_target_turnover', 'offline_target_turnover',
-      'online_target_stock', 'offline_target_stock', 'other_target_stock', 'final_order_qty',
-      'sales_status', 'risk_tags', 'sales_reason', 'action', 'ai_business_advice',
-      'channel_ratio_source', 'channel_allocation_status', 'resolved_online_pct', 'resolved_at'
-    ];
-
     // 列类型：UPDATE ... FROM (VALUES ...) 时 PG 会把无类型 VALUES 列推断为 text，
     // 导致 integer/text 类型冲突。显式声明 CTE 列类型可让参数正确转型。
     // 用 current_schema() 兼容隔离 schema（p0_iso）与生产 schema（public）。
@@ -22649,11 +22912,14 @@ async function recalcInventoryForSkuPg(aqOne, arun, sku_code, country, warehouse
 
 // 销售导入后后台库存重算：PG 模式下异步执行，不阻塞导入响应。
 // 逐 SKU 执行，单个 SKU 失败不影响其他 SKU（与同步版行为一致）。
-async function recalcInventoryForSkusBackground(importId, affectedSkus) {
+async function recalcInventoryForSkusBackground(importId, affectedSkus, affectedKeys) {
   const store = createSalesImportRunStoreForCurrentDb();
   try {
-    await store.update(importId, { recalc_status: 'running' });
-    console.log('[sales-import] background recalc started for', affectedSkus.length, 'SKUs');
+    await store.update(importId, {
+      status: 'inventory_recalc', phase: 'inventory_recalc', percent: 92,
+      recalc_status: 'running'
+    });
+    console.log('[sales-import] background inventory + forecast sync started for', affectedSkus.length, 'SKUs');
 
     const recalcStart = Date.now();
     await withAsyncPoolClient(async (aq, aqOne, arun) => {
@@ -22669,12 +22935,35 @@ async function recalcInventoryForSkusBackground(importId, affectedSkus) {
       }
     });
 
+    const forecastRefresh = await refreshForecastSuggestionsForKeys(affectedKeys);
+    const revision = affectedKeys && affectedKeys.length ? bumpForecastDataRevision() : '';
     const elapsed = Date.now() - recalcStart;
-    await store.update(importId, { recalc_status: 'completed' });
-    console.log('[sales-import] background recalc completed in', elapsed, 'ms for', affectedSkus.length, 'SKUs');
+    const current = await store.get(importId);
+    const currentResult = current && current.result || {};
+    const refreshedCount = (forecastRefresh.updated || 0) + (forecastRefresh.inserted || 0);
+    await store.update(importId, {
+      status: 'completed', phase: 'completed', percent: 100,
+      processed_count: current ? current.total_count : affectedSkus.length,
+      total_count: current ? current.total_count : affectedSkus.length,
+      recalc_status: 'completed',
+      result: { ...currentResult, forecast_refreshed_count: refreshedCount, forecast_revision: revision }
+    });
+    console.log('[sales-import] background inventory + forecast sync completed in', elapsed, 'ms; forecast rows=', refreshedCount);
   } catch (e) {
-    console.error('[sales-import] background recalc failed:', e.message);
-    try { await store.update(importId, { recalc_status: 'failed' }); } catch (_) {}
+    console.error('[sales-import] background inventory/forecast sync failed:', e.message);
+    try { if (affectedKeys && affectedKeys.length) bumpForecastDataRevision(); } catch (revisionError) {
+      console.error('[sales-import] forecast revision bump failed:', revisionError.message);
+    }
+    try {
+      const current = await store.get(importId);
+      const currentResult = current && current.result || {};
+      const errors = [{ row: 0, reason: '销售数据已提交，但库存/订单预测自动同步失败：' + (e.message || String(e)) }];
+      await store.update(importId, {
+        status: 'sales_committed_recalc_failed', phase: 'sales_committed_recalc_failed',
+        percent: 95, recalc_status: 'failed', errors,
+        result: { ...currentResult, errors }
+      });
+    } catch (_) {}
   }
 }
 

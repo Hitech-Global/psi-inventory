@@ -4137,15 +4137,16 @@ function downloadInvTemplate(){
 
 var invImportPollTimer=null;
 function stopInvImportPolling(){if(invImportPollTimer){clearTimeout(invImportPollTimer);invImportPollTimer=null;}}
-function invImportPhaseLabel(phase){var m={validating:'正在校验导入数据',preparing:'预检查通过，正在准备写入',validating_rows:'正在校验数据行',writing:'正在写入库存数据',written:'库存数据写入完成',refreshing_inventory:'正在更新库存总表',finalizing:'正在完成导入校验',completed:'导入完成',blocked:'导入已阻断',failed:'导入失败'};return m[phase]||'正在导入库存';}
+function invImportPhaseLabel(phase){var m={validating:'正在校验导入数据',preparing:'预检查通过，正在准备写入',validating_rows:'正在校验数据行',writing:'正在写入库存数据',written:'库存数据写入完成',refreshing_inventory:'正在更新库存总表',forecast_syncing:'正在同步订单预测',finalizing:'正在完成导入校验',completed:'导入完成',blocked:'导入已阻断',failed:'导入失败'};return m[phase]||'正在导入库存';}
 function renderInvImportProgress(run){
   if(!run)return;
   var p=Math.max(0,Math.min(100,Number(run.percent)||0));
   var total=Math.max(0,Number(run.total_count)||0),done=Math.max(0,Number(run.processed_count)||0);
   var terminal=run.status==='completed'||run.status==='failed'||run.status==='blocked';
   var ok=run.status==='completed',bad=run.status==='failed'||run.status==='blocked';
+  var syncWarning=ok&&run.forecast_sync_status==='failed';
   var title=run.message||invImportPhaseLabel(run.phase);
-  var accent=ok?'#30a85a':(bad?'#ff3b30':'#2e7d32');
+  var accent=syncWarning?'#faad14':(ok?'#30a85a':(bad?'#ff3b30':'#2e7d32'));
   var box=document.getElementById('inv-result');
   if(box){box.innerHTML='<div style="margin-top:12px;padding:18px 18px 16px;border-radius:16px;background:rgba(248,248,250,.96);border:1px solid rgba(0,0,0,.06);box-shadow:0 8px 24px rgba(0,0,0,.06)">'+
     '<div style="display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px"><div><div style="font-size:14px;font-weight:600;color:#1d1d1f">'+esc(title)+'</div><div style="font-size:12px;color:#86868b;margin-top:3px">'+(total?(done+' / '+total+' 条'):'正在准备…')+'</div></div><div style="font-size:28px;line-height:1;font-weight:650;letter-spacing:-.03em;color:'+accent+'">'+Math.round(p)+'%</div></div>'+ 
@@ -4178,15 +4179,26 @@ async function submitInvBatchImport(){
   try{
     var items=records.map(buildInvImportItem);
     var res=await api('/api/inventory-imports/bulk-import','POST',{items:items,snapshot_cutoff_date:snapshotDate,import_id:importId});
-    stopInvImportPolling();renderInvImportProgress({status:'completed',phase:'completed',percent:100,processed_count:records.length,total_count:records.length,message:'导入完成'});
+    stopInvImportPolling();
+    var forecastSyncFailed=res.forecast_sync_status==='failed';
+    renderInvImportProgress({
+      status:'completed',phase:'completed',percent:100,processed_count:records.length,total_count:records.length,
+      forecast_sync_status:res.forecast_sync_status||'',
+      forecast_refreshed_count:res.forecast_refreshed_count||0,
+      forecast_sync_error:res.forecast_sync_error||'',
+      message:forecastSyncFailed?'库存已导入，但订单预测自动同步失败':'导入完成'
+    });
     window._lastInvImportErrors=res.errors||[];
     window._lastInvImportSkippedRows=res.skipped_rows||[];
     var html='<div style="background:'+(res.failed>0||res.skipped_count>0?'#fffbe6':'#f6ffed')+';border:1px solid '+(res.failed>0||res.skipped_count>0?'#ffe58f':'#b7eb8f')+';border-radius:12px;padding:14px 16px;font-size:13px;margin-top:12px"><div style="font-weight:600;margin-bottom:8px">'+t("toast.import_done", "导入完成")+'</div><div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px">'+t("html.import.added_open", "<span>已新增：")+(res.created||0)+t("html.unit.tiao_close", " 条</span>")+'<span>'+t('inv.result_skipped','已跳过：')+(res.skipped_count||0)+t("html.unit.tiao_close", " 条</span>")+t("html.import.fail_open", "<span>失败：")+(res.failed||0)+t("html.unit.tiao_close", " 条</span>")+'<span style="color:#1890ff">'+t('inv.result_snapshot','快照截止日期：')+esc(res.snapshot_cutoff_date||snapshotDate)+'</span></div>';
+    if(forecastSyncFailed){html+='<div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:#fffbe6;border:1px solid #ffe58f;color:#ad6800"><strong>库存已成功导入，但订单预测自动同步失败。</strong><div style="margin-top:4px">'+esc(res.forecast_sync_error||'请联系管理员检查预测同步日志')+'</div></div>';}
     if(res.wac_warnings&&res.wac_warnings.length>0){var highWarnings=res.wac_warnings.filter(function(w){return w.priority==='high'}),normalWarnings=res.wac_warnings.filter(function(w){return w.priority!=='high'});html+='<div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:'+(highWarnings.length>0?'#fff1f0':'#fffbe6')+';border:1px solid '+(highWarnings.length>0?'#ffa39e':'#ffe58f')+'"><div style="font-weight:600;color:'+(highWarnings.length>0?'#ff3b30':'#faad14')+';margin-bottom:6px">加权平均成本匹配结果</div>';if(highWarnings.length>0){html+='<div style="color:#ff3b30;margin-bottom:4px;font-weight:600">⚠️ 高优先级（成本为 0，请尽快完成成本确认）</div>';highWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}if(normalWarnings.length>0){html+='<div style="color:#faad14;margin-bottom:4px;margin-top:'+(highWarnings.length>0?'6px':'0')+'">ℹ️ 已保留原成本（请完成成本确认以更新）</div>';normalWarnings.forEach(function(w){html+='<div style="color:#666;margin-left:12px">'+esc(w.sku_code)+' / '+esc(w.country||'')+' / '+esc(w.warehouse||'')+'：'+esc(w.message)+'</div>';});}html+='</div>';}
     if(window._lastInvImportSkippedRows.length>0){html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ad6800;margin-bottom:6px">'+t('inv.skipped_detail','已跳过的异常行')+'</div>'+window._lastInvImportSkippedRows.slice(0,30).map(function(r){return '<div style="color:#666">第 '+esc(String(r.row||''))+' 行 / '+esc(r.sku_code||'-')+'：'+esc(r.reason||'预检查未通过')+'</div>'}).join('')+(window._lastInvImportSkippedRows.length>30?'<div style="color:#999">还有 '+(window._lastInvImportSkippedRows.length-30)+' 条跳过记录...</div>':'')+'</div>';}
     if(window._lastInvImportErrors.length>0){html+='<div style="margin-top:10px"><div style="font-weight:600;color:#ff3b30;margin-bottom:6px">'+t("html.inv.fail_detail", "失败明细")+'</div>';html+=window._lastInvImportErrors.slice(0,20).map(function(e){return '<div style="color:#666">第 '+e.row+' 行：'+esc(e.reason)+'</div>'}).join('');if(window._lastInvImportErrors.length>20)html+='<div style="color:#999">还有 '+(window._lastInvImportErrors.length-20)+' 条失败...</div>';html+='<button type="button" class="btn btn-secondary" style="margin-top:10px" onclick="downloadInvImportErrors()">'+t("html.inv.download_fail", "下载失败明细")+'</button></div>';}
     html+='</div>';var resultBox=document.getElementById('inv-result');if(resultBox)resultBox.insertAdjacentHTML('beforeend',html);
-    var createdN=res.created||0,failedN=res.failed||0,skippedN=res.skipped_count||0,toastMsg,toastType;if(createdN>0&&failedN===0&&skippedN>0){toastMsg=t('inv.toast_partial','导入完成：新增 {c} 条，跳过异常 {s} 条',{c:createdN,s:skippedN});toastType='warning';}else if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}showToast(toastMsg,toastType);await refreshInvFilterOptions();loadInv();
+    var createdN=res.created||0,failedN=res.failed||0,skippedN=res.skipped_count||0,toastMsg,toastType;if(createdN>0&&failedN===0&&skippedN>0){toastMsg=t('inv.toast_partial','导入完成：新增 {c} 条，跳过异常 {s} 条',{c:createdN,s:skippedN});toastType='warning';}else if(createdN>0&&failedN===0){toastMsg=t('toast.importDone2','导入完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='success';}else if(createdN>0&&failedN>0){toastMsg=t('toast.import_partial','导入部分完成：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='warning';}else if(createdN===0&&failedN>0){toastMsg=t('toast.import_failed2','导入失败：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}else{toastMsg=t('toast.import_no_data','无有效数据：新增{c}，失败{f}',{c:createdN,f:failedN});toastType='danger';}
+    if(forecastSyncFailed){toastMsg='库存已导入，但订单预测自动同步失败'+(res.forecast_sync_error?'：'+res.forecast_sync_error:'');toastType='warning';}
+    showToast(toastMsg,toastType);await refreshInvFilterOptions();loadInv();
   }catch(e){
     stopInvImportPolling();var pl=e&&e.payload;
     if(pl&&pl.blocked===true){window._invPrecheck=pl.precheck||{ok:false,can_import:false,importable_count:0,blocked_row_count:records.length,blocking:pl.blocking||[],summary:pl.summary||[],blocking_count:(pl.blocking||[]).length,total_rows:records.length};window._invPassedFingerprint=null;renderInvPrecheck(window._invPrecheck);renderInvStatus();var rbox=document.getElementById('inv-result');if(rbox)rbox.innerHTML='<div style="background:#fff1f0;border:1px solid #ffa39e;border-radius:12px;padding:12px 14px;font-size:13px;color:#a8071a">'+esc(t('inv.blocked_zero_write','没有可导入的有效 SKU，异常行已全部跳过，数据库未发生任何写入。请查看下方问题明细。'))+'</div>';var pbox=document.getElementById('inv-precheck');if(pbox&&pbox.scrollIntoView)pbox.scrollIntoView({behavior:'auto',block:'center'});showToast(t('inv.toast_blocked','没有可导入的有效数据，本次未写入'),'danger');}
@@ -7080,6 +7092,7 @@ function initRpTableDrag(tabKey, container){
 async function renderReplenishment(){
   // RP-WARM-RETURN-P1：warm re-entry = 已有 ready snapshot + 可复用 view + 无 invalidation。
   // 此路径不清 data/view cache、不等 preferences GET、不重渲染表格，直接恢复上一次 view。
+  var _rpRevisionPromise=api('/api/replenishment-suggestions/revision').catch(function(){return null;});
   var _warmT0=RP_PERF?performance.now():0;
   var _warm=rpWarmEntryState();
   rpPerfLog({warm_entry:_warm?'HIT':'MISS'});
@@ -7119,6 +7132,16 @@ async function renderReplenishment(){
     if(savedPreferences)window.__rpFilterState=savedPreferences;
   }
   await loadRpFilterOptions();
+  var _rpRevisionPayload=await _rpRevisionPromise;
+  if(_rpRevisionPayload&&_rpRevisionPayload.revision!=null){
+    var _nextRpRevision=String(_rpRevisionPayload.revision);
+    if(window._rpDataRevision!=null&&_nextRpRevision!==String(window._rpDataRevision)){
+      var _previousWarmState=_warm;
+      rpInvalidateWarmViews();
+      _warm=_previousWarmState;
+    }
+    window._rpDataRevision=_nextRpRevision;
+  }
   // RC-FILTER-PRESERVE：语言切换后恢复筛选稳定值（会话内一次）
   // 国家→仓库→品牌存在依赖关系，loadRpFilterOptions 已 await onRpCountryChange 完成选项重建
   // 此处按依赖顺序回填稳定值：country（已由 loadRpFilterOptions 内部 prevCountry 保持）→ warehouse → brand
@@ -7147,6 +7170,7 @@ async function renderReplenishment(){
   else loadRp();
   updateRpFieldConfigBtn(rpTab||'total');
   applyRpCollapse();
+  startRpRevisionPolling();
 }
 // ==================== 订单预测：顶部筛选区+指标卡 收起/展开 ====================
 const RP_COLLAPSE_KEY='rp_top_collapsed';
@@ -7921,7 +7945,7 @@ function rpReattachCachedViews(){
 // 真正的 invalidation 入口（logout / 外部 mutation / 数据事实变更）
 function rpInvalidateWarmViews(){
   window.__rpSessionState=null;
-  try{ rpClearAllViews(); rpClearDataCache(); }catch(e){}
+  try{ rpClearAllViews(); rpClearDataCache(); rpInvalidateSnapshot(); }catch(e){}
 }
 // 外部 mutation 失效：inventory / import / PI / CI / PL / sales 变化会让补货视图过期。
 // RP 自身保存（/api/replenishment-suggestions*）**不**清 view —— 手工作业值由
@@ -7937,6 +7961,52 @@ function rpWarmInvalidateForMutation(url){
   return false;
 }
 // RP-WARM-END
+
+var _rpRevisionPollTimer=null;
+var _rpRevisionPollBusy=false;
+var _rpRevisionRefreshBusy=false;
+
+async function rpRefreshSnapshotForExternalRevision(nextRevision){
+  var drained=await rpDrainAllPending();
+  if(!drained)return false;
+  rpInvalidateWarmViews();
+  var ready=await rpBootstrapSnapshot();
+  if(!ready)return false;
+  await loadRpWithHistorical();
+  await loadRpSummary();
+  window._rpDataRevision=String(nextRevision);
+  return true;
+}
+
+async function rpCheckDataRevision(){
+  if(!document.getElementById('rp-table')){
+    if(_rpRevisionPollTimer){clearInterval(_rpRevisionPollTimer);_rpRevisionPollTimer=null;}
+    return;
+  }
+  if(document.visibilityState==='hidden'||_rpRevisionPollBusy||_rpRevisionRefreshBusy)return;
+  _rpRevisionPollBusy=true;
+  try{
+    var payload=await api('/api/replenishment-suggestions/revision');
+    if(!document.getElementById('rp-table'))return;
+    var next=String(payload&&payload.revision||'0');
+    if(window._rpDataRevision==null){window._rpDataRevision=next;return;}
+    if(next===String(window._rpDataRevision))return;
+    _rpRevisionRefreshBusy=true;
+    await rpRefreshSnapshotForExternalRevision(next);
+  }catch(e){
+    // Keep the old revision so the next poll retries without interrupting the page.
+  }finally{
+    _rpRevisionRefreshBusy=false;
+    _rpRevisionPollBusy=false;
+  }
+}
+
+function startRpRevisionPolling(){
+  if(_rpRevisionPollTimer){clearInterval(_rpRevisionPollTimer);_rpRevisionPollTimer=null;}
+  if(!document.getElementById('rp-table'))return;
+  rpCheckDataRevision();
+  _rpRevisionPollTimer=setInterval(rpCheckDataRevision,5000);
+}
 // 读取某渠道某行(rid)的手动建议采购值：
 // 用 hasOwnProperty 严格区分「未设置」(返回 undefined) 与「显式输入 0」(返回 0)，
 // 防止用户输入 0 被系统值覆盖。

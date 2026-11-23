@@ -37,6 +37,7 @@ on:
       - 'test/app-perf-diagnostics.test.cjs'
       - 'test/app-perf-brand-invalidation.test.cjs'
       - 'server.js'
+      - 'test/forecast-auto-sync.test.cjs'
       - 'ci-customs-duty-fx.js'
       - 'test/ci-customs-duty-fx.test.cjs'
       - 'wave2b-pi-batch-import-pg.js'
@@ -217,6 +218,7 @@ jobs:
           node --check test/app-perf-diagnostics.test.cjs
           node --check test/app-perf-brand-invalidation.test.cjs
           node --check server.js
+          node --check test/forecast-auto-sync.test.cjs
           node --check ci-customs-duty-fx.js
           node --check test/ci-customs-duty-fx.test.cjs
           node --check wave2b-pi-batch-import-pg.js
@@ -280,6 +282,8 @@ jobs:
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
+      - name: Test automatic sales and inventory forecast synchronization
+        run: node --test test/forecast-auto-sync.test.cjs
       - name: Test WAC history matrix selects latest confirmation chronologically
         run: node --test test/wac-history-matrix-latest-order.test.cjs
       - name: Test frontend core asset cache-busting
