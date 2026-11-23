@@ -236,3 +236,18 @@ test('formula fields support independent cell display format and decimal precisi
   assert.match(migration, /display_format TEXT NOT NULL DEFAULT 'auto'/);
   assert.match(migration, /decimal_places INTEGER NOT NULL DEFAULT 2/);
 });
+
+test('all editable amount inputs display thousand separators while save values remain numeric', () => {
+  assert.ok(ui.includes("function formatAmountInput(value,decimalPlaces)"));
+  assert.ok(ui.includes("n.toLocaleString('en-US',{maximumFractionDigits:p})"));
+  assert.ok(ui.includes('window.psPrepareAmountInput=function(input)'));
+  assert.ok(ui.includes('window.psFormatAmountInput=function(input)'));
+  assert.ok(ui.includes("replace(/,/g,'').trim()"));
+  assert.ok(ui.includes("state.dirty[sku][key]=raw===''?null:Number(raw)"));
+  assert.ok(ui.includes('data-decimal-places="2"'));
+  assert.ok(ui.includes('formatAmountInput(shown,2)'));
+  assert.ok(ui.includes("const isAmountInput=f.field_type==='amount'||(f.field_type!=='percent'&&f.display_format==='amount')"));
+  assert.ok(ui.includes("type=\"'+(isAmountInput?'text':'number')+'\""));
+  assert.ok(ui.includes('formatAmountInput(shown,inputPlaces)'));
+  assert.ok(ui.includes("row.srp=values.srp;delete row.values.srp"));
+});
