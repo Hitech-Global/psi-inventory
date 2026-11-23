@@ -23,7 +23,7 @@ const COUNTRY_CODES = Object.freeze({
 
 function countryCode(country) {
   const raw = String(country || '').normalize('NFKC').trim();
-  const key = raw.toLowerCase().replace(/\\s+/g, ' ');
+  const key = raw.toLowerCase().replace(/\s+/g, ' ');
   const code = COUNTRY_CODES[key];
   if (code) return code;
   const upper = raw.toUpperCase();
@@ -36,7 +36,7 @@ function countryCode(country) {
 function generatePONumber(country, poDate, now = Date.now()) {
   const date = String(poDate || '').slice(0, 10);
   const parsed = new Date(date + 'T00:00:00Z');
-  if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
     const error = new Error('PO日期格式无效，必须为 YYYY-MM-DD');
     error.status = 400;
     throw error;
