@@ -6773,7 +6773,13 @@ function collectSalesImportAffectedKeys(applied) {
   const classified = applied && applied.classification && applied.classification.classified || [];
   const map = new Map();
   for (const item of classified) {
-    if (!item || (item.action !== 'insert' && item.action !== 'update')) continue;
+    // A successful re-import is also a synchronization request. Include
+    // unchanged rows (skip with no errors), otherwise re-uploading the same
+    // BigSeller snapshot would never refresh stale forecast rows.
+    if (!item || !['insert', 'update', 'skip'].includes(item.action)) continue;
+    const errors = Array.isArray(item.errors) ? item.errors :
+      (Array.isArray(item.row && item.row.errors) ? item.row.errors : []);
+    if (errors.length > 0) continue;
     const row = item.row || {};
     const sku = String(row.sku_code || '').trim();
     const country = String(row.country || '').trim();
