@@ -112,3 +112,27 @@ test('forecast page invalidates the L0 snapshot and reloads automatically across
   assert.match(app, /setInterval\(rpCheckDataRevision,5000\)/);
   assert.match(app, /startRpRevisionPolling\(\);/);
 });
+
+test('re-importing unchanged valid sales rows still refreshes their SKU-country forecasts', () => {
+  const helperMatch = server.match(/function collectSalesImportAffectedKeys\\(applied\\) \\{[\\s\\S]*?\\n\\}/);
+  assert.ok(helperMatch, 'sales import affected-key helper should exist');
+  const context = {};
+  vm.runInNewContext(helperMatch[0] + '\\nthis.collect = collectSalesImportAffectedKeys;', context);
+
+  const keys = context.collect({ classification: { classified: [
+    { action: 'insert', row: { sku_code: 'SKU-A', country: 'ID' }, errors: [] },
+    { action: 'update', row: { sku_code: 'SKU-B', country: 'TH' }, errors: [] },
+    { action: 'skip', row: { sku_code: 'SKU-C', country: 'MY' }, errors: [] },
+    { action: 'skip', row: { sku_code: 'SKU-A', country: 'ID' }, errors: [] },
+    { action: 'skip', row: { sku_code: 'SKU-D', country: 'ID' }, errors: ['重复记录（唯一约束）'] },
+    { action: 'failed', row: { sku_code: 'SKU-E', country: 'ID' }, errors: ['SKU 主数据不存在'] },
+    { action: 'skip', row: { sku_code: '', country: 'ID' }, errors: [] },
+    { action: 'skip', row: { sku_code: 'SKU-F', country: '' }, errors: [] }
+  ] } });
+
+  assert.deepEqual(
+    Array.from(keys, key => key.sku_code + '|' + key.country).sort(),
+    ['SKU-A|ID', 'SKU-B|TH', 'SKU-C|MY'],
+    'unchanged valid rows are included, deduplicated, and error rows stay excluded'
+  );
+});
