@@ -114,10 +114,10 @@ test('forecast page invalidates the L0 snapshot and reloads automatically across
 });
 
 test('re-importing unchanged valid sales rows still refreshes their SKU-country forecasts', () => {
-  const helperMatch = server.match(/function collectSalesImportAffectedKeys\\(applied\\) \\{[\\s\\S]*?\\n\\}/);
+  const helperMatch = server.match(/function collectSalesImportAffectedKeys\(applied\) \{[\s\S]*?\n\}/);
   assert.ok(helperMatch, 'sales import affected-key helper should exist');
   const context = {};
-  vm.runInNewContext(helperMatch[0] + '\\nthis.collect = collectSalesImportAffectedKeys;', context);
+  vm.runInNewContext(helperMatch[0] + '\nthis.collect = collectSalesImportAffectedKeys;', context);
 
   const keys = context.collect({ classification: { classified: [
     { action: 'insert', row: { sku_code: 'SKU-A', country: 'ID' }, errors: [] },
