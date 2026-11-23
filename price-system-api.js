@@ -20,6 +20,29 @@ function parseFormulaRules(value) {
   try { const parsed = JSON.parse(value || '{}'); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}; }
   catch (e) { return {}; }
 }
+
+function buildCopiedFieldRows(sourceFields, targetSchemeId, genId) {
+  return (Array.isArray(sourceFields) ? sourceFields : []).map(field => {
+    const decimalPlaces = Number(field.decimal_places == null ? 2 : field.decimal_places);
+    const sortOrder = Number(field.sort_order == null ? 0 : field.sort_order);
+    return {
+      id: genId('psf'),
+      scheme_id: targetSchemeId,
+      field_key: String(field.field_key || '').trim(),
+      field_name: String(field.field_name || '').trim(),
+      field_type: String(field.field_type || 'amount'),
+      unit: String(field.unit || ''),
+      applicable_categories: JSON.stringify(parseCategories(field.applicable_categories)),
+      formula: String(field.formula || ''),
+      formula_rules: JSON.stringify(parseFormulaRules(field.formula_rules)),
+      display_format: String(field.display_format || 'auto'),
+      decimal_places: Number.isFinite(decimalPlaces) ? decimalPlaces : 2,
+      sync_wac: Number(field.sync_wac || 0) === 1 ? 1 : 0,
+      sort_order: Number.isFinite(sortOrder) ? sortOrder : 0,
+      is_active: Number(field.is_active == null ? 1 : field.is_active) === 1 ? 1 : 0
+    };
+  });
+}
 function formulaForCategory(field, category) {
   const rules = parseFormulaRules(field && field.formula_rules);
   if (Object.keys(rules).length) {
@@ -526,6 +549,68 @@ function registerPriceSystemRoutes(app, deps) {
     }
   }));
 
+  app.post('/api/price-system/schemes/:id/copy', canWrite, asyncHandler((req, res) => {
+    try {
+      const source = getSchemeOrNull(req.params.id);
+      if (!schemeAccess(req, res, source)) return;
+      if (String(source.status || '').toLowerCase() !== 'active') return res.status(400).json({ error: '只能复制启用中的价格方案' });
+
+      const country = String(req.body.country || '').trim();
+      const brand = String(req.body.brand || '').trim();
+      const platform = String(req.body.platform || '').trim();
+      const shopName = String(req.body.shop_name || '').trim();
+      if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和平台不能为空' });
+
+      const countryRow = queryOne('SELECT id, default_currency FROM countries WHERE name = ? AND status = ?', [country, 'active']);
+      if (!countryRow) return res.status(400).json({ error: '请选择有效国家' });
+      if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
+        const scope = req.currentUserDataScope || {};
+        if (isCountryRestricted(req) && !scopedCountryIds(req).includes(countryRow.id)) {
+          return res.status(403).json({ error: '没有在该国家创建价格方案的权限' });
+        }
+        if (Array.isArray(scope.brands) && scope.brands.length && !scope.brands.includes(brand)) {
+          return res.status(403).json({ error: '没有在该品牌创建价格方案的权限' });
+        }
+      }
+      const brandRow = queryOne('SELECT COUNT(*) AS count FROM skus WHERE brand = ?', [brand]);
+      if (!brandRow || Number(brandRow.count || 0) === 0) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
+      const duplicate = queryOne(
+        'SELECT id FROM price_system_schemes WHERE country = ? AND brand = ? AND platform = ? AND shop_name = ?',
+        [country, brand, platform, shopName]
+      );
+      if (duplicate) return res.status(409).json({ error: '该国家、品牌、平台和店铺已存在价格方案' });
+
+      const id = genId('ps');
+      const sourceFields = query(
+        'SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name, id',
+        [source.id]
+      ).rows;
+      const copiedFields = buildCopiedFieldRows(sourceFields, id, genId);
+      transaction(() => {
+        run(
+          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_sort_order, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(req.body.notes || ''), req.currentUserId || '']
+        );
+        copiedFields.forEach(field => {
+          run(
+            'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [field.id, field.scheme_id, field.field_key, field.field_name, field.field_type, field.unit, field.applicable_categories, field.formula, field.formula_rules, field.display_format, field.decimal_places, field.sync_wac, field.sort_order, field.is_active]
+          );
+        });
+        createVersion(id, userStamp(req), '从价格方案复制配置：' + String(source.country || '') + ' / ' + String(source.brand || '') + ' / ' + String(source.platform || ''));
+      });
+
+      // Copy only reusable configuration. SKU-specific fees, manual SRP overrides and old WAC links
+      // remain independent; the new scheme gets a fresh WAC sync for its destination country.
+      const schemeSkuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [brand]).rows
+        .map(row => ({ sku_code: row.sku_code, brand: row.brand || brand, country }));
+      syncPriceSystemLandingCostsForWacKeys(schemeSkuKeys, userStamp(req), 'Copied price scheme initial WAC sync');
+      res.status(201).json(getSchemeOrNull(id));
+    } catch (e) {
+      res.status(500).json({ error: e.message || '复制价格方案失败' });
+    }
+  }));
+
   app.get('/api/price-system/schemes/:id/data', canRead, asyncHandler((req, res) => {
     try { getSchemeData(req, res, getSchemeOrNull(req.params.id)); }
     catch (e) { res.status(500).json({ error: e.message || '读取价格数据失败' }); }
@@ -927,4 +1012,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, buildCopiedFieldRows };
