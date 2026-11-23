@@ -43,6 +43,21 @@ function buildCopiedFieldRows(sourceFields, targetSchemeId, genId) {
     };
   });
 }
+function deletePriceSystemSchemeRecords(schemeId, run) {
+  const id = String(schemeId || '').trim();
+  if (!id) throw new Error('价格方案 ID 不能为空');
+  const tables = [
+    ['price_system_fields', 'scheme_id'],
+    ['price_system_values', 'scheme_id'],
+    ['price_system_landing_costs', 'scheme_id'],
+    ['price_system_srp_values', 'scheme_id'],
+    ['price_system_versions', 'scheme_id'],
+    ['price_system_schemes', 'id']
+  ];
+  tables.forEach(([table, key]) => run('DELETE FROM ' + table + ' WHERE ' + key + ' = ?', [id]));
+  return true;
+}
+
 function formulaForCategory(field, category) {
   const rules = parseFormulaRules(field && field.formula_rules);
   if (Object.keys(rules).length) {
@@ -1003,6 +1018,17 @@ function registerPriceSystemRoutes(app, deps) {
     res.json({ success: true, restored_version: version.version_no, version_no: nextVersion });
   }));
 
+  app.delete('/api/price-system/schemes/:id/permanent', canWrite, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    try {
+      transaction(() => deletePriceSystemSchemeRecords(scheme.id, run));
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: e.message || '删除价格方案失败' });
+    }
+  }));
+
   app.delete('/api/price-system/schemes/:id', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
@@ -1012,4 +1038,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, buildCopiedFieldRows };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, buildCopiedFieldRows, deletePriceSystemSchemeRecords };
