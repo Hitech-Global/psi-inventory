@@ -21,10 +21,31 @@ function parseFormulaRules(value) {
   catch (e) { return {}; }
 }
 
-function buildCopiedFieldRows(sourceFields, targetSchemeId, genId) {
+function buildCopiedFieldRows(sourceFields, targetSchemeId, genId, targetCategories) {
+  const hasTargetCategories = Array.isArray(targetCategories);
+  const destinationCategories = hasTargetCategories
+    ? Array.from(new Set(targetCategories.map(category => String(category || '').trim()).filter(Boolean)))
+    : [];
+  const destinationCategorySet = new Set(destinationCategories);
   return (Array.isArray(sourceFields) ? sourceFields : []).map(field => {
     const decimalPlaces = Number(field.decimal_places == null ? 2 : field.decimal_places);
     const sortOrder = Number(field.sort_order == null ? 0 : field.sort_order);
+    const sourceApplicableCategories = parseCategories(field.applicable_categories);
+    const matchedApplicableCategories = hasTargetCategories
+      ? sourceApplicableCategories.filter(category => destinationCategorySet.has(category))
+      : sourceApplicableCategories;
+    // Empty scope means "all categories" in the price system. If none of the source
+    // categories exist in the destination brand, apply the copied field to its categories
+    // rather than retaining invalid category names from the source scheme.
+    const applicableCategories = sourceApplicableCategories.length && hasTargetCategories && !matchedApplicableCategories.length
+      ? destinationCategories
+      : matchedApplicableCategories;
+    const sourceFormulaRules = parseFormulaRules(field.formula_rules);
+    const formulaRules = hasTargetCategories
+      ? Object.fromEntries(Object.entries(sourceFormulaRules).filter(([category, expression]) =>
+        destinationCategorySet.has(String(category || '').trim()) && String(expression || '').trim()
+      ))
+      : sourceFormulaRules;
     return {
       id: genId('psf'),
       scheme_id: targetSchemeId,
@@ -32,9 +53,9 @@ function buildCopiedFieldRows(sourceFields, targetSchemeId, genId) {
       field_name: String(field.field_name || '').trim(),
       field_type: String(field.field_type || 'amount'),
       unit: String(field.unit || ''),
-      applicable_categories: JSON.stringify(parseCategories(field.applicable_categories)),
+      applicable_categories: JSON.stringify(applicableCategories),
       formula: String(field.formula || ''),
-      formula_rules: JSON.stringify(parseFormulaRules(field.formula_rules)),
+      formula_rules: JSON.stringify(formulaRules),
       display_format: String(field.display_format || 'auto'),
       decimal_places: Number.isFinite(decimalPlaces) ? decimalPlaces : 2,
       sync_wac: Number(field.sync_wac || 0) === 1 ? 1 : 0,
@@ -587,8 +608,9 @@ function registerPriceSystemRoutes(app, deps) {
           return res.status(403).json({ error: '没有在该品牌创建价格方案的权限' });
         }
       }
-      const brandRow = queryOne('SELECT COUNT(*) AS count FROM skus WHERE brand = ?', [brand]);
-      if (!brandRow || Number(brandRow.count || 0) === 0) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
+      const targetSkuRows = query('SELECT sku_code, brand, category FROM skus WHERE brand = ?', [brand]).rows;
+      if (!targetSkuRows.length) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
+      const targetCategories = Array.from(new Set(primaryCategoryMapForSkus(targetSkuRows).values())).sort((a, b) => a.localeCompare(b));
       const duplicate = queryOne(
         'SELECT id FROM price_system_schemes WHERE country = ? AND brand = ? AND platform = ? AND shop_name = ?',
         [country, brand, platform, shopName]
@@ -600,7 +622,7 @@ function registerPriceSystemRoutes(app, deps) {
         'SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name, id',
         [source.id]
       ).rows;
-      const copiedFields = buildCopiedFieldRows(sourceFields, id, genId);
+      const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
       transaction(() => {
         run(
           'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_sort_order, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
@@ -617,7 +639,7 @@ function registerPriceSystemRoutes(app, deps) {
 
       // Copy only reusable configuration. SKU-specific fees, manual SRP overrides and old WAC links
       // remain independent; the new scheme gets a fresh WAC sync for its destination country.
-      const schemeSkuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [brand]).rows
+      const schemeSkuKeys = targetSkuRows
         .map(row => ({ sku_code: row.sku_code, brand: row.brand || brand, country }));
       syncPriceSystemLandingCostsForWacKeys(schemeSkuKeys, userStamp(req), 'Copied price scheme initial WAC sync');
       res.status(201).json(getSchemeOrNull(id));
