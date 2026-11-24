@@ -10,7 +10,7 @@ test('price system field INSERT supplies one value for every target column', () 
   const expectedColumns = [
     'id', 'scheme_id', 'field_key', 'field_name', 'field_type', 'unit',
     'applicable_categories', 'formula', 'formula_rules', 'display_format',
-    'decimal_places', 'sync_wac', 'sync_quotation', 'sort_order'
+    'decimal_places', 'sync_wac', 'sync_quotation', 'source_scheme_id', 'source_field_key', 'sort_order'
   ];
   const fieldInsert = inserts.find(match =>
     match[1].split(',').map(value => value.trim()).join('|') === expectedColumns.join('|')
