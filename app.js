@@ -8235,7 +8235,6 @@ function rpFlushOne(channel, rid){
           retryPendingAfterFlight=true;
         }
         st.failed=false;
-      }
       rpClearDataCache();
       rpInvalidateSuggestionViews();
       return true;
