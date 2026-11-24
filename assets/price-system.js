@@ -705,6 +705,8 @@ function collectFieldEditorValues(){
  const formula=document.getElementById('ps-field-formula')?.value.trim()||'';
  const sync_wac=!!document.getElementById('ps-field-sync-wac')?.checked;
  const sync_quotation=!!document.getElementById('ps-field-sync-quotation')?.checked;
+ const source_scheme_id=document.getElementById('ps-reference-scheme')?.value||'';
+ const source_field_key=document.getElementById('ps-reference-field')?.value||'';
  const checked=Array.from(document.querySelectorAll('.ps-cat-check:checked')).map(x=>x.value);
  const total=document.querySelectorAll('.ps-cat-check').length;
  let field_type=document.getElementById('ps-field-type')?.value||'amount';
@@ -722,7 +724,7 @@ function collectFieldEditorValues(){
   });
  }
  const applicable_categories=field_type==='formula'?[]:((!checked.length||checked.length===total)?[]:checked);
- return {field_name,field_key,unit,display_format,decimal_places,formula:'',formula_rules,sync_wac,sync_quotation,applicable_categories,field_type};
+ return {field_name,field_key,unit,display_format,decimal_places,formula:'',formula_rules,sync_wac:field_type==='reference'?false:sync_wac,sync_quotation:field_type==='reference'?false:sync_quotation,source_scheme_id:field_type==='reference'?source_scheme_id:'',source_field_key:field_type==='reference'?source_field_key:'',applicable_categories,field_type};
 }
 window.psSelectAllCategories=function(){
  const checks=Array.from(document.querySelectorAll('.ps-cat-check'));
@@ -801,20 +803,22 @@ window.psOpenFieldEditor=function(id,percentDefault){
  const categoryList=Array.from(new Set(state.rows.map(x=>String(x.category||'').trim()).filter(Boolean).concat(Array.from(selected)))).sort();
  let formulaRules={};if(f&&f.formula_rules){try{formulaRules=typeof f.formula_rules==='string'?JSON.parse(f.formula_rules):f.formula_rules;}catch(e){formulaRules={};}}
  if(!formulaRules||typeof formulaRules!=='object'||Array.isArray(formulaRules))formulaRules={};
- const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1),isQuote=!!(f&&Number(f.sync_quotation||0)===1);
+ const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1),isQuote=!!(f&&Number(f.sync_quotation||0)===1);const referenceSchemes=state.schemes.filter(item=>String(item.id)!==String(state.schemeId)&&String(item.country||'')===String(state.scheme&&state.scheme.country||'')&&String(item.brand||'')===String(state.scheme&&state.scheme.brand||''));const referenceSchemeId=f&&f.source_scheme_id||((referenceSchemes[0]||{}).id||'');window.__psReferenceFieldDraft=f&&f.source_field_key||'';
  window.__psFormulaCategoryList=categoryList;
  window.__psFormulaRulesDraft=type==='formula'?formulaRuleDraftsFromMap(formulaRules,f&&f.formula,Array.from(selected),categoryList).map(rule=>({formula:formulaDisplayExpression(rule.formula),categories:rule.categories.slice()})):[];
  const allScope=categoryList.length>0&&selected.size===categoryList.length;
  const checks=categoryList.map(category=>'<label class="ps-category-chip"><input type="checkbox" class="ps-cat-check" value="'+esc(category)+'" '+((allScope||selected.has(category))?'checked':'')+' onchange="psUpdateCategorySelectAll()"> <span>'+esc(category)+'</span></label>').join('')||'<span class="ps-editor-help">—</span>';
- const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'?'display:none':'')+'"><div class="ps-editor-section-title ps-formula-rules-title"><strong>'+tr('formulaRulesTitle')+'</strong><button type="button" class="ps-btn primary" onclick="psAddFormulaRule()">＋ '+tr('addFormulaRule')+'</button></div>'+formulaBuilderHtml(f)+'<div class="ps-formula-rules-list" id="ps-formula-rules-list"></div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
+ const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'||type==='reference'?'display:none':'')+'"><div class="ps-editor-section-title ps-formula-rules-title"><strong>'+tr('formulaRulesTitle')+'</strong><button type="button" class="ps-btn primary" onclick="psAddFormulaRule()">＋ '+tr('addFormulaRule')+'</button></div>'+formulaBuilderHtml(f)+'<div class="ps-formula-rules-list" id="ps-formula-rules-list"></div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
+ const referenceSchemeOptions=referenceSchemes.map(item=>'<option value="'+esc(item.id)+'" '+(String(item.id)===String(referenceSchemeId)?'selected':'')+'>'+esc(item.sales_channel||item.platform)+(item.shop_name?' / '+esc(item.shop_name):'')+'</option>').join('');
+ const referenceSection='<section class="ps-editor-section" id="ps-reference-wrap" style="'+(type==='reference'?'':'display:none')+'"><div class="ps-editor-section-title">'+tr('reference')+'</div><div class="ps-editor-grid"><div class="ps-editor-control"><label>'+tr('referenceSourceScheme')+'</label><select id="ps-reference-scheme" onchange="psReferenceSourceChanged(false)" '+(!referenceSchemes.length?'disabled':'')+'><option value="">'+tr('referenceNoSchemes')+'</option>'+referenceSchemeOptions+'</select></div><div class="ps-editor-control"><label>'+tr('referenceSourceField')+'</label><select id="ps-reference-field" onchange="psReferenceFieldChanged()" disabled><option value="">'+tr('referenceLoading')+'</option></select></div></div><div class="ps-editor-help">'+tr('referenceHelp')+'</div><div id="ps-reference-preview" class="ps-reference-preview">'+tr('referenceLoading')+'</div></section>';
  const percentSection='<section class="ps-editor-section" id="ps-percent-wrap" style="'+(type==='percent'?'':'display:none')+'"><div class="ps-editor-section-title">'+tr('percentSettings')+'</div><div class="ps-percent-setting"><div class="ps-percent-row"><label class="ps-percent-label" for="ps-field-default-percent">'+tr('defaultPercent')+'</label><div class="ps-percent-input-wrap"><input class="ps-percent-input" id="ps-field-default-percent" type="number" min="0" step="0.01" placeholder="8" value="'+esc(percentDefault==null?'':percentDefault)+'"><span class="ps-percent-suffix">%</span></div><button type="button" class="ps-percent-apply" onclick="psApplyPercentToSkus(\''+(f?esc(f.id):'')+'\')">'+tr('batchApplyPercent')+'</button></div><div class="ps-percent-hint">'+tr('percentBatchHint')+'</div></div></section>';
  const categoryScopeSection='<section class="ps-editor-section" id="ps-category-scope-wrap" style="'+(type==='formula'?'display:none':'')+'"><div class="ps-editor-section-title">'+tr('scopeInfo')+'</div><div class="ps-category-toolbar"><button type="button" id="ps-select-all-categories" class="ps-category-select-all '+(allScope?'is-all':'')+'" onclick="psSelectAllCategories()"><span class="ps-checkmark">'+(allScope?'✓':'')+'</span>'+tr('selectAllCategories')+'</button></div><div class="ps-category-chips">'+checks+'</div><div class="ps-editor-help" style="margin-top:8px">'+tr('allCategoriesHelp')+'</div></section>';
  const quoteSection='<section class="ps-editor-section" id="ps-field-quotation-wrap" style="'+(type==='amount'&&!isSrp?'':'display:none')+'"><div class="ps-editor-switch-line"><div class="ps-editor-switch-copy"><strong>'+tr('syncQuotationField')+'</strong><p>'+tr('syncQuotationFieldHelp')+'</p></div><input type="checkbox" class="ps-wac-switch" id="ps-field-sync-quotation" onchange="psToggleQuotationField()" '+(isQuote?'checked':'')+'></div></section>';
- const body='<div class="ps-field-editor"><div class="ps-editor-intro">'+tr('fieldEditorHint')+'</div><section class="ps-editor-section"><div class="ps-editor-section-title">'+tr('basicInfo')+'</div><div class="ps-editor-grid"><div class="ps-editor-control"><label>'+tr('fieldName')+'</label><input id="ps-field-name" value="'+esc(f?f.field_name:'')+'" '+(isSrp?'disabled':'')+'></div><div class="ps-editor-control"><label>'+tr('fieldKey')+'</label><input id="ps-field-key" value="'+esc(f?f.field_key:('fee_'+Date.now().toString(36)))+'" '+(f?'disabled':'')+'><span class="ps-editor-help">'+tr('fieldKeyHint')+'</span></div><div class="ps-editor-control"><label>'+tr('fieldType')+'</label><select id="ps-field-type" onchange="psToggleFormula()" '+(isSrp||isWac||isQuote?'disabled':'')+'><option value="amount" '+(type==='amount'?'selected':'')+'>'+tr('amount')+'</option><option value="percent" '+(type==='percent'?'selected':'')+'>'+tr('percent')+'</option><option value="number" '+(type==='number'?'selected':'')+'>'+tr('number')+'</option><option value="formula" '+(type==='formula'?'selected':'')+'>'+tr('calc')+'</option></select></div><div class="ps-editor-control"><label>'+tr('unit')+'</label><input id="ps-field-unit" '+(isQuote?'disabled':'')+' value="'+esc(f?f.unit:'')+'" placeholder="'+esc(type==='percent'?'%':(state.scheme.currency||''))+'"></div><div class="ps-editor-control"><label>'+tr('displayFormat')+'</label><select id="ps-field-display-format"><option value="auto" '+((!f||!f.display_format||f.display_format==='auto')?'selected':'')+'>'+tr('formatAuto')+'</option><option value="amount" '+(f&&f.display_format==='amount'?'selected':'')+'>'+tr('formatAmount')+'</option><option value="number" '+(f&&f.display_format==='number'?'selected':'')+'>'+tr('formatNumber')+'</option><option value="percent" '+(f&&f.display_format==='percent'?'selected':'')+'>'+tr('formatPercent')+'</option></select></div><div class="ps-editor-control"><label>'+tr('decimalPlaces')+'</label><input id="ps-field-decimal-places" type="number" min="0" max="6" step="1" value="'+esc(f&&f.decimal_places!=null?f.decimal_places:2)+'"></div></div></section>'+categoryScopeSection+'<section class="ps-editor-section" id="ps-field-wac-wrap" style="'+(type==='amount'&&!isSrp?'':'display:none')+'"><div class="ps-editor-switch-line"><div class="ps-editor-switch-copy"><strong>'+tr('syncWacField')+'</strong><p>'+tr('syncWacFieldHelp')+'</p></div><input type="checkbox" class="ps-wac-switch" id="ps-field-sync-wac" onchange="psToggleWacField()" '+(isWac?'checked':'')+'></div></section>'+quoteSection+percentSection+formulaSection+'</div>';
+ const body='<div class="ps-field-editor"><div class="ps-editor-intro">'+tr('fieldEditorHint')+'</div><section class="ps-editor-section"><div class="ps-editor-section-title">'+tr('basicInfo')+'</div><div class="ps-editor-grid"><div class="ps-editor-control"><label>'+tr('fieldName')+'</label><input id="ps-field-name" value="'+esc(f?f.field_name:'')+'" '+(isSrp?'disabled':'')+'></div><div class="ps-editor-control"><label>'+tr('fieldKey')+'</label><input id="ps-field-key" value="'+esc(f?f.field_key:('fee_'+Date.now().toString(36)))+'" '+(f?'disabled':'')+'><span class="ps-editor-help">'+tr('fieldKeyHint')+'</span></div><div class="ps-editor-control"><label>'+tr('fieldType')+'</label><select id="ps-field-type" onchange="psToggleFormula()" '+(isSrp||isWac||isQuote?'disabled':'')+'><option value="amount" '+(type==='amount'?'selected':'')+'>'+tr('amount')+'</option><option value="percent" '+(type==='percent'?'selected':'')+'>'+tr('percent')+'</option><option value="number" '+(type==='number'?'selected':'')+'>'+tr('number')+'</option><option value="formula" '+(type==='formula'?'selected':'')+'>'+tr('calc')+'</option><option value="reference" '+(type==='reference'?'selected':'')+'>'+tr('reference')+'</option></select></div><div class="ps-editor-control"><label>'+tr('unit')+'</label><input id="ps-field-unit" '+(isQuote?'disabled':'')+' value="'+esc(f?f.unit:'')+'" placeholder="'+esc(type==='percent'?'%':(state.scheme.currency||''))+'"></div><div class="ps-editor-control"><label>'+tr('displayFormat')+'</label><select id="ps-field-display-format"><option value="auto" '+((!f||!f.display_format||f.display_format==='auto')?'selected':'')+'>'+tr('formatAuto')+'</option><option value="amount" '+(f&&f.display_format==='amount'?'selected':'')+'>'+tr('formatAmount')+'</option><option value="number" '+(f&&f.display_format==='number'?'selected':'')+'>'+tr('formatNumber')+'</option><option value="percent" '+(f&&f.display_format==='percent'?'selected':'')+'>'+tr('formatPercent')+'</option></select></div><div class="ps-editor-control"><label>'+tr('decimalPlaces')+'</label><input id="ps-field-decimal-places" type="number" min="0" max="6" step="1" value="'+esc(f&&f.decimal_places!=null?f.decimal_places:2)+'"></div></div></section>'+categoryScopeSection+referenceSection+'<section class="ps-editor-section" id="ps-field-wac-wrap" style="'+(type==='amount'&&!isSrp?'':'display:none')+'"><div class="ps-editor-switch-line"><div class="ps-editor-switch-copy"><strong>'+tr('syncWacField')+'</strong><p>'+tr('syncWacFieldHelp')+'</p></div><input type="checkbox" class="ps-wac-switch" id="ps-field-sync-wac" onchange="psToggleWacField()" '+(isWac?'checked':'')+'></div></section>'+quoteSection+percentSection+formulaSection+'</div>';
  const footer='<button type="button" class="ps-field-modal-btn" onclick="psOpenFieldsModal()">'+tr('cancel')+'</button><button type="button" class="ps-field-modal-btn primary" onclick="psSaveField(\''+(f?esc(f.id):'')+'\')">'+tr('confirm')+'</button>';
  openModal(f?tr('edit')+' · '+esc(f.field_name):tr('add')+' '+tr('fields'),body,footer,'modal-lg');
  const modal=document.getElementById('modal-content');if(modal)modal.classList.add('modal-price-field-editor');
- window.psRenderFormulaRules();window.psFormulaInputChanged();
+ window.psRenderFormulaRules();window.psFormulaInputChanged();if(type==='reference')window.psReferenceSourceChanged(true);
 };
 window.psUpdateCategorySelectAll=function(){
  const checks=Array.from(document.querySelectorAll('.ps-cat-check'));const checked=checks.filter(x=>x.checked).length;const button=document.getElementById('ps-select-all-categories');
@@ -822,17 +826,69 @@ window.psUpdateCategorySelectAll=function(){
  if(button){button.classList.toggle('is-all',all);const mark=button.querySelector('.ps-checkmark');if(mark)mark.textContent=all?'✓':'';}
 };
 window.psToggleFormula=function(){
- const t=document.getElementById('ps-field-type')?.value,w=document.getElementById('ps-formula-wrap'),p=document.getElementById('ps-percent-wrap'),a=document.getElementById('ps-field-wac-wrap'),qWrap=document.getElementById('ps-field-quotation-wrap'),scope=document.getElementById('ps-category-scope-wrap'),c=document.getElementById('ps-field-sync-wac'),q=document.getElementById('ps-field-sync-quotation'),formula=document.getElementById('ps-field-formula');
+ const t=document.getElementById('ps-field-type')?.value,w=document.getElementById('ps-formula-wrap'),p=document.getElementById('ps-percent-wrap'),a=document.getElementById('ps-field-wac-wrap'),qWrap=document.getElementById('ps-field-quotation-wrap'),scope=document.getElementById('ps-category-scope-wrap'),reference=document.getElementById('ps-reference-wrap'),c=document.getElementById('ps-field-sync-wac'),q=document.getElementById('ps-field-sync-quotation'),formula=document.getElementById('ps-field-formula');
  if(a)a.style.display=t==='amount'?'':'none';
  if(qWrap)qWrap.style.display=t==='amount'?'':'none';
  if(t!=='amount'){if(c)c.checked=false;if(q)q.checked=false;}
- if(w)w.style.display=(c&&c.checked)||(q&&q.checked)||t==='percent'?'none':'';
+ if(w)w.style.display=(c&&c.checked)||(q&&q.checked)||t==='percent'||t==='reference'?'none':'';
+ if(reference)reference.style.display=t==='reference'?'':'none';
  if(p)p.style.display=t==='percent'?'':'none';
  if(scope)scope.style.display=t==='formula'?'none':'';
  if(t!=='formula'&&formula&&formula.value.trim())formula.value='';
+ if(t==='reference'){if(c)c.checked=false;if(q)q.checked=false;window.psReferenceSourceChanged(true);}
 };
 window.psToggleWacField=function(){const c=document.getElementById('ps-field-sync-wac'),q=document.getElementById('ps-field-sync-quotation'),t=document.getElementById('ps-field-type');if(c&&t){if(c.checked){t.value='amount';if(q)q.checked=false;}t.disabled=!!c.checked;}window.psToggleFormula();};
 window.psToggleQuotationField=function(){const q=document.getElementById('ps-field-sync-quotation'),c=document.getElementById('ps-field-sync-wac'),t=document.getElementById('ps-field-type'),u=document.getElementById('ps-field-unit');if(q&&t){if(q.checked){t.value='amount';if(c)c.checked=false;}t.disabled=!!q.checked;if(u)u.disabled=!!q.checked;}window.psToggleFormula();};
+window.psReferenceSourceChanged=async function(preserveField){
+ const sourceSelect=document.getElementById('ps-reference-scheme'),fieldSelect=document.getElementById('ps-reference-field'),preview=document.getElementById('ps-reference-preview');
+ if(!sourceSelect||!fieldSelect)return;
+ const sourceId=String(sourceSelect.value||'');
+ if(!sourceId){fieldSelect.innerHTML='<option value="">'+tr('referenceNoFields')+'</option>';fieldSelect.disabled=true;if(preview)preview.textContent=tr('referenceNoSchemes');return;}
+ fieldSelect.disabled=true;fieldSelect.innerHTML='<option value="">'+tr('referenceLoading')+'</option>';
+ if(preview)preview.textContent=tr('referenceLoading');
+ try{
+  const data=await api('/api/price-system/schemes/'+encodeURIComponent(sourceId)+'/fields');
+  if(!document.getElementById('ps-reference-scheme')||document.getElementById('ps-reference-scheme').value!==sourceId)return;
+  const fields=data.fields||[];
+  const wanted=preserveField?String(window.__psReferenceFieldDraft||''):'';
+  fieldSelect.innerHTML=fields.map(item=>'<option value="'+esc(item.field_key)+'">'+esc(item.field_name)+' ['+esc(item.field_key)+']</option>').join('')||'<option value="">'+tr('referenceNoFields')+'</option>';
+  fieldSelect.disabled=!fields.length;
+  fieldSelect.value=fields.some(item=>item.field_key===wanted)?wanted:(fields[0]?fields[0].field_key:'');
+  window.__psReferenceFieldDraft=fieldSelect.value;
+  const chosen=fields.find(item=>item.field_key===fieldSelect.value);
+  const unit=document.getElementById('ps-field-unit'),format=document.getElementById('ps-field-display-format'),places=document.getElementById('ps-field-decimal-places');
+  if(chosen){
+   if(unit)unit.value=chosen.unit||data.scheme.currency||'';
+   if(format)format.value=chosen.display_format||'auto';
+   if(places)places.value=chosen.decimal_places==null?2:chosen.decimal_places;
+  }
+  await window.psReferenceFieldChanged();
+ }catch(error){
+  fieldSelect.disabled=true;
+  if(preview)preview.textContent=String(error&&error.message||error);
+ }
+};
+window.psReferenceFieldChanged=async function(){
+ const sourceSelect=document.getElementById('ps-reference-scheme'),fieldSelect=document.getElementById('ps-reference-field'),preview=document.getElementById('ps-reference-preview');
+ if(!sourceSelect||!fieldSelect||!preview)return;
+ const sourceId=String(sourceSelect.value||''),fieldKey=String(fieldSelect.value||'');
+ window.__psReferenceFieldDraft=fieldKey;
+ if(!sourceId||!fieldKey){preview.textContent=tr('referenceNoFields');return;}
+ preview.textContent=tr('referenceLoading');
+ try{
+  const data=await api('/api/price-system/schemes/'+encodeURIComponent(sourceId)+'/data');
+  if(!document.getElementById('ps-reference-scheme')||document.getElementById('ps-reference-scheme').value!==sourceId||document.getElementById('ps-reference-field')?.value!==fieldKey)return;
+  const sourceField=(data.fields||[]).find(item=>item.field_key===fieldKey);
+  const sourceRows=new Map((data.rows||[]).map(row=>[String(row.sku_code||''),row]));
+  const sample=state.rows.slice(0,3);
+  const body=sample.map(row=>{
+   const sourceRow=sourceRows.get(String(row.sku_code||''));
+   const value=sourceRow&&sourceRow.values?sourceRow.values[fieldKey]:null;
+   return '<tr><td>'+esc(row.sku_code)+'</td><td>'+esc(value==null?'—':fmt(value))+'</td></tr>';
+  }).join('');
+  preview.innerHTML='<div class="ps-reference-preview-title">'+tr('referencePreview')+' · '+esc((data.scheme.sales_channel||data.scheme.platform)+' / '+(sourceField?sourceField.field_name:fieldKey))+'</div><div class="ps-reference-preview-note">'+tr('referenceHelp')+'</div><div class="ps-reference-preview-table"><table><thead><tr><th>SKU</th><th>'+esc(sourceField?sourceField.field_name:fieldKey)+'</th></tr></thead><tbody>'+(body||'<tr><td colspan="2">—</td></tr>')+'</tbody></table></div>';
+ }catch(error){preview.textContent=String(error&&error.message||error);}
+};
 window.psSaveField=async function(id){
  try{
   const data=collectFieldEditorValues();
