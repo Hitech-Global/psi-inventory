@@ -7788,6 +7788,26 @@ function calculateForecastPOConsumption(onlineSuggestedQty, offlineSuggestedQty,
   return { online: onlineConsumed, offline: offlineConsumed };
 }
 
+// Refreshes must treat a manually saved suggestion as the user's current
+// planning baseline, then add back PO quantities already deducted from it.
+// Otherwise a lower recalculated stock target can hide the manual value from
+// the PO-consumption step and leave the generated PO suggestion unchanged.
+function resolveForecastSuggestionBase(suggestionParts, existingRow, preserveManualOverrides) {
+  let online = Math.max(0, Math.trunc(Number(suggestionParts && suggestionParts.online_suggested_qty) || 0));
+  let offline = Math.max(0, Math.trunc(Number(suggestionParts && suggestionParts.offline_suggested_qty) || 0));
+  if (!preserveManualOverrides || !existingRow) return { online, offline };
+  const revision = Number(existingRow.recalc_revision) || 0;
+  if ((Number(existingRow.online_write_seq) || 0) > revision) {
+    online = Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0)) +
+      Math.max(0, Math.trunc(Number(existingRow.po_consumed_online_qty) || 0));
+  }
+  if ((Number(existingRow.offline_write_seq) || 0) > revision) {
+    offline = Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0)) +
+      Math.max(0, Math.trunc(Number(existingRow.po_consumed_offline_qty) || 0));
+  }
+  return { online, offline };
+}
+
 async function loadForecastPOConsumptionMap(exec, skuCodes) {
   const codes = Array.from(new Set((skuCodes || []).map(v => String(v || '').trim()).filter(Boolean)));
   const map = Object.create(null);
@@ -8715,13 +8735,14 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
       // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
       const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
       const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
+      const suggestionBase = resolveForecastSuggestionBase(suggestionParts, existing_rs, preserveManualOverrides);
       const poConsumption = calculateForecastPOConsumption(
-        suggestionParts.online_suggested_qty,
-        suggestionParts.offline_suggested_qty,
+        suggestionBase.online,
+        suggestionBase.offline,
         forecastPoUnconfirmedQty
       );
-      let online_suggested_qty = Math.max(0, suggestionParts.online_suggested_qty - poConsumption.online);
-      let offline_suggested_qty = Math.max(0, suggestionParts.offline_suggested_qty - poConsumption.offline);
+      let online_suggested_qty = Math.max(0, suggestionBase.online - poConsumption.online);
+      let offline_suggested_qty = Math.max(0, suggestionBase.offline - poConsumption.offline);
       let other_suggested_qty = 0;
       let po_consumed_online_qty = poConsumption.online;
       let po_consumed_offline_qty = poConsumption.offline;
