@@ -9184,6 +9184,57 @@ async function refreshForecastSuggestionsForKeys(keys) {
   });
 }
 
+function collectPOForecastKeys(poId) {
+  const po = queryOne('SELECT country FROM purchase_orders WHERE id = ?', [poId]);
+  if (!po || !po.country) return [];
+  return query('SELECT DISTINCT sku_code FROM purchase_order_items WHERE po_id = ?', [poId]).rows
+    .map(row => ({ sku_code: row.sku_code, country: po.country }));
+}
+
+function collectPIForecastKeys(piId) {
+  const rows = query(
+    "SELECT DISTINCT pii.sku_code, COALESCE(NULLIF(pi.country,''), NULLIF(po.country,''), '') AS country " +
+    "FROM proforma_invoice_items pii JOIN proforma_invoices pi ON pi.id = pii.pi_id " +
+    "LEFT JOIN purchase_orders po ON pi.related_po_id = po.id WHERE pii.pi_id = ? " +
+    "UNION SELECT DISTINCT a.sku_code, po.country AS country FROM pi_po_allocations a " +
+    "JOIN purchase_orders po ON po.id = a.po_id WHERE a.pi_id = ?",
+    [piId, piId]
+  ).rows;
+  return normalizeForecastAffectedKeys(rows);
+}
+
+function collectForecastKeysForPIImportRows(rows) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
+    const sku = s(pick(row, ['SKU', 'sku_code']));
+    if (!poNo || !sku) continue;
+    const po = queryOne('SELECT country FROM purchase_orders WHERE po_no = ?', [poNo]);
+    if (!po || !po.country) continue;
+    map.set(JSON.stringify([sku, po.country]), { sku_code: sku, country: po.country });
+  }
+  return Array.from(map.values());
+}
+
+async function refreshForecastAfterProcurementMutationBestEffort(keys, source) {
+  const affectedKeys = normalizeForecastAffectedKeys(keys);
+  if (!affectedKeys.length) return { success: true, skipped: true, updated: 0, inserted: 0 };
+  try {
+    await updateInventoryTransitDataAsync();
+    const refreshed = await refreshForecastSuggestionsForKeys(affectedKeys);
+    const revision = bumpForecastDataRevision();
+    return {
+      success: true,
+      updated: refreshed.updated || 0,
+      inserted: refreshed.inserted || 0,
+      revision
+    };
+  } catch (err) {
+    console.warn('[' + (source || 'PROCUREMENT') + '] forecast sync failed (business record already committed):', err && err.message);
+    return { success: false, error: 'FORECAST_SYNC_FAILED' };
+  }
+}
+
 function bumpForecastDataRevision() {
   const key = '__internal_replenishment_data_revision';
   const revision = String(Date.now()) + '-' + genId('rp_rev');
@@ -9703,7 +9754,7 @@ app.get('/api/purchase-orders/:id', requireApiPermission('po_view'), asyncHandle
   res.json({ ...po, items });
 }));
 
-app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -9753,14 +9804,19 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
       }
     });
 
-    // 在途字段刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
-    // 注意：原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
-    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
-    });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(d.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(
+        itemRows.map(it => ({ sku_code: it.sku_code, country: d.country || '' })),
+        'PO-CREATE'
+      );
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
+      });
+    }
 
-    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings });
+    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9770,13 +9826,14 @@ function poHasNoncancelledPI(poId){
       (SELECT 1 FROM pi_po_allocations a WHERE a.pi_id=pi.id AND a.po_id=?))
     LIMIT 1`,[poId,poId]);
 }
-app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
     // 读取已存在 PO 表头币种：币种属于价格快照，必须锁定；任何抓价均以数据库已锁定币种为准
     const origPo = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [id]);
     if (!origPo) return res.status(404).json({ error: 'PO不存在' });
+    const oldForecastKeys = Number(origPo.from_suggestion) === 1 ? collectPOForecastKeys(id) : [];
     const origCurrency = origPo.currency;
     // A draft PO may already have a real PI. Preserve source facts that PI
     // depends on, even before any approval has happened.
@@ -9866,13 +9923,18 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHand
       });
       run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, id]);
     }
-    // Wave 0B: 补 transit 刷新钩子——PO PUT 修改 po_qty/untransferred_pi_qty 直接
-    // 改变 po_unconfirmed_pi_qty 聚合输入（旧实现依赖 GET replenishment 自愈掩盖，
-    // GET 纯读化后必须在此刷新）。原生 async fire-and-forget，不阻塞响应。
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
-    res.json({ success: true });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(origPo.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(
+        oldForecastKeys.concat(collectPOForecastKeys(id)),
+        'PO-PUT'
+      );
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9880,6 +9942,7 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
+    const forecastKeys = Number(po.from_suggestion) === 1 ? collectPOForecastKeys(po.id) : [];
     // PO with an actual PI may not be deleted, including a draft PO.
     if(poHasNoncancelledPI(po.id))
       return res.status(409).json({error:'该PO已关联PI，请先处理关联的PI，不能删除PO'});
@@ -9900,11 +9963,15 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
       run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
       run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
     });
-    // Wave 0B: COMMIT 后原生 async 刷新（删除后回落 po_unconfirmed_pi_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-DELETE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
-    res.json({ success: true });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(po.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PO-DELETE');
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-DELETE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9916,17 +9983,22 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asy
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
     if (po.po_status === 'cancelled') return res.status(400).json({ error: '该 PO 已作废，不能重复作废' });
+    const forecastKeys = Number(po.from_suggestion) === 1 ? collectPOForecastKeys(po.id) : [];
     if(poHasNoncancelledPI(po.id))
       return res.status(409).json({error:'该PO已关联PI，不能直接作废；请先处理关联PI'});
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
-    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 po_unconfirmed_pi_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(po.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PO-VOID');
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
-    res.json({ success: true });
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
