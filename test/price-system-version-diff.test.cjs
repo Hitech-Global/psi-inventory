@@ -44,6 +44,16 @@ test('version diff identifies field formula changes with exact before and after 
   ]);
 });
 
+test('version diff records changes to cross-channel reference sources', () => {
+  const before = snapshot({ fields: [field({ field_type: 'reference', source_scheme_id: 'scheme-shopee', source_field_key: 'fob' })] });
+  const after = snapshot({ fields: [field({ field_type: 'reference', source_scheme_id: 'scheme-offline', source_field_key: 'landing_cost' })] });
+  const diff = buildPriceSystemVersionDiff(after, before, { hasPrevious: true, canViewQuotation: true });
+  assert.deepEqual(diff.field_changes.map(item => [item.property_key, item.old_value, item.new_value]), [
+    ['source_scheme_id', 'scheme-shopee', 'scheme-offline'],
+    ['source_field_key', 'fob', 'landing_cost']
+  ]);
+});
+
 test('version diff identifies SKU manual fee, SRP, and WAC changes', () => {
   const before = snapshot();
   const after = snapshot({
