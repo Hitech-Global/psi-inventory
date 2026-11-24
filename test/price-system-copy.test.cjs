@@ -74,6 +74,17 @@ test('copies reusable field configuration with new field IDs and target scheme I
   assert.equal(rows[2].is_active, 0);
 });
 
+test('copies cross-channel reference configuration to the destination scheme', () => {
+  const rows = buildCopiedFieldRows([{
+    id: 'reference-field', scheme_id: 'source-scheme', field_key: 'fob',
+    field_name: 'FOB', field_type: 'reference', source_scheme_id: 'source-channel-scheme',
+    source_field_key: 'fob', applicable_categories: '[]', formula_rules: '{}'
+  }], 'target-scheme', prefix => prefix + '-new', ['SSD']);
+  assert.equal(rows[0].field_type, 'reference');
+  assert.equal(rows[0].source_scheme_id, 'source-channel-scheme');
+  assert.equal(rows[0].source_field_key, 'fob');
+});
+
 test('copies quotation auto-sync settings to the destination scheme', () => {
   const rows = buildCopiedFieldRows([{
     id: 'source-quote-field', field_key: 'fob', field_name: 'FOB', field_type: 'amount',
