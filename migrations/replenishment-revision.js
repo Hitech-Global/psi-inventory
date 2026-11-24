@@ -1,9 +1,9 @@
 // 订单预测「建议采购数量」持久化 — PostgreSQL 列迁移（隔离、幂等、fail-fast）
 //
-// 仅新增 3 个 revision 列，供 server-managed revision + expected revision CAS 使用：
-//   online_write_seq  — online suggested 的 server revision
-//   offline_write_seq — offline suggested 的 server revision
-//   recalc_revision   — 系统主动重新计算（generate/refresh/双 target_turnover/双 target_stock）的 generation revision
+// 新增 revision 与预测来源 PO 扣减列：
+//   online_write_seq / offline_write_seq — online/offline suggested 的 server revision
+//   recalc_revision — 系统主动重新计算的 generation revision
+//   po_consumed_online_qty / po_consumed_offline_qty — 当前预测快照中已扣除的预测来源未转 PI PO 数量
 //
 // 设计约束（来自既定方案）：
 //   * 不触碰 db.js / db-pg.js / db-sync-worker.js / pg-async.js（属既有 transaction-stability WIP）。
@@ -16,11 +16,13 @@
 const COLUMNS = [
   { name: 'online_write_seq', sql: 'BIGINT NOT NULL DEFAULT 0' },
   { name: 'offline_write_seq', sql: 'BIGINT NOT NULL DEFAULT 0' },
-  { name: 'recalc_revision', sql: 'BIGINT NOT NULL DEFAULT 0' }
+  { name: 'recalc_revision', sql: 'BIGINT NOT NULL DEFAULT 0' },
+  { name: 'po_consumed_online_qty', sql: 'INTEGER NOT NULL DEFAULT 0' },
+  { name: 'po_consumed_offline_qty', sql: 'INTEGER NOT NULL DEFAULT 0' }
 ];
 
 /**
- * 确保 replenishment_suggestions 的 3 个 revision 列存在。
+ * 确保 replenishment_suggestions 的 revision 与 PO consumption 列存在。
  * @param {function} run 统一 DB 执行接口（server.js 的 run，同步返回 {changes} 或 info）。
  * @param {boolean} isPg 是否为 PostgreSQL 驱动。SQLite 由 db-sqlite.js 处理，本函数直接返回。
  */

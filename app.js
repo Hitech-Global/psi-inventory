@@ -11591,7 +11591,9 @@ async function saveGenPO(){
   const d={...meta,currency:document.getElementById('po-cur').value,po_date:document.getElementById('po-date').value,from_suggestion:1,items:(window._poItems||[]).map((it,i)=>({sku_code:it.sku_code,po_qty:parseInt(document.getElementById('po-qty-'+i)?.value)||0}))};
   try{
     const po=await api('/api/purchase-orders','POST',d);
-    if(po.price_warnings&&po.price_warnings.length>0){
+    if(po.forecast_sync&&po.forecast_sync.success===false){
+      showToast('PO已创建成功，但预测同步暂未完成，请稍后刷新预测页面','warning');
+    }else if(po.price_warnings&&po.price_warnings.length>0){
       showToast(t('po.create_success_with_warning','PO创建成功，但'+po.price_warnings.length+'个SKU待补充FOB价格'),'warning');
     }else{
       showToast(t('gen.L5323.1','PO创建成功'),'success');

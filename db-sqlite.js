@@ -858,6 +858,8 @@ function initDatabase() {
       online_write_seq INTEGER DEFAULT 0,
       offline_write_seq INTEGER DEFAULT 0,
       recalc_revision INTEGER DEFAULT 0,
+      po_consumed_online_qty INTEGER NOT NULL DEFAULT 0,
+      po_consumed_offline_qty INTEGER NOT NULL DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now'))
     )
   `);
@@ -975,7 +977,9 @@ function initDatabase() {
     const REV_COLS = [
       { name: 'online_write_seq', sql: 'INTEGER DEFAULT 0' },
       { name: 'offline_write_seq', sql: 'INTEGER DEFAULT 0' },
-      { name: 'recalc_revision', sql: 'INTEGER DEFAULT 0' }
+      { name: 'recalc_revision', sql: 'INTEGER DEFAULT 0' },
+      { name: 'po_consumed_online_qty', sql: 'INTEGER NOT NULL DEFAULT 0' },
+      { name: 'po_consumed_offline_qty', sql: 'INTEGER NOT NULL DEFAULT 0' }
     ];
     REV_COLS.forEach(function (col) {
       if (!existing.has(col.name)) {
