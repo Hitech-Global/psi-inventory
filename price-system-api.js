@@ -795,6 +795,7 @@ function registerPriceSystemRoutes(app, deps) {
     });
     const fieldMap = new Map(fields.map(f => [f.field_key, f]));
     const referenceValuesByField = new Map();
+    const referenceCurrenciesByField = new Map();
     fields.filter(field => field.field_type === 'reference').forEach(field => {
       const sourceScheme = getSchemeOrNull(field.source_scheme_id);
       if (!sourceScheme) { referenceValuesByField.set(field.field_key, new Map()); return; }
@@ -804,16 +805,22 @@ function registerPriceSystemRoutes(app, deps) {
       const sourceFieldKey = String(field.source_field_key || '').trim();
       const sourceField = sourceData.fields.find(item => item.field_key === sourceFieldKey);
       if (!sourceField) { referenceValuesByField.set(field.field_key, new Map()); return; }
-      field.reference_value_type = sourceField.reference_value_type || sourceField.field_type;
-      if (String(field.display_format || 'auto') === 'auto') field.display_format = sourceField.display_format || 'auto';
-      if (!String(field.unit || '').trim()) field.unit = String(sourceField.unit || sourceScheme.currency || '');
-      if (field.decimal_places == null) field.decimal_places = sourceField.decimal_places == null ? 2 : sourceField.decimal_places;
+      const sourceValueType = sourceField.reference_value_type || sourceField.field_type;
+      field.reference_value_type = sourceValueType;
+      field.reference_sync_quotation = Number(sourceField.sync_quotation || 0) === 1 || sourceField.reference_sync_quotation === true;
+      field.display_format = sourceField.display_format || 'auto';
+      field.unit = String(sourceField.unit || ((sourceValueType === 'amount' || sourceField.display_format === 'amount') ? (sourceScheme.currency || '') : ''));
+      field.decimal_places = sourceField.decimal_places == null ? 2 : sourceField.decimal_places;
       const valuesBySku = new Map();
+      const currenciesBySku = new Map();
       sourceData.rows.forEach(sourceRow => {
+        const skuCode = String(sourceRow.sku_code || '').trim();
         const raw = sourceRow && sourceRow.values ? sourceRow.values[sourceFieldKey] : null;
-        valuesBySku.set(String(sourceRow.sku_code || '').trim(), raw == null || raw === '' ? null : Number(raw));
+        valuesBySku.set(skuCode, raw == null || raw === '' ? null : Number(raw));
+        if (field.reference_sync_quotation) currenciesBySku.set(skuCode, String(sourceRow.value_currencies && sourceRow.value_currencies[sourceFieldKey] || sourceScheme.currency || '').trim().toUpperCase());
       });
       referenceValuesByField.set(field.field_key, valuesBySku);
+      referenceCurrenciesByField.set(field.field_key, currenciesBySku);
     });
 
     const today = new Date();
@@ -913,7 +920,7 @@ function registerPriceSystemRoutes(app, deps) {
         last_inbound_date: inboundDate,
         purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
-        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1).map(field => [field.field_key, (storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || ''])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
+        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1 || field.reference_sync_quotation === true).map(field => [field.field_key, field.reference_sync_quotation === true ? ((referenceCurrenciesByField.get(field.field_key) || new Map()).get(String(sku.sku_code || '').trim()) || '') : ((storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || '')])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
       };
     });
 
