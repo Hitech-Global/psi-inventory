@@ -33,7 +33,7 @@ test('manual SRP import overrides formula output and is included in version hist
   assert.match(api, /srpSource = 'manual'/);
   assert.match(api, /snapshotLandingCosts/);
   assert.match(api, /snapshotSrpValues/);
-  assert.match(api, /sync_wac, sort_order, is_active/);
+  assert.match(api, /sync_wac, sync_quotation, sort_order, is_active/);
   assert.ok(api.includes("fieldMap.has('srp')"));
   assert.ok(api.includes("id: 'builtin-srp'"));
   assert.match(ui, /srpIdx=headers\.findIndex/);
