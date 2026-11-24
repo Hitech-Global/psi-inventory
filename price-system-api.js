@@ -561,8 +561,7 @@ function registerPriceSystemRoutes(app, deps) {
       };
     });
 
-    const currencySymbols = Object.fromEntries(query("SELECT code, symbol FROM currencies WHERE status = 'active'").rows.map(row => [String(row.code || '').trim().toUpperCase(), String(row.symbol || '').trim()]));
-    res.json({ scheme, fields, rows, currency_symbols: currencySymbols });
+    res.json({ scheme, fields, rows });
   }
 
   app.get('/api/price-system/schemes', canRead, asyncHandler((req, res) => {
