@@ -13,6 +13,10 @@ test('creates all price system tables and indexes idempotently through IF NOT EX
   assert.match(joined, /UNIQUE \(country, brand, platform, shop_name\)/);
   assert.match(joined, /sync_wac INTEGER NOT NULL DEFAULT 0/);
   assert.match(joined, /sync_quotation INTEGER NOT NULL DEFAULT 0/);
+  assert.match(joined, /source_scheme_id TEXT NOT NULL DEFAULT ''/);
+  assert.match(joined, /source_field_key TEXT NOT NULL DEFAULT ''/);
+  assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN source_scheme_id/);
+  assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN source_field_key/);
   assert.match(joined, /currency TEXT NOT NULL DEFAULT ''/);
   assert.match(joined, /formula_rules TEXT NOT NULL DEFAULT '\{\}'/);
   assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN formula_rules/);
@@ -25,6 +29,8 @@ test('creates all price system tables and indexes idempotently through IF NOT EX
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_values_scheme_sku/);
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_landing_costs_scheme_sku/);
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_srp_values_scheme_sku/);
+  assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_fields_source_ref/);
+  assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_fields_scheme_ref/);
 });
 
 test('uses SQLite-compatible timestamp defaults on local database', () => {
