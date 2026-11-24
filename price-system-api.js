@@ -862,7 +862,7 @@ function registerPriceSystemRoutes(app, deps) {
     const existingFields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
     const existing = d.id ? queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [d.id, scheme.id]) : null;
     if (d.id && !existing) return res.status(404).json({ error: '\u8d39\u7528\u5b57\u6bb5\u4e0d\u5b58\u5728' });
-    if (syncQuotation && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '报价自动同步需要报价管理查看权限' });
+    if ((syncQuotation || (existing && Number(existing.sync_quotation || 0) === 1)) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '报价自动同步需要报价管理查看权限' });
     if (existing && existing.field_key !== fieldKey) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u521b\u5efa\u540e\u4e0d\u53ef\u4fee\u6539\uff0c\u907f\u514d\u5f71\u54cd\u5386\u53f2\u6570\u636e\u548c\u516c\u5f0f' });
     if (fieldKey === 'srp') return res.status(400).json({ error: 'srp \u662f\u7cfb\u7edf\u4fdd\u7559\u5b57\u6bb5\u7f16\u7801' });
     if (syncWac) {
@@ -931,6 +931,7 @@ function registerPriceSystemRoutes(app, deps) {
     if (!schemeAccess(req, res, scheme)) return;
     const field = queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [req.params.fieldId, scheme.id]);
     if (!field) return res.status(404).json({ error: '费用字段不存在' });
+    if (Number(field.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '删除自动同步报价字段需要报价管理查看权限' });
     transaction(() => {
       run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, field.field_key]);
       if (Number(field.sync_wac || 0) === 1) run('DELETE FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]);
@@ -1100,6 +1101,8 @@ function registerPriceSystemRoutes(app, deps) {
   app.delete('/api/price-system/schemes/:id', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
+    const hasQuotationSync = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 AND COALESCE(sync_quotation, 0) = 1', [scheme.id]);
+    if (hasQuotationSync && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '停用包含自动同步报价字段的方案需要报价管理查看权限' });
     run("UPDATE price_system_schemes SET status = 'disabled', updated_at = datetime('now') WHERE id = ?", [scheme.id]);
     createVersion(scheme.id, userStamp(req), '停用价格方案');
     res.json({ success: true });
