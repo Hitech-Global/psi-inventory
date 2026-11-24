@@ -10722,7 +10722,8 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
     const multiRelated=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
     if(multiRelated.length>1){
-      const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
+      // Only live CI rows lock a multi-PO PI. Cancelled/reversed CI item rows are audit history.
+      const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items cii JOIN commercial_invoices ci ON ci.id = cii.ci_id WHERE cii.pi_id = ? AND COALESCE(ci.ci_status,'') NOT IN ('cancelled','reversed') LIMIT 1",[pi.id]);
       const hasHistoricalCI=queryOne("SELECT 1 FROM historical_commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
       const hasPayment=queryOne("SELECT 1 FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status IN ('reserved','partially_paid','paid') LIMIT 1",[pi.id]);
       if(hasCI||hasHistoricalCI||hasPayment)return res.status(409).json({error:'多PO关联PI已进入CI或付款流程，禁止直接作废'});
@@ -11000,10 +11001,13 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, opts) {
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type } = req.query;
+  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type, ci_status } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
+  // 列表状态筛选：默认由前端请求有效CI；作废记录仅在用户主动筛选时展示。
+  if (ci_status === 'active') { sql += " AND COALESCE(ci_status, '') NOT IN ('cancelled', 'reversed')"; }
+  else if (ci_status === 'cancelled') { sql += " AND ci_status IN ('cancelled', 'reversed')"; }
   if (related_pi) { sql += ' AND related_pi_no = ?'; params.push(related_pi); }
   if (keyword) { sql += ' AND (ci_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (country) { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }

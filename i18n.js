@@ -5497,4 +5497,9 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.en["ci.summary.breakdown_deduction_hint"]="Includes deducted deposits and payment deductions";
   I18N.dict.id["ci.summary.breakdown_deduction_hint"]="Termasuk uang muka dan potongan pembayaran";
 
+  I18N.dict.zh["ci.046"]="CI状态"; I18N.dict.en["ci.046"]="CI Status"; I18N.dict.id["ci.046"]="Status CI";
+  I18N.dict.zh["ci.047"]="有效CI"; I18N.dict.en["ci.047"]="Active CI"; I18N.dict.id["ci.047"]="CI Aktif";
+  I18N.dict.zh["ci.048"]="已作废"; I18N.dict.en["ci.048"]="Voided"; I18N.dict.id["ci.048"]="Dibatalkan";
+  I18N.dict.zh["ci.049"]="全部状态"; I18N.dict.en["ci.049"]="All statuses"; I18N.dict.id["ci.049"]="Semua Status";
+
 })();
