@@ -221,6 +221,8 @@ function buildPriceSystemVersionDiff(currentSnapshot, previousSnapshot, options)
     ['decimal_places', 'decimal_places'],
     ['sync_wac', 'sync_wac'],
     ['sync_quotation', 'sync_quotation'],
+    ['source_scheme_id', 'source_scheme_id'],
+    ['source_field_key', 'source_field_key'],
     ['sort_order', 'sort_order'],
     ['is_active', 'is_active']
   ];
@@ -1325,9 +1327,26 @@ function registerPriceSystemRoutes(app, deps) {
     const hasFormulaRules = Object.keys(formulaRules).length > 0;
     const syncWac = d.sync_wac === true || Number(d.sync_wac || 0) === 1;
     const syncQuotation = d.sync_quotation === true || Number(d.sync_quotation || 0) === 1;
-    const allowedTypes = ['amount', 'percent', 'number', 'formula'];
+    const sourceSchemeId = String(d.source_scheme_id || '').trim();
+    const sourceFieldKey = String(d.source_field_key || '').trim();
+    const allowedTypes = ['amount', 'percent', 'number', 'formula', 'reference'];
     if (syncWac && syncQuotation) return res.status(400).json({ error: '同一个字段不能同时自动同步 WAC 和报价' });
+    if (fieldType === 'reference' && (syncWac || syncQuotation)) return res.status(400).json({ error: '引用字段不能同时开启 WAC 或报价自动同步' });
     if (syncQuotation && fieldType !== 'amount') return res.status(400).json({ error: '报价自动同步只能用于金额字段' });
+    if (fieldType === 'reference') {
+      if (!sourceSchemeId || !sourceFieldKey) return res.status(400).json({ error: '请选择引用来源方案和字段' });
+      if (sourceSchemeId === String(scheme.id)) return res.status(400).json({ error: '不能引用当前价格方案自身' });
+      const sourceScheme = getSchemeOrNull(sourceSchemeId);
+      if (!sourceScheme || String(sourceScheme.status || '').toLowerCase() !== 'active') return res.status(400).json({ error: '引用来源方案不存在或已停用' });
+      if (String(sourceScheme.country || '') !== String(scheme.country || '') || String(sourceScheme.brand || '') !== String(scheme.brand || '')) return res.status(400).json({ error: '只能引用同一国家、同一品牌下其他销售渠道方案的字段' });
+      if (!schemeAccess(req, res, sourceScheme)) return;
+      const sourceField = sourceFieldKey === 'srp'
+        ? { field_key: 'srp', field_name: 'SRP', field_type: 'formula', sync_quotation: 0 }
+        : queryOne('SELECT field_key, field_name, field_type, sync_quotation FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [sourceScheme.id, sourceFieldKey]);
+      if (!sourceField) return res.status(400).json({ error: '引用来源字段不存在或已停用' });
+      if (Number(sourceField.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
+      if (referenceChainReachesScheme(sourceScheme.id, scheme.id)) return res.status(400).json({ error: '引用会形成循环依赖，请选择其他来源方案' });
+    }
 
     if (!fieldName) return res.status(400).json({ error: '\u8d39\u7528\u5b57\u6bb5\u540d\u79f0\u4e0d\u80fd\u4e3a\u7a7a' });
     if (!/^[a-z][a-z0-9_]{1,39}$/.test(fieldKey)) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u65e0\u6548' });
@@ -1392,13 +1411,13 @@ function registerPriceSystemRoutes(app, deps) {
     if (syncWac) run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, fieldKey]);
     if (existing) {
       run(
-        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, formula_rules = ?, display_format = ?, decimal_places = ?, sync_wac = ?, sync_quotation = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
-        [fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, syncQuotation ? 1 : 0, sortOrder, id, scheme.id]
+        'UPDATE price_system_fields SET field_name = ?, field_type = ?, unit = ?, applicable_categories = ?, formula = ?, formula_rules = ?, display_format = ?, decimal_places = ?, sync_wac = ?, sync_quotation = ?, source_scheme_id = ?, source_field_key = ?, sort_order = ?, updated_at = datetime(\'now\') WHERE id = ? AND scheme_id = ?',
+        [fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, syncQuotation ? 1 : 0, fieldType === 'reference' ? sourceSchemeId : '', fieldType === 'reference' ? sourceFieldKey : '', sortOrder, id, scheme.id]
       );
     } else {
       run(
-        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sync_quotation, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, syncQuotation ? 1 : 0, sortOrder]
+        'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sync_quotation, source_scheme_id, source_field_key, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, scheme.id, fieldKey, fieldName, fieldType, unit, JSON.stringify(hasFormulaRules ? [] : categories), formula, JSON.stringify(formulaRules), displayFormat, decimalPlaces, syncWac ? 1 : 0, syncQuotation ? 1 : 0, fieldType === 'reference' ? sourceSchemeId : '', fieldType === 'reference' ? sourceFieldKey : '', sortOrder]
       );
     }
     if (syncWac) {
@@ -1420,6 +1439,8 @@ function registerPriceSystemRoutes(app, deps) {
     if (!schemeAccess(req, res, scheme)) return;
     const field = queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [req.params.fieldId, scheme.id]);
     if (!field) return res.status(404).json({ error: '费用字段不存在' });
+    const externalReference = queryOne("SELECT id FROM price_system_fields WHERE source_scheme_id = ? AND source_field_key = ? AND field_type = 'reference' AND is_active = 1 LIMIT 1", [scheme.id, field.field_key]);
+    if (externalReference) return res.status(409).json({ error: '该字段正被其他销售渠道方案引用，请先解除引用再删除' });
     if (Number(field.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '删除自动同步报价字段需要报价管理查看权限' });
     transaction(() => {
       run('DELETE FROM price_system_values WHERE scheme_id = ? AND field_key = ?', [scheme.id, field.field_key]);
@@ -1467,7 +1488,7 @@ function registerPriceSystemRoutes(app, deps) {
       Object.keys(values).forEach(key => {
         const field = fieldMap.get(key);
         if (!field) { errors.push({ sku_code: skuCode, reason: '费用字段不存在：' + key }); return; }
-        if (field.field_type === 'formula') { errors.push({ sku_code: skuCode, reason: '公式字段不能手动录入：' + field.field_name }); return; }
+        if (field.field_type === 'formula' || field.field_type === 'reference') { errors.push({ sku_code: skuCode, reason: '公式或引用字段不能手动录入：' + field.field_name }); return; }
         if (Number(field.sync_wac || 0) === 1 || Number(field.sync_quotation || 0) === 1) { errors.push({ sku_code: skuCode, reason: '自动同步字段不能手动录入：' + field.field_name }); return; }
         if (!isCategoryApplicable(field, sku.category)) { errors.push({ sku_code: skuCode, reason: '该费用字段不适用于当前 SKU 类目：' + field.field_name }); return; }
         const raw = values[key];
@@ -1623,6 +1644,8 @@ function registerPriceSystemRoutes(app, deps) {
   app.delete('/api/price-system/schemes/:id/permanent', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
+    const externalReference = queryOne("SELECT id FROM price_system_fields WHERE source_scheme_id = ? AND field_type = 'reference' AND is_active = 1 LIMIT 1", [scheme.id]);
+    if (externalReference) return res.status(409).json({ error: '该价格方案正被其他销售渠道方案引用，请先解除引用再删除' });
     try {
       transaction(() => deletePriceSystemSchemeRecords(scheme.id, run));
       res.json({ success: true });
@@ -1634,6 +1657,8 @@ function registerPriceSystemRoutes(app, deps) {
   app.delete('/api/price-system/schemes/:id', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
+    const externalReference = queryOne("SELECT id FROM price_system_fields WHERE source_scheme_id = ? AND field_type = 'reference' AND is_active = 1 LIMIT 1", [scheme.id]);
+    if (externalReference) return res.status(409).json({ error: '该价格方案正被其他销售渠道方案引用，请先解除引用再停用' });
     const hasQuotationSync = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 AND COALESCE(sync_quotation, 0) = 1', [scheme.id]);
     if (hasQuotationSync && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '停用包含自动同步报价字段的方案需要报价管理查看权限' });
     run("UPDATE price_system_schemes SET status = 'disabled', updated_at = datetime('now') WHERE id = ?", [scheme.id]);
