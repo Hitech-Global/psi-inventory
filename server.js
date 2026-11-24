@@ -7768,6 +7768,48 @@ function calculateSuggestion(onlineTargetStock, offlineTargetStock, totalInvento
   };
 }
 
+// Forecast-generated PO quantity is a reservation deduction, not physical stock.
+function calculateForecastPOConsumption(onlineSuggestedQty, offlineSuggestedQty, poUnconfirmedQty) {
+  const online = Math.max(0, Math.trunc(Number(onlineSuggestedQty) || 0));
+  const offline = Math.max(0, Math.trunc(Number(offlineSuggestedQty) || 0));
+  const total = online + offline;
+  const consume = Math.min(total, Math.max(0, Math.trunc(Number(poUnconfirmedQty) || 0)));
+  if (total <= 0 || consume <= 0) return { online: 0, offline: 0 };
+  let onlineConsumed = Math.min(online, Math.round(consume * online / total));
+  let offlineConsumed = consume - onlineConsumed;
+  if (offlineConsumed > offline) {
+    onlineConsumed += offlineConsumed - offline;
+    offlineConsumed = offline;
+  }
+  if (onlineConsumed > online) {
+    offlineConsumed += onlineConsumed - online;
+    onlineConsumed = online;
+  }
+  return { online: onlineConsumed, offline: offlineConsumed };
+}
+
+async function loadForecastPOConsumptionMap(exec, skuCodes) {
+  const codes = Array.from(new Set((skuCodes || []).map(v => String(v || '').trim()).filter(Boolean)));
+  const map = Object.create(null);
+  if (!codes.length || !exec || typeof exec.all !== 'function') return map;
+  const rows = await exec.all(
+    'SELECT poi.sku_code, po.country, po.target_warehouse, ' +
+    'COALESCE(SUM(CASE WHEN COALESCE(poi.po_qty,0) > COALESCE(poi.transferred_pi_qty,0) ' +
+    'THEN COALESCE(poi.po_qty,0) - COALESCE(poi.transferred_pi_qty,0) ELSE 0 END),0) AS unconfirmed_qty ' +
+    'FROM purchase_order_items poi JOIN purchase_orders po ON poi.po_id = po.id ' +
+    'WHERE COALESCE(po.from_suggestion,0) = 1 ' +
+    "AND COALESCE(po.po_status,'') NOT IN ('cancelled','transferred_pi') " +
+    'AND poi.sku_code IN (' + codes.map(() => '?').join(',') + ') ' +
+    'GROUP BY poi.sku_code, po.country, po.target_warehouse',
+    codes
+  );
+  for (const row of rows || []) {
+    const key = String(row.sku_code || '') + '|' + String(row.country || '') + '|' + String(row.target_warehouse || '');
+    map[key] = Math.max(0, Number(row.unconfirmed_qty) || 0);
+  }
+  return map;
+}
+
 function buildSuggestionText(salesStatus, lifecycleStatus, suggestedQty, brandStopped) {
   const lifecycle = lifecycleStatus || 'stable';
   if (brandStopped || salesStatus === '停采/清库存' || salesStatus === '停采/停产' || lifecycle === 'clearance' || lifecycle === 'stopped') {
@@ -8469,7 +8511,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
 // 仅调用已确认无 DB side effect 的 helper（calculateSuggestion/resolveChannelRatio/
 // getDimTurnover/detectStockoutDistortion/classifySkuState/shouldBlockReplenish/
 // buildSuggestionText/genId）。
-function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false }) {
+function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false, forecastPoUnconfirmedQty = 0 }) {
       // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
       const salesMap = {};
       const onlineSalesMap = {};
@@ -8673,10 +8715,17 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
       // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
       const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
       const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
-      let online_suggested_qty = suggestionParts.online_suggested_qty;
-      let offline_suggested_qty = suggestionParts.offline_suggested_qty;
+      const poConsumption = calculateForecastPOConsumption(
+        suggestionParts.online_suggested_qty,
+        suggestionParts.offline_suggested_qty,
+        forecastPoUnconfirmedQty
+      );
+      let online_suggested_qty = Math.max(0, suggestionParts.online_suggested_qty - poConsumption.online);
+      let offline_suggested_qty = Math.max(0, suggestionParts.offline_suggested_qty - poConsumption.offline);
       let other_suggested_qty = 0;
-      suggested_qty = suggestionParts.suggested_qty;
+      let po_consumed_online_qty = poConsumption.online;
+      let po_consumed_offline_qty = poConsumption.offline;
+      suggested_qty = online_suggested_qty + offline_suggested_qty + other_suggested_qty;
 
       // 用户可见建议说明必须随快照刷新，不能清空。
       let suggestion = buildSuggestionText(sales_status, lifecycle, suggested_qty, brandStopped);
@@ -8697,6 +8746,8 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
         online_suggested_qty = 0;
         offline_suggested_qty = 0;
         other_suggested_qty = 0;
+        po_consumed_online_qty = 0;
+        po_consumed_offline_qty = 0;
         final_order_qty = 0;
         moqQty = 0;
         after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
@@ -8709,7 +8760,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
           mode: 'update',
           id: existing_rs.id,
           values: [
-            avail, transit, piUnshipped, poUnconfirmed,
+            avail, transit, piUnshipped, poUnconfirmed, po_consumed_online_qty, po_consumed_offline_qty,
             total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
@@ -8729,7 +8780,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
           mode: 'insert',
           values: [
             genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
-            piUnshipped, poUnconfirmed, total_inventory_pool,
+            piUnshipped, poUnconfirmed, po_consumed_online_qty, po_consumed_offline_qty, total_inventory_pool,
             sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
@@ -8750,7 +8801,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
 // 刷新引擎与 full generate 共用的建议列（写入顺序与 computeSuggestionForTarget 的 update/insert values 完全一致）
 const RS_INSERT_COLS = [
   'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
-  'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
+  'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'po_consumed_online_qty', 'po_consumed_offline_qty', 'total_inventory_pool',
   'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
   'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
   'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
@@ -8766,7 +8817,7 @@ const RS_INSERT_COLS = [
 ];
 
 const RS_SET_COLS = [
-  'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
+  'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'po_consumed_online_qty', 'po_consumed_offline_qty',
   'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
   'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
   'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
@@ -8830,11 +8881,36 @@ function preserveManualSuggestedQtyForRefresh(result, existingRow, brandStopped)
     lifecycle === 'clearance' || lifecycle === 'stopped';
   if (blocked) return result;
 
+  // Preserve manual values, adjusting only the forecast-PO reservation delta.
+  // On PO->PI transfer, confirmed PI stock replaces the reservation deduction.
+  const oldAppliedOnline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_online_qty) || 0));
+  const oldAppliedOffline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_offline_qty) || 0));
+  const newAppliedOnline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_online_qty')]) || 0));
+  const newAppliedOffline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_offline_qty')]) || 0));
+  const oldAppliedTotal = oldAppliedOnline + oldAppliedOffline;
+  const newAppliedTotal = newAppliedOnline + newAppliedOffline;
+  const poolDelta = (Number(result.values[idx('total_inventory_pool')]) || 0) -
+    (Number(existingRow.total_inventory_pool) || 0);
+  const poDelta = newAppliedTotal - oldAppliedTotal;
+  let matchedPoolDelta = 0;
+  if (poolDelta !== 0 && poDelta !== 0 && Math.sign(poolDelta) !== Math.sign(poDelta)) {
+    matchedPoolDelta = Math.sign(poolDelta) * Math.min(Math.abs(poolDelta), Math.abs(poDelta));
+  }
+  const oldOnlineTarget = Math.max(0, Number(existingRow.online_target_stock) || 0);
+  const oldOfflineTarget = Math.max(0, Number(existingRow.offline_target_stock) || 0);
+  const oldTargetTotal = oldOnlineTarget + oldOfflineTarget;
+  const onlinePoolDelta = oldTargetTotal > 0 ? Math.round(matchedPoolDelta * oldOnlineTarget / oldTargetTotal) : 0;
+  const offlinePoolDelta = matchedPoolDelta - onlinePoolDelta;
+  const onlineSupplyDelta = (newAppliedOnline - oldAppliedOnline) + onlinePoolDelta;
+  const offlineSupplyDelta = (newAppliedOffline - oldAppliedOffline) + offlinePoolDelta;
+
   if (preserveOnline) {
-    result.values[idx('online_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0));
+    result.values[idx('online_suggested_qty')] = Math.max(0,
+      Math.trunc(Number(existingRow.online_suggested_qty) || 0) - onlineSupplyDelta);
   }
   if (preserveOffline) {
-    result.values[idx('offline_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0));
+    result.values[idx('offline_suggested_qty')] = Math.max(0,
+      Math.trunc(Number(existingRow.offline_suggested_qty) || 0) - offlineSupplyDelta);
   }
   const total = Math.max(0, Number(result.values[idx('online_suggested_qty')]) || 0) +
     Math.max(0, Number(result.values[idx('offline_suggested_qty')]) || 0) +
@@ -8986,6 +9062,7 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, in
 
   const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
   const inPh = skuCodes.map(() => '?').join(',');
+  const forecastPoConsumptionMap = await loadForecastPOConsumptionMap(exec, skuCodes);
   const now = new Date();
   const oneVal = async key => {
     const row = await exec.one("SELECT value FROM system_config WHERE key = ?", [key]);
@@ -9054,6 +9131,7 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, in
   for (const target of targets) {
     const result = computeSuggestionForTarget({
       inv: target.inv, sku: target.sku, existing_rs: target.er, brandStopped: target.brandStopped,
+      forecastPoUnconfirmedQty: forecastPoConsumptionMap[target.inv.sku_code + '|' + (target.inv.country || '') + '|' + (target.inv.warehouse || '')] || 0,
       months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
       channelConfigMap, countriesCache, now, preserveManualOverrides: true
     });
@@ -9241,6 +9319,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     );
     const aggMap = {};
     for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
+    const forecastPoConsumptionMap = await loadForecastPOConsumptionMap({ all: (sql, params) => aq(sql, params) }, genSkuCodes);
 
     // CHANNEL-ALLOCATION: 预加载国家表和渠道配置
     const countriesCache = await aq('SELECT id, name, code FROM countries ORDER BY sort_order');
@@ -9291,6 +9370,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const existing_rs = existingMap[inv.sku_code + '|' + inv.country + '|' + inv.warehouse] || null;
         batchRows.push(computeSuggestionForTarget({
           inv, sku, existing_rs, brandStopped,
+          forecastPoUnconfirmedQty: forecastPoConsumptionMap[inv.sku_code + '|' + (inv.country || '') + '|' + (inv.warehouse || '')] || 0,
           months, monthlyMap, aggMap,
           targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
           channelConfigMap, countriesCache, now
@@ -10722,7 +10802,8 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
     const multiRelated=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
     if(multiRelated.length>1){
-      const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
+      // Only live CI rows lock a multi-PO PI. Cancelled/reversed CI item rows are audit history.
+      const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items cii JOIN commercial_invoices ci ON ci.id = cii.ci_id WHERE cii.pi_id = ? AND COALESCE(ci.ci_status,'') NOT IN ('cancelled','reversed') LIMIT 1",[pi.id]);
       const hasHistoricalCI=queryOne("SELECT 1 FROM historical_commercial_invoice_items WHERE pi_id = ? LIMIT 1",[pi.id]);
       const hasPayment=queryOne("SELECT 1 FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status IN ('reserved','partially_paid','paid') LIMIT 1",[pi.id]);
       if(hasCI||hasHistoricalCI||hasPayment)return res.status(409).json({error:'多PO关联PI已进入CI或付款流程，禁止直接作废'});
@@ -11000,10 +11081,13 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, opts) {
 }
 
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type } = req.query;
+  const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type, ci_status } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
   let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
+  // 列表状态筛选：默认由前端请求有效CI；作废记录仅在用户主动筛选时展示。
+  if (ci_status === 'active') { sql += " AND COALESCE(ci_status, '') NOT IN ('cancelled', 'reversed')"; }
+  else if (ci_status === 'cancelled') { sql += " AND ci_status IN ('cancelled', 'reversed')"; }
   if (related_pi) { sql += ' AND related_pi_no = ?'; params.push(related_pi); }
   if (keyword) { sql += ' AND (ci_no LIKE ? OR supplier_name LIKE ?)'; params.push(`%${keyword}%`, `%${keyword}%`); }
   if (country) { const al = countryAliases(country); sql += ' AND country IN (' + al.map(() => '?').join(',') + ')'; al.forEach(a => params.push(a)); }
