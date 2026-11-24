@@ -8885,8 +8885,21 @@ function preserveManualSuggestedQtyForRefresh(result, existingRow, brandStopped)
   // On PO->PI transfer, confirmed PI stock replaces the reservation deduction.
   const oldAppliedOnline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_online_qty) || 0));
   const oldAppliedOffline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_offline_qty) || 0));
-  const newAppliedOnline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_online_qty')]) || 0));
-  const newAppliedOffline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_offline_qty')]) || 0));
+  let newAppliedOnline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_online_qty')]) || 0));
+  let newAppliedOffline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_offline_qty')]) || 0));
+  // A manual channel value is the remaining suggestion. Never record more PO
+  // consumption against that channel than its current remainder plus prior
+  // applied consumption; cancelling an oversized PO must not over-restore it.
+  if (preserveOnline) {
+    newAppliedOnline = Math.min(newAppliedOnline,
+      oldAppliedOnline + Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0)));
+    result.values[idx('po_consumed_online_qty')] = newAppliedOnline;
+  }
+  if (preserveOffline) {
+    newAppliedOffline = Math.min(newAppliedOffline,
+      oldAppliedOffline + Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0)));
+    result.values[idx('po_consumed_offline_qty')] = newAppliedOffline;
+  }
   const oldAppliedTotal = oldAppliedOnline + oldAppliedOffline;
   const newAppliedTotal = newAppliedOnline + newAppliedOffline;
   const poolDelta = (Number(result.values[idx('total_inventory_pool')]) || 0) -
