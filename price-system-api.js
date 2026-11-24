@@ -87,6 +87,26 @@ function deletePriceSystemSchemeRecords(schemeId, run) {
   return true;
 }
 
+function buildForecastMetricMap(rows) {
+  const metrics = new Map();
+  (Array.isArray(rows) ? rows : []).forEach(row => {
+    const skuCode = String(row && row.sku_code || '').trim();
+    if (!skuCode) return;
+    let metric = metrics.get(skuCode);
+    if (!metric) { metric = { avg_sales_period: 0, available_qty: 0 }; metrics.set(skuCode, metric); }
+    const average = Number(row.avg_sales_period);
+    if (Number.isFinite(average)) metric.avg_sales_period = Math.max(metric.avg_sales_period, average);
+    const available = Number(row.available_qty);
+    if (Number.isFinite(available)) metric.available_qty += available;
+  });
+  metrics.forEach(metric => {
+    metric.available_turnover = metric.avg_sales_period > 0
+      ? Math.round(metric.available_qty / metric.avg_sales_period * 10) / 10
+      : null;
+  });
+  return metrics;
+}
+
 function formulaForCategory(field, category) {
   const rules = parseFormulaRules(field && field.formula_rules);
   if (Object.keys(rules).length) {
@@ -427,6 +447,7 @@ function registerPriceSystemRoutes(app, deps) {
     ).rows;
     const params = [scheme.country];
     let warehouseFilter = '';
+    let scopeWarehouseNames = null;
     if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
       const scope = req.currentUserDataScope || {};
       if (Array.isArray(scope.warehouses) && scope.warehouses.length) {
@@ -434,8 +455,11 @@ function registerPriceSystemRoutes(app, deps) {
           'SELECT name FROM warehouses WHERE id IN (' + scope.warehouses.map(() => '?').join(',') + ')',
           scope.warehouses
         ).rows.map(r => r.name).filter(Boolean);
-        if (!names.length) warehouseFilter = ' AND 1 = 0';
-        else {
+        if (!names.length) {
+          warehouseFilter = ' AND 1 = 0';
+          scopeWarehouseNames = [];
+        } else {
+          scopeWarehouseNames = names;
           warehouseFilter = ' AND warehouse IN (' + names.map(() => '?').join(',') + ')';
           params.push(...names);
         }
@@ -444,9 +468,9 @@ function registerPriceSystemRoutes(app, deps) {
     const skuRows = query(
       'SELECT s.sku_code, s.brand, s.category, s.model, s.purchase_currency, ' +
       's.standard_purchase_price, s.purchase_price_rmb, s.purchase_price_usd, s.weighted_avg_cost, s.reference_customs_rate, ' +
-      'COALESCE(i.stock_qty, 0) AS stock_qty, COALESCE(i.inventory_wac, 0) AS inventory_wac ' +
+      'COALESCE(i.stock_qty, 0) AS stock_qty, COALESCE(i.inventory_wac, 0) AS inventory_wac, i.last_inbound_date AS last_inbound_date ' +
       'FROM skus s LEFT JOIN (' +
-      'SELECT sku_code, SUM(COALESCE(available_qty, 0)) AS stock_qty, ' +
+      'SELECT sku_code, SUM(COALESCE(available_qty, 0)) AS stock_qty, MAX(last_inbound_date) AS last_inbound_date, ' +
       'CASE WHEN SUM(COALESCE(available_qty, 0)) > 0 ' +
       'THEN SUM(COALESCE(weighted_avg_cost, 0) * COALESCE(available_qty, 0)) / SUM(COALESCE(available_qty, 0)) ELSE 0 END AS inventory_wac ' +
       'FROM inventory WHERE country = ?' + warehouseFilter + ' GROUP BY sku_code' +
@@ -454,6 +478,33 @@ function registerPriceSystemRoutes(app, deps) {
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
       params.concat([scheme.brand])
     ).rows;
+    const forecastMetricRows = [];
+    const skuCodes = skuRows.map(row => String(row.sku_code || '').trim()).filter(Boolean);
+    for (let offset = 0; offset < skuCodes.length; offset += 400) {
+      const chunk = skuCodes.slice(offset, offset + 400);
+      let forecastWarehouseFilter = '';
+      const forecastParams = [scheme.country, ...chunk];
+      if (scopeWarehouseNames !== null) {
+        if (!scopeWarehouseNames.length) forecastWarehouseFilter += ' AND 1 = 0';
+        else {
+          forecastWarehouseFilter += ' AND rs.target_warehouse IN (' + scopeWarehouseNames.map(() => '?').join(',') + ')';
+          forecastParams.push(...scopeWarehouseNames);
+        }
+      }
+      const forecastRows = query(
+        'SELECT rs.sku_code, rs.avg_sales_period, COALESCE(i.available_qty, 0) AS available_qty ' +
+        'FROM replenishment_suggestions rs LEFT JOIN inventory i ON rs.sku_code = i.sku_code AND rs.country = i.country AND rs.target_warehouse = i.warehouse ' +
+        'WHERE rs.country = ? AND rs.sku_code IN (' + chunk.map(() => '?').join(',') + ')' +
+        forecastWarehouseFilter +
+        ' AND rs.target_warehouse NOT IN (SELECT warehouse_name FROM consignment_inventory_lots WHERE warehouse_name IS NOT NULL AND warehouse_name != \'\')' +
+        ' AND rs.target_warehouse NOT IN (SELECT name FROM warehouses WHERE LOWER(name) LIKE \'%consign%\' AND status = \'active\')',
+        forecastParams
+      ).rows;
+      forecastMetricRows.push(...forecastRows);
+    }
+    const forecastMetricBySku = buildForecastMetricMap(forecastMetricRows);
+    const salesStatsDaysRow = queryOne("SELECT value FROM system_config WHERE key = 'sales_stats_days'");
+    const forecastStatsDays = Math.max(1, parseInt(salesStatsDaysRow && salesStatsDaysRow.value || '90', 10) || 90);
     const currentCategories = Array.from(new Set(primaryCategoryMapForSkus(skuRows, scheme.brand).values()));
     const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
     const fields = rawFields.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).map(field => {
@@ -486,8 +537,16 @@ function registerPriceSystemRoutes(app, deps) {
     });
     const fieldMap = new Map(fields.map(f => [f.field_key, f]));
 
+    const today = new Date();
     const rows = skuRows.map(sku => {
       const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类';
+      const forecastMetric = forecastMetricBySku.get(sku.sku_code) || null;
+      const inboundDate = String(sku.last_inbound_date || '').trim();
+      let daysSinceLastInbound = null;
+      if (inboundDate) {
+        const parsedInboundDate = new Date(inboundDate);
+        if (!Number.isNaN(parsedInboundDate.getTime())) daysSinceLastInbound = Math.floor((today - parsedInboundDate) / 86400000);
+      }
       const stored = storedBySku.get(sku.sku_code) || {};
       const landingCost = landingCostBySku.get(sku.sku_code) || null;
       const base = {
@@ -556,13 +615,18 @@ function registerPriceSystemRoutes(app, deps) {
       values.srp = srp;
       return {
         sku_code: sku.sku_code, brand: sku.brand || '', category: skuCategory, model: sku.model || '',
-        stock_qty: Number(sku.stock_qty || 0), purchase_currency: sku.purchase_currency || '',
+        stock_qty: Number(sku.stock_qty || 0),
+        forecast_avg_sales: forecastMetric ? Number(forecastMetric.avg_sales_period || 0) : null,
+        available_turnover: forecastMetric ? forecastMetric.available_turnover : null,
+        days_since_last_inbound: daysSinceLastInbound,
+        last_inbound_date: inboundDate,
+        purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
         values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1).map(field => [field.field_key, (storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || ''])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
       };
     });
 
-    res.json({ scheme, fields, rows });
+    res.json({ scheme, fields, rows, forecast_stats_days: forecastStatsDays });
   }
 
   app.get('/api/price-system/schemes', canRead, asyncHandler((req, res) => {
@@ -1109,4 +1173,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords, buildForecastMetricMap };
