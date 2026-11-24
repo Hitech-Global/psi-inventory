@@ -48,6 +48,23 @@ function remapFieldCategorySettings(field, targetCategories) {
   return { applicable_categories: applicableCategories, formula_rules: formulaRules };
 }
 
+function buildPriceSystemReferenceLookup(sourceRows, sourceFieldKey, fallbackCurrency, includeCurrencies) {
+  const valuesBySku = new Map();
+  const currenciesBySku = new Map();
+  const fieldKey = String(sourceFieldKey || '').trim();
+  (Array.isArray(sourceRows) ? sourceRows : []).forEach(sourceRow => {
+    const skuCode = String(sourceRow && sourceRow.sku_code || '').trim();
+    if (!skuCode || !fieldKey) return;
+    const raw = sourceRow && sourceRow.values ? sourceRow.values[fieldKey] : null;
+    valuesBySku.set(skuCode, raw == null || raw === '' ? null : Number(raw));
+    if (includeCurrencies) {
+      const currencyCode = sourceRow && sourceRow.value_currencies && sourceRow.value_currencies[fieldKey] || fallbackCurrency || '';
+      currenciesBySku.set(skuCode, String(currencyCode).trim().toUpperCase());
+    }
+  });
+  return { valuesBySku, currenciesBySku };
+}
+
 function buildCopiedFieldRows(sourceFields, targetSchemeId, genId, targetCategories) {
   return (Array.isArray(sourceFields) ? sourceFields : []).map(field => {
     const decimalPlaces = Number(field.decimal_places == null ? 2 : field.decimal_places);
@@ -811,16 +828,9 @@ function registerPriceSystemRoutes(app, deps) {
       field.display_format = sourceField.display_format || 'auto';
       field.unit = String(sourceField.unit || ((sourceValueType === 'amount' || sourceField.display_format === 'amount') ? (sourceScheme.currency || '') : ''));
       field.decimal_places = sourceField.decimal_places == null ? 2 : sourceField.decimal_places;
-      const valuesBySku = new Map();
-      const currenciesBySku = new Map();
-      sourceData.rows.forEach(sourceRow => {
-        const skuCode = String(sourceRow.sku_code || '').trim();
-        const raw = sourceRow && sourceRow.values ? sourceRow.values[sourceFieldKey] : null;
-        valuesBySku.set(skuCode, raw == null || raw === '' ? null : Number(raw));
-        if (field.reference_sync_quotation) currenciesBySku.set(skuCode, String(sourceRow.value_currencies && sourceRow.value_currencies[sourceFieldKey] || sourceScheme.currency || '').trim().toUpperCase());
-      });
-      referenceValuesByField.set(field.field_key, valuesBySku);
-      referenceCurrenciesByField.set(field.field_key, currenciesBySku);
+      const referenceLookup = buildPriceSystemReferenceLookup(sourceData.rows, sourceFieldKey, sourceScheme.currency, field.reference_sync_quotation);
+      referenceValuesByField.set(field.field_key, referenceLookup.valuesBySku);
+      referenceCurrenciesByField.set(field.field_key, referenceLookup.currenciesBySku);
     });
 
     const today = new Date();
@@ -1686,4 +1696,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords, buildForecastMetricMap, buildPriceSystemVersionDiff };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, buildPriceSystemReferenceLookup, deletePriceSystemSchemeRecords, buildForecastMetricMap, buildPriceSystemVersionDiff };
