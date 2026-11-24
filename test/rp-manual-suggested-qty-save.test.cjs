@@ -1,0 +1,210 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const APP = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
+
+function extractFunction(name) {
+  const re = new RegExp('(?:async\\s+)?function\\s+' + name + '\\s*\\(');
+  const match = re.exec(APP);
+  assert.ok(match, 'production function must exist: ' + name);
+  const open = APP.indexOf('{', match.index);
+  let depth = 0;
+  let end = open;
+  for (; end < APP.length; end++) {
+    if (APP[end] === '{') depth++;
+    else if (APP[end] === '}' && --depth === 0) break;
+  }
+  assert.ok(end < APP.length, 'production function must be balanced: ' + name);
+  return APP.slice(match.index, end + 1);
+}
+
+const saveStart = APP.indexOf('function rpGetSaveState(channel, rid){');
+const saveEnd = APP.indexOf('// 页面卸载兜底：keepalive 尽力发送尚未确认的手工作业', saveStart);
+assert.ok(saveStart >= 0 && saveEnd > saveStart, 'manual save pipeline source boundaries must exist');
+const SAVE_PIPELINE = APP.slice(saveStart, saveEnd);
+
+function serverResponse(value, revision) {
+  return {
+    success: true,
+    stale: false,
+    data: {
+      id: 'row-1',
+      online_suggested_qty: value,
+      offline_suggested_qty: 2,
+      suggested_qty: value + 2,
+      online_write_seq: revision,
+      offline_write_seq: 0,
+      recalc_revision: 0
+    }
+  };
+}
+
+function makeSaveHarness(api) {
+  const row = {
+    id: 'row-1',
+    online_suggested_qty: 1,
+    offline_suggested_qty: 2,
+    suggested_qty: 3,
+    online_write_seq: 0,
+    offline_write_seq: 0,
+    recalc_revision: 0,
+    _serverRevOnline: 0,
+    _serverRevOffline: 0,
+    _serverRecalc: 0,
+    _channelC: {
+      online: { suggestedQty: 1 },
+      offline: { suggestedQty: 2 }
+    }
+  };
+  const window = {
+    _rpChannelData: { online: { 'row-1': row }, offline: { 'row-1': row } },
+    _rpManualStock: { online: {}, offline: {} }
+  };
+  const context = {
+    window,
+    sessionStorage: { setItem() {}, removeItem() {} },
+    api,
+    rpPatchSnapshotRow: data => Object.assign(row, data),
+    rpGetChannelC: (channel, current) => current._channelC[channel],
+    rpClearDataCache() {},
+    rpInvalidateSuggestionViews() {},
+    clearTimeout() {},
+    setTimeout() { return 1; },
+    console
+  };
+  vm.createContext(context);
+  vm.runInContext(SAVE_PIPELINE, context);
+  return { context, row, window };
+}
+
+test('drain waits for the latest coalesced edit before declaring the save complete', async () => {
+  let resolveFirst;
+  const calls = [];
+  const h = makeSaveHarness((_url, _method, body) => {
+    calls.push(body);
+    if (calls.length === 1) return new Promise(resolve => { resolveFirst = resolve; });
+    return Promise.resolve(serverResponse(body.online_suggested_qty, 2));
+  });
+
+  const state = h.context.rpGetSaveState('online', 'row-1');
+  state.pending = 5;
+  const draining = h.context.rpDrainAllPending();
+
+  await Promise.resolve();
+  assert.equal(calls.length, 1, 'first save should be in flight');
+
+  state.pending = 8;
+  h.context.rpSetManualStock('online', 'row-1', 8);
+  resolveFirst(serverResponse(5, 1));
+
+  assert.equal(await draining, true);
+  assert.deepEqual(calls.map(call => call.online_suggested_qty), [5, 8]);
+  assert.equal(calls[1].expected_online_write_seq, 1, 'the retry must use the latest server revision');
+  assert.equal(h.row.online_suggested_qty, 8);
+  assert.equal(h.row.suggested_qty, 10);
+  assert.equal(state.pending, null);
+  assert.equal(state.failed, false);
+});
+
+test('a failed save stays pending, does not retry forever, and can be retried explicitly', async () => {
+  let calls = 0;
+  const h = makeSaveHarness(() => {
+    calls++;
+    if (calls === 1) return Promise.reject(new Error('network unavailable'));
+    return Promise.resolve(serverResponse(4, 1));
+  });
+
+  const state = h.context.rpGetSaveState('online', 'row-1');
+  state.pending = 4;
+
+  assert.equal(await h.context.rpDrainAllPending(), false);
+  assert.equal(calls, 1, 'one failed value must not start an automatic retry loop');
+  assert.equal(state.pending, 4, 'the failed value must remain available for retry');
+  assert.equal(state.failed, true);
+
+  assert.equal(await h.context.rpDrainAllPending(), true);
+  assert.equal(calls, 2, 'a new explicit drain retries the pending value once');
+  assert.equal(state.pending, null);
+  assert.equal(state.failed, false);
+  assert.equal(h.row.online_suggested_qty, 4);
+});
+
+test('manual quantity change only shows saved feedback after the server confirms it', async () => {
+  const feedback = [];
+  const context = {
+    window: { _rpChannelData: { online: {}, offline: {} } },
+    rpIsRecalcInFlight: () => false,
+    rpGetSaveState: () => ({ timer: null, pending: null, failed: false }),
+    clearTimeout() {},
+    rpSetManualStock() {},
+    rpWriteJournal() {},
+    rpGetChannelC: () => null,
+    rpActiveContainer: () => null,
+    document: { querySelector: () => null },
+    rpDrainOne: async () => false,
+    showRpAutoSaved: () => feedback.push('saved'),
+    showRpSaveFailed: () => feedback.push('failed')
+  };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('onChannelTargetStockChange'), context);
+
+  const input = {
+    dataset: { rid: 'row-1', channel: 'online' },
+    value: '9',
+    closest: () => null
+  };
+  await context.onChannelTargetStockChange(input);
+  assert.deepEqual(feedback, ['failed']);
+});
+
+test('tab and mode switches are blocked when pending manual saves cannot be confirmed', async () => {
+  const messages = [];
+  let drains = 0;
+  const context = {
+    window: { _rpCache: { views: {} } },
+    rpTab: 'total',
+    rpMode: 'monthly',
+    performance: { now: () => 1 },
+    getLang: () => 'zh',
+    rpDrainAllPending: async () => { drains++; return false; },
+    showToast: (message, type) => messages.push({ message, type })
+  };
+  vm.createContext(context);
+  vm.runInContext(
+    extractFunction('rpEnsurePendingSavesBeforeViewChange') + '\\n' +
+    extractFunction('switchRpTab') + '\\n' +
+    extractFunction('switchRpMode'),
+    context
+  );
+
+  await context.switchRpTab('online');
+  await context.switchRpMode('daily');
+
+  assert.equal(context.rpTab, 'total');
+  assert.equal(context.rpMode, 'monthly');
+  assert.equal(drains, 2);
+  assert.equal(messages.length, 2);
+  assert.ok(messages.every(item => item.type === 'danger'));
+});
+
+test('all user-driven forecast view and filter changes pass through the save gate', () => {
+  for (const name of [
+    'onRpCountryChange',
+    'onRpBrandChange',
+    'onRpFilterChange',
+    'onRpWarehouseChange',
+    'onRpSearchSubmit',
+    'resetRpFilters',
+    'switchRpTab',
+    'switchRpMode'
+  ]) {
+    assert.match(extractFunction(name), /rpEnsurePendingSavesBeforeViewChange/);
+  }
+});
+
+console.log('rp-manual-suggested-qty-save: regression coverage loaded');
