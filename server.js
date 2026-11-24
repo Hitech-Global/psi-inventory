@@ -10542,14 +10542,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       throw new Error('PI_CREATE_UNCONFIRMED');
     }
 
-    // 派生/在途汇总刷新（可重算，放事务外，确保原子 PI 已落库后再算）。
-    // Wave 0B: 改为 COMMIT 后原生 async 后台刷新（fire-and-forget），响应不再等待
-    // 全表重算；失败仅告警，绝不影响「PI 已创建成功」这一原子事实。
-    // transit_refresh_warning 字段移除（前端无消费，已核实 app.js 零引用）。
-    // 后续任意 PO/CI/PI 变更都会再次触发刷新，派生值会被重算补齐。
-    updateInventoryTransitDataAsync().catch((transitErr) => {
-      console.warn('[PI-CREATE] updateInventoryTransitDataAsync failed (best-effort, ignored):', transitErr && transitErr.message);
-    });
+    // PI confirmed quantities move from PO reservation into confirmed-unshipped PI stock.
+    const forecastSync = await refreshForecastAfterProcurementMutationBestEffort(collectPIForecastKeys(piId), 'PI-CREATE');
 
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
     res.json({
@@ -10559,7 +10553,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       total_amount: totalAmount,
       need_deposit: needDeposit,
       deposit_ratio: depositRatio,
-      payable_deposit: payableDeposit
+      payable_deposit: payableDeposit,
+      forecast_sync: forecastSync
     });
   } catch (e) {
     const msg = e && e.message;
@@ -10699,6 +10694,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     if (d.attachment !== undefined) { fields.push('attachment = ?'); values.push(parseAttachment(d.attachment)); }
 
     const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
+    const oldForecastKeys = collectPIForecastKeys(id);
     let totalAmount = pi.total_amount || 0;
     let payableDeposit = 0;
     // 解析最新 PI号（若本次编辑修改了 pi_no，事务内新明细需用最新值）
@@ -10824,18 +10820,13 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       console.error('[PI-LOG] operation log failed for ' + id + ':', logErr && logErr.message);
     }
 
-    // P0-B：PI 主事务已 COMMIT 成功，先返回 success，再 best-effort 刷新库存派生数据。
-    // 关键顺序约束（Gate 1）：必须等 response 真正 finish（已 flush 到 socket）后，
-    // 才在下一个事件循环 tick 启动 refresh。否则 DB-SYNC + Atomics.wait 的同步刷新
-    // 会在 response 完成边界前阻塞，导致前端仍可能收到 502 / 重复提交。
+    // PI 已提交后刷新库存与预测。保留旧、新 SKU/国家键，避免编辑时移除的 SKU 留下旧快照。
+    const forecastKeysForRefresh = oldForecastKeys.concat(collectPIForecastKeys(id));
     res.once('finish', () => {
       if (!invAffectingChanged) return;
       setImmediate(() => {
-        updateInventoryTransitDataAsync().catch((rfErr) => {
-          // 仅记录刷新失败，绝不 throw / 不调用 next / 不再写 res。
-          // PI 已成功提交，刷新失败不影响"PI 保存成功"的语义。
-          console.error('[PI-REFRESH] inventory refresh failed for ' + id + ':', rfErr && rfErr.message);
-        });
+        refreshForecastAfterProcurementMutationBestEffort(forecastKeysForRefresh, 'PI-PUT')
+          .catch((rfErr) => console.error('[PI-REFRESH] forecast refresh failed for ' + id + ':', rfErr && rfErr.message));
       });
     });
     res.status(200).json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
@@ -10873,6 +10864,7 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     if (pi.pi_status === 'cancelled') return res.status(400).json({ error: '该 PI 已作废，不能重复作废' });
     if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
     const multiRelated=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
+    const forecastKeys = collectPIForecastKeys(pi.id);
     if(multiRelated.length>1){
       // Only live CI rows lock a multi-PO PI. Cancelled/reversed CI item rows are audit history.
       const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items cii JOIN commercial_invoices ci ON ci.id = cii.ci_id WHERE cii.pi_id = ? AND COALESCE(ci.ci_status,'') NOT IN ('cancelled','reversed') LIMIT 1",[pi.id]);
@@ -10890,15 +10882,30 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
         // Any reserved/paid item was already blocked above; cancel only active.
         query("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status='active'",[pi.id]).rows
           .forEach(it=>{if(!cancelPayableItem(it.id,req.currentUserId,'PI作废：'+void_reason))throw Error('PI定金应付取消失败');});
+      } else {
+        // Legacy single-PO PI: return transferred quantities to the source PO
+        // before cancelling PI, so the PO reservation and PI inventory stay balanced.
+        const singlePoId = pi.related_po_id || multiRelated[0] || '';
+        if (singlePoId) {
+          const transferredRows = query(
+            'SELECT sku_code, COALESCE(SUM(pi_confirmed_qty),0) AS qty FROM proforma_invoice_items WHERE pi_id = ? GROUP BY sku_code',
+            [pi.id]
+          ).rows;
+          for (const item of transferredRows) {
+            const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [singlePoId, item.sku_code]);
+            if (!poItem) continue;
+            const nextTransferred = Math.max(0, Number(poItem.transferred_pi_qty || 0) - Number(item.qty || 0));
+            run('UPDATE purchase_order_items SET transferred_pi_qty = ?, untransferred_pi_qty = ? WHERE id = ?',
+              [nextTransferred, Math.max(0, Number(poItem.po_qty || 0) - nextTransferred), poItem.id]);
+          }
+          piMultiPO.updatePOStatus(singlePoId,query,run);
+        }
       }
       run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
     });
-    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 pi_confirmed_unshipped_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
+    const forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PI-VOID');
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
-    res.json({ success: true });
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -12408,10 +12415,10 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
     // Wave 2B: PG 走原生 async 事务（零 sync bridge / set-based mutations）；SQLite 保持 legacy sync 分支
     if (process.env.DB_DRIVER === 'pg') {
       const pgResult = await importProformaInvoicesPg(rows, req);
-      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
       if (pgResult.success > 0) {
-        updateInventoryTransitDataAsync().catch((err) =>
-          console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+        pgResult.forecast_sync = await refreshForecastAfterProcurementMutationBestEffort(
+          collectForecastKeysForPIImportRows(rows),
+          'PI-BATCH'
         );
       }
       return res.json(importResultWithMessages(pgResult));
@@ -12516,10 +12523,13 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           result.errors.push({ row: idx + 2, reason: e.message });
         }
       });
-      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitDataAsync().catch((err) =>
-        console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
-      );
+      // PI 批量导入后同步 PO 预留、PI 未发货与预测建议。
+      if (result.success > 0) {
+        result.forecast_sync = await refreshForecastAfterProcurementMutationBestEffort(
+          collectForecastKeysForPIImportRows(rows),
+          'PI-BATCH'
+        );
+      }
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -24225,6 +24235,22 @@ if (require.main === module) {
     console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
     console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
     console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
+    // Backfill forecast-generated POs that existed before PO-consumption tracking.
+    setImmediate(() => {
+      try {
+        const keys = query(
+          'SELECT DISTINCT poi.sku_code, po.country FROM purchase_order_items poi ' +
+          'JOIN purchase_orders po ON po.id = poi.po_id WHERE COALESCE(po.from_suggestion,0) = 1',
+          []
+        ).rows;
+        if (keys.length) {
+          refreshForecastAfterProcurementMutationBestEffort(keys, 'STARTUP-PO-FORECAST')
+            .then(result => console.log('[STARTUP] PO forecast backfill:', JSON.stringify(result)));
+        }
+      } catch (e) {
+        console.warn('[STARTUP] PO forecast backfill could not start:', e && e.message);
+      }
+    });
   });
 
   server.on('error', (err) => {
