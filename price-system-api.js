@@ -455,7 +455,8 @@ function registerPriceSystemRoutes(app, deps) {
       params.concat([scheme.brand])
     ).rows;
     const currentCategories = Array.from(new Set(primaryCategoryMapForSkus(skuRows, scheme.brand).values()));
-    const fields = rawFields.map(field => {
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const fields = rawFields.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).map(field => {
       const categorySettings = remapFieldCategorySettings(field, currentCategories);
       return Object.assign({}, field, {
         applicable_categories: categorySettings.applicable_categories,
@@ -557,7 +558,7 @@ function registerPriceSystemRoutes(app, deps) {
         sku_code: sku.sku_code, brand: sku.brand || '', category: skuCategory, model: sku.model || '',
         stock_qty: Number(sku.stock_qty || 0), purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
-        values, value_currencies: storedCurrencyBySku.get(sku.sku_code) || {}, formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
+        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1).map(field => [field.field_key, (storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || ''])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
       };
     });
 
@@ -644,6 +645,7 @@ function registerPriceSystemRoutes(app, deps) {
         'SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name, id',
         [source.id]
       ).rows;
+      if (sourceFields.some(field => Number(field.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '复制包含自动同步报价字段的方案需要报价管理查看权限' });
       const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
       transaction(() => {
         run(
@@ -860,7 +862,7 @@ function registerPriceSystemRoutes(app, deps) {
     const existingFields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
     const existing = d.id ? queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [d.id, scheme.id]) : null;
     if (d.id && !existing) return res.status(404).json({ error: '\u8d39\u7528\u5b57\u6bb5\u4e0d\u5b58\u5728' });
-    if (syncQuotation && !(existing && Number(existing.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '报价自动同步需要报价管理查看权限' });
+    if (syncQuotation && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '报价自动同步需要报价管理查看权限' });
     if (existing && existing.field_key !== fieldKey) return res.status(400).json({ error: '\u5b57\u6bb5\u7f16\u7801\u521b\u5efa\u540e\u4e0d\u53ef\u4fee\u6539\uff0c\u907f\u514d\u5f71\u54cd\u5386\u53f2\u6570\u636e\u548c\u516c\u5f0f' });
     if (fieldKey === 'srp') return res.status(400).json({ error: 'srp \u662f\u7cfb\u7edf\u4fdd\u7559\u5b57\u6bb5\u7f16\u7801' });
     if (syncWac) {
@@ -1038,6 +1040,7 @@ function registerPriceSystemRoutes(app, deps) {
     try { snapshot = JSON.parse(version.snapshot_json || '{}'); }
     catch (e) { return res.status(500).json({ error: '历史版本数据损坏' }); }
     const snapshotFields = Array.isArray(snapshot.fields) ? snapshot.fields : [];
+    if (snapshotFields.some(field => Number(field.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '恢复包含自动同步报价字段的版本需要报价管理查看权限' });
     const snapshotValues = Array.isArray(snapshot.values) ? snapshot.values : [];
     const snapshotLandingCosts = Array.isArray(snapshot.landingCosts) ? snapshot.landingCosts : [];
     const snapshotSrpValues = Array.isArray(snapshot.srpValues) ? snapshot.srpValues : [];
