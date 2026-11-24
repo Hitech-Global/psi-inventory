@@ -8156,6 +8156,22 @@ function rpFlushOne(channel, rid){
   if(st.inFlight) return st.flightPromise||Promise.resolve(false);
   if(st.pending===null) return Promise.resolve(!st.failed);
   if(st.failed) return Promise.resolve(false);
+  // Journal replay may run before the forecast snapshot has hydrated. Do not send a CAS write
+  // with a guessed revision of 0; wait for the authoritative snapshot, then flush the latest pending value.
+  var baselineRow=rpGetSaveBaselineRow(channel, rid);
+  var snapshot=window._rpSnapshot;
+  if(!baselineRow && snapshot && snapshot.status!=='ready' && typeof rpEnsureSnapshotReady==='function'){
+    st.inFlight=true;
+    st.flightPromise=rpEnsureSnapshotReady().then(function(ready){
+      st.inFlight=false; st.flightPromise=null;
+      if(!ready){ st.failed=true; return false; }
+      return rpFlushOne(channel, rid);
+    }).catch(function(){
+      st.inFlight=false; st.flightPromise=null; st.failed=true;
+      return false;
+    });
+    return st.flightPromise;
+  }
   var val=st.pending; st.pending=null; st.inFlight=true;
   var sentVal=val;
   var retryPendingAfterFlight=false;
