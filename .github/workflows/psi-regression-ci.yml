@@ -140,6 +140,7 @@ on:
       - 'scripts/quotation-management-bootstrap.cjs'
       - 'test/quotation-smart-import.test.cjs'
       - 'test/rp-suggested-qty-wheel.test.cjs'
+      - 'test/rp-manual-suggested-qty-save.test.cjs'
       - 'test/po-number-date-country.test.cjs'
       - 'inventory-asset-values.js'
       - 'test/inventory-asset-values.test.cjs'
@@ -279,6 +280,7 @@ jobs:
           node --check test/inventory-asset-values.test.cjs
           node --check test/inventory-overview-export.test.cjs
           node --check test/rp-excel-snapshot-export.test.cjs
+          node --check test/rp-manual-suggested-qty-save.test.cjs
           node --check test/inventory-onhand-local-currency-kpi.test.cjs
           node --check test/wac-history-import.test.cjs
           node --check test/wac-batch-exclusion.test.cjs
@@ -392,6 +394,8 @@ jobs:
         run: node --test test/listing-notification-card.test.cjs
       - name: Test suggested purchase quantity wheel behavior
         run: node test/rp-suggested-qty-wheel.test.cjs
+      - name: Test manual suggested quantity save consistency
+        run: node --test test/rp-manual-suggested-qty-save.test.cjs
       - name: Test WAC history matrix and historical import
         run: node test/wac-history-import.test.cjs
       - name: Test WAC batch exclusion and restore
