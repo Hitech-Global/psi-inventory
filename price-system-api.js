@@ -1071,7 +1071,6 @@ function registerPriceSystemRoutes(app, deps) {
     let nextVersion = createVersion(scheme.id, userStamp(req), '恢复历史版本 #' + version.version_no);
     const skuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [scheme.brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || scheme.brand, country: scheme.country }));
     if (snapshotFields.some(field => Number(field.sync_wac || 0) === 1)) {
-      const skuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [scheme.brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || scheme.brand, country: scheme.country }));
       const sync = syncPriceSystemLandingCostsForWacKeys(skuKeys, userStamp(req), 'Reconcile WAC after version restore');
       const restoredWacVersion = sync && Array.isArray(sync.versions) ? sync.versions.find(item => item.scheme_id === scheme.id) : null;
       if (restoredWacVersion) nextVersion = restoredWacVersion.version_no;
