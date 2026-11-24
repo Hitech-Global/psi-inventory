@@ -84,6 +84,8 @@ function ensurePriceSystemSchema(run, isPg) {
   run('CREATE TABLE IF NOT EXISTS price_system_srp_values (id TEXT PRIMARY KEY NOT NULL, scheme_id TEXT NOT NULL, sku_code TEXT NOT NULL, value NUMERIC(18,6) NOT NULL, updated_by TEXT NOT NULL DEFAULT \'\', updated_at TEXT DEFAULT ' + now + ', UNIQUE (scheme_id, sku_code))');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_landing_costs_scheme_sku ON price_system_landing_costs(scheme_id, sku_code)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_srp_values_scheme_sku ON price_system_srp_values(scheme_id, sku_code)');
+  run('CREATE INDEX IF NOT EXISTS idx_price_system_fields_source_ref ON price_system_fields(source_scheme_id, source_field_key, is_active)');
+  run('CREATE INDEX IF NOT EXISTS idx_price_system_fields_scheme_ref ON price_system_fields(scheme_id, field_type, is_active)');
 }
 
 module.exports = { ensurePriceSystemSchema };
