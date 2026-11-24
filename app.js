@@ -8340,8 +8340,8 @@ async function rpEnsurePendingSavesBeforeViewChange(){
   if(!ok){
     var lang=typeof getLang==='function'?getLang():'zh';
     var message=(lang==='en'||lang==='en-US')
-      ? 'Some suggested purchase quantities were not saved. This action was cancelled. Please check your connection and try again.'
-      : '有建议采购数量尚未保存成功，当前操作已取消。请检查网络后重试。';
+      ? 'Some suggested purchase quantities could not be confirmed as saved. This action was cancelled. Please retry; if it continues, contact an administrator.'
+      : '有建议采购数量尚未确认保存，当前操作已取消。请稍后重试；若持续出现，请联系管理员。';
     showToast(message,'danger');
     return false;
   }
