@@ -1020,6 +1020,7 @@ function registerPriceSystemRoutes(app, deps) {
         [source.id]
       ).rows;
       if (sourceFields.some(field => Number(field.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '复制包含自动同步报价字段的方案需要报价管理查看权限' });
+      if (sourceFields.some(field => field.field_type === 'reference') && (String(source.country || '') !== country || String(source.brand || '') !== brand)) return res.status(400).json({ error: '方案包含跨渠道引用字段，复制时必须保持相同国家和品牌；如需跨品牌复制，请先解除引用' });
       const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
       transaction(() => {
         run(
