@@ -74,6 +74,15 @@ test('copies reusable field configuration with new field IDs and target scheme I
   assert.equal(rows[2].is_active, 0);
 });
 
+test('copies quotation auto-sync settings to the destination scheme', () => {
+  const rows = buildCopiedFieldRows([{
+    id: 'source-quote-field', field_key: 'fob', field_name: 'FOB', field_type: 'amount',
+    applicable_categories: '[]', formula_rules: '{}', sync_wac: 0, sync_quotation: 1
+  }], 'target', prefix => prefix + '-new', ['SSD']);
+  assert.equal(rows[0].sync_quotation, 1);
+  assert.equal(rows[0].sync_wac, 0);
+});
+
 test('does not carry SKU-specific price values or WAC links in copied field config', () => {
   const rows = buildCopiedFieldRows([{
     id: 'source-field',
