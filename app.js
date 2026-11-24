@@ -8156,6 +8156,7 @@ function rpFlushOne(channel, rid){
       if(!resp || resp.success===false || !d) throw new Error('建议采购数量保存未返回权威结果');
       rpPatchSnapshotRow(d);   // RP-SNAPSHOT：server 权威行就地 merge 进 L0（success 与 stale 都要，防「切走再回来显示旧值」）
       var r2=rpGetRow(channel, rid);
+      if(!r2) throw new Error('建议采购数量保存后未找到本地 SKU 行');
       var c=r2?rpGetChannelC(channel,r2):null;
       if(r2&&d){
         // 成功或 stale 都先用 server 当前 revision 更新本地 baseline
