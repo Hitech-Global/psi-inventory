@@ -18,7 +18,7 @@ test('price system uses the same default-descending-ascending-default cycle as o
 test('price system sorting is client-side, stable, and can restore the original row order', () => {
   assert.match(ui, /function psApplyTableSort\(table,colIndex,dir\)/);
   assert.match(ui, /tbody\.querySelectorAll\(':scope > tr'\)/);
-  assert.match(ui, /data\.psOriginalOrder==null/);
+  assert.match(ui, /row\.dataset\.psOriginalOrder==null/);
   assert.match(ui, /if\(dir==='none'\)return Number\(a\.dataset\.psOriginalOrder\)-Number\(b\.dataset\.psOriginalOrder\)/);
   assert.match(ui, /initPriceSystemTableSort\(el\)/);
   const sortBody = ui.slice(ui.indexOf('function psApplyTableSort'), ui.indexOf('function initPriceSystemTableSort'));
@@ -26,6 +26,7 @@ test('price system sorting is client-side, stable, and can restore the original 
 });
 
 test('numeric columns and editable inputs expose raw values for accurate sorting', () => {
+  assert.match(ui, /var _psTableSort=new WeakMap\(\)/);
   assert.match(ui, /function psSortValueAttr\(value\)/);
   assert.match(ui, /querySelector&&td\.querySelector\('input\.ps-input'\)/);
   assert.match(ui, /data-sort-value/);

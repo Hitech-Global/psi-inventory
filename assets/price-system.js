@@ -154,6 +154,7 @@ function fieldText(v,f){
  if(f.field_type==='amount')return (f.unit?esc(f.unit):currency())+' '+n;
  return f.unit?n+' '+esc(f.unit):n;
 }
+var _psTableSort=new WeakMap();
 function psSortValueAttr(value){return ' data-sort-value="'+esc(value==null?'':value)+'"';}
 function psSortCellValue(td){
  if(!td)return null;
@@ -223,9 +224,9 @@ function initPriceSystemTableSort(container){
   th.setAttribute('aria-sort','none');
   th.addEventListener('click',function(event){
    if(event.target.closest&&event.target.closest('input,button,select'))return;
-   const state=table.__psSortState||{col:-1,dir:'none'};
+   const state=_psTableSort.get(table)||{col:-1,dir:'none'};
    const next=(state.col!==index||state.dir==='none')?'desc':(state.dir==='desc'?'asc':'none');
-   table.__psSortState={col:index,dir:next};
+   _psTableSort.set(table,{col:index,dir:next});
    Array.prototype.forEach.call(head.cells,function(header){
     const icon=header.querySelector('.ps-sort-indicator');
     if(icon)icon.textContent='↕';
