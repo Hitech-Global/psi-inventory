@@ -8062,8 +8062,10 @@ function rpGetSaveState(channel, rid){
 // 注意：journal 不参与数据库 WHERE，也不是 DB revision。
 function rpWriteJournal(channel, rid, qty){
   try{
-    var r=rpGetRow(channel, rid);
-    var baseRecalc = r ? (r._serverRecalc||0) : 0;
+    var r=rpGetSaveBaselineRow(channel, rid);
+    var baseRecalc = r
+      ? (r._serverRecalc!=null ? r._serverRecalc : (r.recalc_revision||0))
+      : (rpGetSaveState(channel, rid).serverRecalc||0);
     window._rpLocalOp = (window._rpLocalOp||0)+1;
     var entry={v:qty, localOp:window._rpLocalOp, baseRecalcRevision:baseRecalc};
     sessionStorage.setItem(window._rpSaveJournalPrefix+rid+'::'+channel, JSON.stringify(entry));
@@ -8078,6 +8080,19 @@ function rpClearJournalKey(channel, rid){
 function rpGetRow(channel, rid){
   var cache=window._rpChannelData&&window._rpChannelData[channel];
   return cache?cache[rid]:null;
+}
+// 保存 CAS 基准不能只依赖当前渠道/筛选视图缓存。
+// 待保存队列跨线上、线下及筛选条件；优先使用当前渠道缓存，缺失时回退全量 snapshot。
+function rpGetSaveBaselineRow(channel, rid){
+  var row=rpGetRow(channel, rid);
+  if(row) return row;
+  var snapshot=window._rpSnapshot;
+  if(snapshot&&snapshot.status==='ready'&&Array.isArray(snapshot.rows)){
+    for(var i=0;i<snapshot.rows.length;i++){
+      if(String(snapshot.rows[i].id)===String(rid)) return snapshot.rows[i];
+    }
+  }
+  return null;
 }
 // target-turnover in-flight 期间临时锁住该 rid 双渠道「建议采购」输入，避免生成 journal/pending。
 function rpSetRecalcInFlight(rid, val){
@@ -8144,26 +8159,41 @@ function rpFlushOne(channel, rid){
   var val=st.pending; st.pending=null; st.inFlight=true;
   var sentVal=val;
   var retryPendingAfterFlight=false;
-  var r=rpGetRow(channel, rid);
-  var expRecalc = r ? (r._serverRecalc||0) : 0;
+  var r=rpGetSaveBaselineRow(channel, rid);
+  var expRecalc = r
+    ? (r._serverRecalc!=null ? r._serverRecalc : (r.recalc_revision||0))
+    : (st.serverRecalc||0);
   var data={};
-  if(channel==='online'){ data.online_suggested_qty=val; data.expected_online_write_seq = r ? (r._serverRevOnline||0) : 0; }
-  else { data.offline_suggested_qty=val; data.expected_offline_write_seq = r ? (r._serverRevOffline||0) : 0; }
+  if(channel==='online'){
+    data.online_suggested_qty=val;
+    data.expected_online_write_seq = r
+      ? (r._serverRevOnline!=null ? r._serverRevOnline : (r.online_write_seq||0))
+      : (st.serverRevOnline||0);
+  }else{
+    data.offline_suggested_qty=val;
+    data.expected_offline_write_seq = r
+      ? (r._serverRevOffline!=null ? r._serverRevOffline : (r.offline_write_seq||0))
+      : (st.serverRevOffline||0);
+  }
   data.expected_recalc_revision = expRecalc;
   st.flightPromise=api('/api/replenishment-suggestions/'+rid,'PUT',data)
     .then(function(resp){
       var d=resp&&resp.data;
       if(!resp || resp.success===false || !d) throw new Error('建议采购数量保存未返回权威结果');
-      rpPatchSnapshotRow(d);   // RP-SNAPSHOT：server 权威行就地 merge 进 L0（success 与 stale 都要，防「切走再回来显示旧值」）
-      var r2=rpGetRow(channel, rid);
-      if(!r2) throw new Error('建议采购数量保存后未找到本地 SKU 行');
+      rpPatchSnapshotRow(d);   // RP-SNAPSHOT：若全量 snapshot 已就绪则同步；未就绪或当前筛选不可见不代表服务器保存失败
+      var r2=rpGetSaveBaselineRow(channel, rid);
       var c=r2?rpGetChannelC(channel,r2):null;
-      if(r2&&d){
-        // 成功或 stale 都先用 server 当前 revision 更新本地 baseline
-        r2._serverRevOnline = (d.online_write_seq!=null)?d.online_write_seq:r2._serverRevOnline;
-        r2._serverRevOffline = (d.offline_write_seq!=null)?d.offline_write_seq:r2._serverRevOffline;
-        r2._serverRecalc = (d.recalc_revision!=null)?d.recalc_revision:r2._serverRecalc;
-        if(resp.stale===true){
+      // 保存响应本身携带服务器权威 revision。即使该 SKU 不在当前渠道视图缓存，也要保存 baseline，
+      // 以便同一队列中的下一次输入可以继续使用正确 CAS 版本。
+      st.serverRevOnline = (d.online_write_seq!=null) ? d.online_write_seq : (r2 ? (r2._serverRevOnline!=null?r2._serverRevOnline:(r2.online_write_seq||0)) : (st.serverRevOnline||0));
+      st.serverRevOffline = (d.offline_write_seq!=null) ? d.offline_write_seq : (r2 ? (r2._serverRevOffline!=null?r2._serverRevOffline:(r2.offline_write_seq||0)) : (st.serverRevOffline||0));
+      st.serverRecalc = (d.recalc_revision!=null) ? d.recalc_revision : (r2 ? (r2._serverRecalc!=null?r2._serverRecalc:(r2.recalc_revision||0)) : (st.serverRecalc||0));
+      if(r2){
+        r2._serverRevOnline = st.serverRevOnline;
+        r2._serverRevOffline = st.serverRevOffline;
+        r2._serverRecalc = st.serverRecalc;
+      }
+      if(resp.stale===true){
           // stale：区分 manual conflict 与 system recompute invalidation
           var jRecalc = (st.journal && st.journal.baseRecalcRevision!=null) ? st.journal.baseRecalcRevision : r2._serverRecalc;
           if(jRecalc !== r2._serverRecalc){
@@ -8190,9 +8220,11 @@ function rpFlushOne(channel, rid){
           return false;
         }
         // success：同步 server truth 到内存缓存
-        if(channel==='online'){ r2.online_suggested_qty=d.online_suggested_qty; }
-        else { r2.offline_suggested_qty=d.offline_suggested_qty; }
-        r2.suggested_qty=d.suggested_qty;
+        if(r2){
+          if(channel==='online'){ r2.online_suggested_qty=d.online_suggested_qty; }
+          else { r2.offline_suggested_qty=d.offline_suggested_qty; }
+          r2.suggested_qty=d.suggested_qty;
+        }
         if(c) c.suggestedQty = channel==='online' ? (d.online_suggested_qty||0) : (d.offline_suggested_qty||0);
         // 仅当无 newer pending 时才清 override + journal，回归 DB truth
         if(st.pending===null){
@@ -8325,11 +8357,16 @@ function rpFlushAllPendingKeepalive(){
       var st=cm[rid];
       var val=st.inFlight?null:st.pending;   // 在途的请求由 rpFlushOne 自身完成，避免重复
       if(val===null) return;
-      var r=rpGetRow(ch, rid);
+      var r=rpGetSaveBaselineRow(ch, rid);
       var data={};
-      if(ch==='online'){ data.online_suggested_qty=val; data.expected_online_write_seq=r?(r._serverRevOnline||0):0; }
-      else { data.offline_suggested_qty=val; data.expected_offline_write_seq=r?(r._serverRevOffline||0):0; }
-      data.expected_recalc_revision=r?(r._serverRecalc||0):0;
+      if(ch==='online'){
+        data.online_suggested_qty=val;
+        data.expected_online_write_seq=r?(r._serverRevOnline!=null?r._serverRevOnline:(r.online_write_seq||0)):(st.serverRevOnline||0);
+      }else{
+        data.offline_suggested_qty=val;
+        data.expected_offline_write_seq=r?(r._serverRevOffline!=null?r._serverRevOffline:(r.offline_write_seq||0)):(st.serverRevOffline||0);
+      }
+      data.expected_recalc_revision=r?(r._serverRecalc!=null?r._serverRecalc:(r.recalc_revision||0)):(st.serverRecalc||0);
       try{
         fetch('/api/replenishment-suggestions/'+rid,{method:'PUT',headers:{'Content-Type':'application/json','Accept-Language':(typeof getLang==='function'?getLang():'zh')},body:JSON.stringify(data),credentials:'same-origin',keepalive:true});
       }catch(e){}
