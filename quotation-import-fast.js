@@ -5,6 +5,7 @@ module.exports=function installQuotationImportFast(deps){
   const crypto=require('node:crypto');
   const {withAsyncPoolClient,withGenerateClient}=require('./pg-async');
 const {netacCategoryFromQuotationType}=require('./sku-category');
+const {createPriceSystemQuotationSync}=require('./price-system-quotation-sync');
   const MAX_ROWS=5000;
   const STALE_MS=90*1000;
   const clean=v=>String(v??'').trim();
@@ -13,6 +14,9 @@ const {netacCategoryFromQuotationType}=require('./sku-category');
   const mappingKey=(supplier,brand,part)=>[supplier,brand,norm(part)].join('\u0001');
   const nowIso=()=>new Date().toISOString();
   const isPg=()=>String(process.env.DB_DRIVER||'sqlite').toLowerCase()==='pg';
+  const syncPriceSystemQuotationForKeys=createPriceSystemQuotationSync({query,run,genId});
+  function quotationSyncKeys(rows,mappings){const keys=new Map();(rows||[]).forEach(r=>{const sku=clean(r.psi_sku_code),brand=clean(r.brand);if(sku&&brand)keys.set(brand.toLowerCase()+'|'+sku.toUpperCase(),{sku_code:sku,brand});});(mappings||[]).forEach(r=>{const sku=clean(r.psi_sku_code),brand=clean(r.brand);if(sku&&brand)keys.set(brand.toLowerCase()+'|'+sku.toUpperCase(),{sku_code:sku,brand});});return [...keys.values()];}
+  function syncImportedQuotes(rows,mappings,reason){const keys=quotationSyncKeys(rows,mappings);if(!keys.length)return null;try{return syncPriceSystemQuotationForKeys(keys,{id:'system',name:'System'},reason||'Quotation import');}catch(error){console.error('[quotation-import] price-system quotation auto-sync failed',error&&error.message||error);return null;}}
   let ensurePgPromise=null;
 
   function normalizeDate(value){
@@ -368,6 +372,7 @@ const {netacCategoryFromQuotationType}=require('./sku-category');
       const writeRows=mode==='overwrite'?collapsed:collapsed.filter(r=>!existing.has(keyOf(r)));
       await savePgRun(importId,{...c,no_quote,phase:'writing',percent:68,processed_count:0,message:'正在批量写入报价和料号映射'});
       const written=await bulkWritePg(writeRows,mode,importId,nowIso(),netacSkuCodes);
+      syncImportedQuotes(rows,mappings,'Quotation import');
       await savePgRun(importId,{...c,no_quote,phase:'finalizing',percent:92,processed_count:rows.length,message:'报价写入完成，正在确认结果'});
       const expected=mode==='overwrite'?c.inserted+c.updated:c.inserted;
       if(written!==expected)console.warn('[quotation-import] written count differs',{importId,written,expected,mode});
@@ -465,6 +470,7 @@ const {netacCategoryFromQuotationType}=require('./sku-category');
         bulkWriteSqlite(writeRows,mode,importId,now);
         syncNetacMasterCategoriesSqlite(netacSkuCodes,now);
       });
+      syncImportedQuotes(rows,mappings,'Quotation import');
       return res.json({success:true,import_id:importId,status:'completed',phase:'completed',percent:100,total_count:rows.length,processed_count:rows.length,...c,no_quote,message:'导入完成'});
     }catch(e){
       const body={error:e.message,errors:e.errors||undefined,code:e.code,import_id:importId,status:'blocked'};
