@@ -68,7 +68,7 @@ function serverResponse(value, revision) {
   };
 }
 
-function makeSaveHarness(api) {
+function makeSaveHarness(api, options = {}) {
   const row = {
     id: 'row-1',
     online_suggested_qty: 1,
@@ -85,9 +85,15 @@ function makeSaveHarness(api) {
       offline: { suggestedQty: 2 }
     }
   };
+  const channelData = { online: { 'row-1': row }, offline: { 'row-1': row } };
+  if (options.missingChannel) delete channelData[options.missingChannel]['row-1'];
   const window = {
-    _rpChannelData: { online: { 'row-1': row }, offline: { 'row-1': row } },
-    _rpManualStock: { online: {}, offline: {} }
+    _rpChannelData: channelData,
+    _rpManualStock: { online: {}, offline: {} },
+    _rpSnapshot: {
+      status: options.snapshotStatus || 'ready',
+      rows: options.snapshotRows === false ? [] : [row]
+    }
   };
   const context = {
     window,
@@ -96,7 +102,14 @@ function makeSaveHarness(api) {
     rpSetManualStock(channel, rid, value) {
       window._rpManualStock[channel][rid] = value;
     },
-    rpPatchSnapshotRow: data => Object.assign(row, data),
+    rpPatchSnapshotRow(data) {
+      const snapshot = window._rpSnapshot;
+      if (!snapshot || snapshot.status !== 'ready') return false;
+      const target = (snapshot.rows || []).find(item => String(item.id) === String(data.id));
+      if (!target) return false;
+      Object.assign(target, data);
+      return true;
+    },
     rpGetChannelC: (channel, current) => current._channelC[channel],
     rpClearDataCache() {},
     rpInvalidateSuggestionViews() {},
@@ -136,6 +149,71 @@ test('drain waits for the latest coalesced edit before declaring the save comple
   assert.equal(h.row.suggested_qty, 10);
   assert.equal(state.pending, null);
   assert.equal(state.failed, false);
+});
+
+test('cross-channel pending save uses the full snapshot when its channel cache is not loaded', async () => {
+  const calls = [];
+  const h = makeSaveHarness((_url, _method, body) => {
+    calls.push(body);
+    return Promise.resolve({
+      success: true,
+      stale: false,
+      data: {
+        id: 'row-1',
+        online_suggested_qty: 1,
+        offline_suggested_qty: 6,
+        suggested_qty: 7,
+        online_write_seq: 0,
+        offline_write_seq: 1,
+        recalc_revision: 0
+      }
+    });
+  }, { missingChannel: 'offline' });
+
+  const state = h.context.rpGetSaveState('offline', 'row-1');
+  state.pending = 6;
+
+  assert.equal(await h.context.rpDrainAllPending(), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].expected_offline_write_seq, 0);
+  assert.equal(h.row.offline_suggested_qty, 6);
+  assert.equal(state.pending, null);
+  assert.equal(state.failed, false);
+});
+
+test('a confirmed server save is not marked failed when the snapshot has not hydrated yet', async () => {
+  const calls = [];
+  const h = makeSaveHarness((_url, _method, body) => {
+    calls.push(body);
+    return Promise.resolve({
+      success: true,
+      stale: false,
+      data: {
+        id: 'row-1',
+        online_suggested_qty: 1,
+        offline_suggested_qty: 6,
+        suggested_qty: 7,
+        online_write_seq: 0,
+        offline_write_seq: 5,
+        recalc_revision: 3
+      }
+    });
+  }, { missingChannel: 'offline', snapshotStatus: 'loading', snapshotRows: false });
+
+  const state = h.context.rpGetSaveState('offline', 'row-1');
+  state.serverRevOffline = 4;
+  state.serverRecalc = 3;
+  state.journal = { baseRecalcRevision: 3 };
+  state.pending = 6;
+
+  assert.equal(await h.context.rpDrainAllPending(), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].expected_offline_write_seq, 4);
+  assert.equal(calls[0].expected_recalc_revision, 3);
+  assert.equal(state.pending, null);
+  assert.equal(state.failed, false);
+  assert.equal(state.serverRevOffline, 5);
+  assert.equal(state.serverRecalc, 3);
 });
 
 test('a failed save stays pending, does not retry forever, and can be retried explicitly', async () => {
