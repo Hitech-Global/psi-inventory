@@ -1154,8 +1154,11 @@ function registerPriceSystemRoutes(app, deps) {
       const validation = validateFormula(normalizedFormula, allowedFormulaVariables(fields, excludeKey));
       const supplied = body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables) ? body.variables : {};
       const variables = {};
+      const previewFieldMap = new Map(fields.map(field => [field.field_key, field]));
       validation.variables.forEach(key => {
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
+        const sourceField = previewFieldMap.get(key);
+        if ((sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula')) && (raw == null || raw === '')) throw new Error('当前 SKU 缺少引用字段数值：' + key);
         const value = raw == null || raw === '' ? 0 : Number(raw);
         if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         variables[key] = value;
@@ -1199,9 +1202,11 @@ function registerPriceSystemRoutes(app, deps) {
     const context = {};
     try {
       allowedFormulaVariables(fields).forEach(key => {
-        const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
-        const value = raw == null || raw === '' ? 0 : Number(raw);
-        if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
+        const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : null;
+        const sourceField = fieldMap.get(key);
+        const missingComputedValue = raw == null || raw === '';
+        const value = missingComputedValue ? (sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula') ? null : 0) : Number(raw);
+        if (value !== null && !Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         context[key] = value;
       });
       let manualSrp = null;
@@ -1242,10 +1247,16 @@ function registerPriceSystemRoutes(app, deps) {
         try {
           const expression = normalizeFormulaExpression(categoryFormula, fields);
           const variables = Object.assign({}, context, resolved);
+          let hasMissingComputedValue = false;
           getFormulaVariables(expression).forEach(dependency => {
-            if (fieldMap.has(dependency)) variables[dependency] = resolveField(dependency);
+            if (fieldMap.has(dependency)) {
+              variables[dependency] = resolveField(dependency);
+              const dependencyField = fieldMap.get(dependency);
+              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula')) hasMissingComputedValue = true;
+            }
           });
-          resolved[key] = evaluateFormula(expression, variables);
+          resolved[key] = hasMissingComputedValue ? null : evaluateFormula(expression, variables);
+          if (hasMissingComputedValue) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值';
         } catch (error) {
           errors[key] = error.message;
           resolved[key] = 0;
@@ -1255,6 +1266,7 @@ function registerPriceSystemRoutes(app, deps) {
       }
       const values = {};
       fields.forEach(field => {
+        if (field.field_type === 'reference') { values[field.field_key] = context[field.field_key] == null ? null : Number(context[field.field_key]); return; }
         if (field.field_type !== 'formula') return;
         values[field.field_key] = isCategoryApplicable(field, category) && formulaForCategory(field, category)
           ? resolveField(field.field_key)
