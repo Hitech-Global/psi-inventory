@@ -27,7 +27,7 @@ test('formula editor groups base data, fee fields and SRP separately without dup
 });
 
 test('formula rules support multiple formulas with multi-category selection and quick actions', () => {
-  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'?'display:none':'')+'"`));
+  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'||type==='reference'?'display:none':'')+'"`));
   assert.ok(ui.includes('window.__psFormulaRulesDraft='));
   assert.ok(ui.includes('function formulaRuleDraftsFromMap(map,legacyFormula,legacyCategories,categoryList)'));
   assert.ok(ui.includes('window.psAddFormulaRule=function()'));
@@ -38,6 +38,11 @@ test('formula rules support multiple formulas with multi-category selection and 
   assert.ok(ui.includes('window.psFilterRuleCategories=function(index,query)'));
   assert.ok(ui.includes('class="ps-formula-rule-input"'));
   assert.ok(ui.includes('formula_rules[category]=expression'));
+  assert.ok(ui.includes('id="ps-reference-scheme"'));
+  assert.ok(ui.includes('id="ps-reference-field"'));
+  assert.ok(ui.includes('psReferenceSourceChanged'));
+  assert.ok(ui.includes('psReferenceFieldChanged'));
+  assert.ok(ui.includes("f.field_type==='reference'"));
   assert.ok(ui.includes('window.psPreviewFormulaRule=async function(index)'));
   assert.ok(ui.includes('每条公式规则都需要填写公式并至少选择一个适用类目。'));
   assert.ok(ui.includes('被多个公式规则重复选择'));
