@@ -110,6 +110,15 @@ function makeSaveHarness(api, options = {}) {
       Object.assign(target, data);
       return true;
     },
+    async rpEnsureSnapshotReady() {
+      if (window._rpSnapshot.status !== 'ready') {
+        window._rpSnapshot.status = 'ready';
+        if (options.hydrateRowOnEnsure && !window._rpSnapshot.rows.length) {
+          window._rpSnapshot.rows.push(row);
+        }
+      }
+      return window._rpSnapshot.status === 'ready';
+    },
     rpGetChannelC: (channel, current) => current._channelC[channel],
     rpClearDataCache() {},
     rpInvalidateSuggestionViews() {},
@@ -179,6 +188,48 @@ test('cross-channel pending save uses the full snapshot when its channel cache i
   assert.equal(h.row.offline_suggested_qty, 6);
   assert.equal(state.pending, null);
   assert.equal(state.failed, false);
+});
+
+test('journal replay waits for snapshot hydration before sending the CAS write', async () => {
+  const calls = [];
+  const h = makeSaveHarness((_url, _method, body) => {
+    calls.push(body);
+    return Promise.resolve({
+      success: true,
+      stale: false,
+      data: {
+        id: 'row-1',
+        online_suggested_qty: 1,
+        offline_suggested_qty: 6,
+        suggested_qty: 7,
+        online_write_seq: 0,
+        offline_write_seq: 8,
+        recalc_revision: 3
+      }
+    });
+  }, {
+    missingChannel: 'offline',
+    snapshotStatus: 'loading',
+    snapshotRows: false,
+    hydrateRowOnEnsure: true
+  });
+
+  h.row._serverRevOffline = undefined;
+  h.row._serverRecalc = undefined;
+  h.row.offline_write_seq = 7;
+  h.row.recalc_revision = 3;
+
+  const state = h.context.rpGetSaveState('offline', 'row-1');
+  state.journal = { baseRecalcRevision: 3 };
+  state.pending = 6;
+
+  assert.equal(await h.context.rpDrainAllPending(), true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].expected_offline_write_seq, 7);
+  assert.equal(calls[0].expected_recalc_revision, 3);
+  assert.equal(state.pending, null);
+  assert.equal(state.failed, false);
+  assert.equal(h.window._rpSnapshot.status, 'ready');
 });
 
 test('a confirmed server save is not marked failed when the snapshot has not hydrated yet', async () => {
