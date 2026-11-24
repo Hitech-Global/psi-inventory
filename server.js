@@ -7768,6 +7768,48 @@ function calculateSuggestion(onlineTargetStock, offlineTargetStock, totalInvento
   };
 }
 
+// Forecast-generated PO quantity is a reservation deduction, not physical stock.
+function calculateForecastPOConsumption(onlineSuggestedQty, offlineSuggestedQty, poUnconfirmedQty) {
+  const online = Math.max(0, Math.trunc(Number(onlineSuggestedQty) || 0));
+  const offline = Math.max(0, Math.trunc(Number(offlineSuggestedQty) || 0));
+  const total = online + offline;
+  const consume = Math.min(total, Math.max(0, Math.trunc(Number(poUnconfirmedQty) || 0)));
+  if (total <= 0 || consume <= 0) return { online: 0, offline: 0 };
+  let onlineConsumed = Math.min(online, Math.round(consume * online / total));
+  let offlineConsumed = consume - onlineConsumed;
+  if (offlineConsumed > offline) {
+    onlineConsumed += offlineConsumed - offline;
+    offlineConsumed = offline;
+  }
+  if (onlineConsumed > online) {
+    offlineConsumed += onlineConsumed - online;
+    onlineConsumed = online;
+  }
+  return { online: onlineConsumed, offline: offlineConsumed };
+}
+
+async function loadForecastPOConsumptionMap(exec, skuCodes) {
+  const codes = Array.from(new Set((skuCodes || []).map(v => String(v || '').trim()).filter(Boolean)));
+  const map = Object.create(null);
+  if (!codes.length || !exec || typeof exec.all !== 'function') return map;
+  const rows = await exec.all(
+    'SELECT poi.sku_code, po.country, po.target_warehouse, ' +
+    'COALESCE(SUM(CASE WHEN COALESCE(poi.po_qty,0) > COALESCE(poi.transferred_pi_qty,0) ' +
+    'THEN COALESCE(poi.po_qty,0) - COALESCE(poi.transferred_pi_qty,0) ELSE 0 END),0) AS unconfirmed_qty ' +
+    'FROM purchase_order_items poi JOIN purchase_orders po ON poi.po_id = po.id ' +
+    'WHERE COALESCE(po.from_suggestion,0) = 1 ' +
+    "AND COALESCE(po.po_status,'') NOT IN ('cancelled','transferred_pi') " +
+    'AND poi.sku_code IN (' + codes.map(() => '?').join(',') + ') ' +
+    'GROUP BY poi.sku_code, po.country, po.target_warehouse',
+    codes
+  );
+  for (const row of rows || []) {
+    const key = String(row.sku_code || '') + '|' + String(row.country || '') + '|' + String(row.target_warehouse || '');
+    map[key] = Math.max(0, Number(row.unconfirmed_qty) || 0);
+  }
+  return map;
+}
+
 function buildSuggestionText(salesStatus, lifecycleStatus, suggestedQty, brandStopped) {
   const lifecycle = lifecycleStatus || 'stable';
   if (brandStopped || salesStatus === '停采/清库存' || salesStatus === '停采/停产' || lifecycle === 'clearance' || lifecycle === 'stopped') {
@@ -8469,7 +8511,7 @@ app.get('/api/replenishment-suggestions', requireApiPermission('replenishment_vi
 // 仅调用已确认无 DB side effect 的 helper（calculateSuggestion/resolveChannelRatio/
 // getDimTurnover/detectStockoutDistortion/classifySkuState/shouldBlockReplenish/
 // buildSuggestionText/genId）。
-function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false }) {
+function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg, channelConfigMap, countriesCache, now, preserveManualOverrides = false, forecastPoUnconfirmedQty = 0 }) {
       // 计算近4个月销量（从销售明细表汇总，is_valid_order=1）
       const salesMap = {};
       const onlineSalesMap = {};
@@ -8673,10 +8715,17 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
       // 冻结公式：max(0, 线上目标库存 + 线下目标库存 - 当前库存池)。
       const blocked = shouldBlockReplenish(sales_status, classifyResult.risk_tags);
       const suggestionParts = calculateSuggestion(online_target_stock, offline_target_stock, total_inventory_pool, blocked);
-      let online_suggested_qty = suggestionParts.online_suggested_qty;
-      let offline_suggested_qty = suggestionParts.offline_suggested_qty;
+      const poConsumption = calculateForecastPOConsumption(
+        suggestionParts.online_suggested_qty,
+        suggestionParts.offline_suggested_qty,
+        forecastPoUnconfirmedQty
+      );
+      let online_suggested_qty = Math.max(0, suggestionParts.online_suggested_qty - poConsumption.online);
+      let offline_suggested_qty = Math.max(0, suggestionParts.offline_suggested_qty - poConsumption.offline);
       let other_suggested_qty = 0;
-      suggested_qty = suggestionParts.suggested_qty;
+      let po_consumed_online_qty = poConsumption.online;
+      let po_consumed_offline_qty = poConsumption.offline;
+      suggested_qty = online_suggested_qty + offline_suggested_qty + other_suggested_qty;
 
       // 用户可见建议说明必须随快照刷新，不能清空。
       let suggestion = buildSuggestionText(sales_status, lifecycle, suggested_qty, brandStopped);
@@ -8697,6 +8746,8 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
         online_suggested_qty = 0;
         offline_suggested_qty = 0;
         other_suggested_qty = 0;
+        po_consumed_online_qty = 0;
+        po_consumed_offline_qty = 0;
         final_order_qty = 0;
         moqQty = 0;
         after_order_turnover_months = avg_sales_period > 0 ? total_inventory_pool / avg_sales_period : 99;
@@ -8709,7 +8760,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
           mode: 'update',
           id: existing_rs.id,
           values: [
-            avail, transit, piUnshipped, poUnconfirmed,
+            avail, transit, piUnshipped, poUnconfirmed, po_consumed_online_qty, po_consumed_offline_qty,
             total_inventory_pool, sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
@@ -8729,7 +8780,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
           mode: 'insert',
           values: [
             genId('rs'), inv.sku_code, inv.country, inv.warehouse, avail, transit,
-            piUnshipped, poUnconfirmed, total_inventory_pool,
+            piUnshipped, poUnconfirmed, po_consumed_online_qty, po_consumed_offline_qty, total_inventory_pool,
             sales_m1, sales_m2, sales_m3, sales_m4, Math.round(avg_sales_4m * 100) / 100, Math.round(avg_sales_period * 100) / 100, Math.round(online_avg_sales_period * 100) / 100, Math.round(offline_avg_sales_period * 100) / 100,
             online_sales_m1, online_sales_m2, online_sales_m3, online_sales_m4, Math.round(online_avg_sales_4m * 100) / 100,
             offline_sales_m1, offline_sales_m2, offline_sales_m3, offline_sales_m4, Math.round(offline_avg_sales_4m * 100) / 100,
@@ -8750,7 +8801,7 @@ function computeSuggestionForTarget({ inv, sku, existing_rs, brandStopped, month
 // 刷新引擎与 full generate 共用的建议列（写入顺序与 computeSuggestionForTarget 的 update/insert values 完全一致）
 const RS_INSERT_COLS = [
   'id', 'sku_code', 'country', 'target_warehouse', 'available_qty', 'in_transit_qty',
-  'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'total_inventory_pool',
+  'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'po_consumed_online_qty', 'po_consumed_offline_qty', 'total_inventory_pool',
   'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
   'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
   'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
@@ -8766,7 +8817,7 @@ const RS_INSERT_COLS = [
 ];
 
 const RS_SET_COLS = [
-  'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty',
+  'available_qty', 'in_transit_qty', 'pi_confirmed_unshipped_qty', 'po_unconfirmed_pi_qty', 'po_consumed_online_qty', 'po_consumed_offline_qty',
   'total_inventory_pool', 'sales_m1', 'sales_m2', 'sales_m3', 'sales_m4', 'avg_sales_4m', 'avg_sales_period', 'online_avg_sales_period', 'offline_avg_sales_period',
   'online_sales_m1', 'online_sales_m2', 'online_sales_m3', 'online_sales_m4', 'online_avg_sales_4m',
   'offline_sales_m1', 'offline_sales_m2', 'offline_sales_m3', 'offline_sales_m4', 'offline_avg_sales_4m',
@@ -8830,11 +8881,49 @@ function preserveManualSuggestedQtyForRefresh(result, existingRow, brandStopped)
     lifecycle === 'clearance' || lifecycle === 'stopped';
   if (blocked) return result;
 
+  // Preserve manual values, adjusting only the forecast-PO reservation delta.
+  // On PO->PI transfer, confirmed PI stock replaces the reservation deduction.
+  const oldAppliedOnline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_online_qty) || 0));
+  const oldAppliedOffline = Math.max(0, Math.trunc(Number(existingRow.po_consumed_offline_qty) || 0));
+  let newAppliedOnline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_online_qty')]) || 0));
+  let newAppliedOffline = Math.max(0, Math.trunc(Number(result.values[idx('po_consumed_offline_qty')]) || 0));
+  // A manual channel value is the remaining suggestion. Never record more PO
+  // consumption against that channel than its current remainder plus prior
+  // applied consumption; cancelling an oversized PO must not over-restore it.
   if (preserveOnline) {
-    result.values[idx('online_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0));
+    newAppliedOnline = Math.min(newAppliedOnline,
+      oldAppliedOnline + Math.max(0, Math.trunc(Number(existingRow.online_suggested_qty) || 0)));
+    result.values[idx('po_consumed_online_qty')] = newAppliedOnline;
   }
   if (preserveOffline) {
-    result.values[idx('offline_suggested_qty')] = Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0));
+    newAppliedOffline = Math.min(newAppliedOffline,
+      oldAppliedOffline + Math.max(0, Math.trunc(Number(existingRow.offline_suggested_qty) || 0)));
+    result.values[idx('po_consumed_offline_qty')] = newAppliedOffline;
+  }
+  const oldAppliedTotal = oldAppliedOnline + oldAppliedOffline;
+  const newAppliedTotal = newAppliedOnline + newAppliedOffline;
+  const poolDelta = (Number(result.values[idx('total_inventory_pool')]) || 0) -
+    (Number(existingRow.total_inventory_pool) || 0);
+  const poDelta = newAppliedTotal - oldAppliedTotal;
+  let matchedPoolDelta = 0;
+  if (poolDelta !== 0 && poDelta !== 0 && Math.sign(poolDelta) !== Math.sign(poDelta)) {
+    matchedPoolDelta = Math.sign(poolDelta) * Math.min(Math.abs(poolDelta), Math.abs(poDelta));
+  }
+  const oldOnlineTarget = Math.max(0, Number(existingRow.online_target_stock) || 0);
+  const oldOfflineTarget = Math.max(0, Number(existingRow.offline_target_stock) || 0);
+  const oldTargetTotal = oldOnlineTarget + oldOfflineTarget;
+  const onlinePoolDelta = oldTargetTotal > 0 ? Math.round(matchedPoolDelta * oldOnlineTarget / oldTargetTotal) : 0;
+  const offlinePoolDelta = matchedPoolDelta - onlinePoolDelta;
+  const onlineSupplyDelta = (newAppliedOnline - oldAppliedOnline) + onlinePoolDelta;
+  const offlineSupplyDelta = (newAppliedOffline - oldAppliedOffline) + offlinePoolDelta;
+
+  if (preserveOnline) {
+    result.values[idx('online_suggested_qty')] = Math.max(0,
+      Math.trunc(Number(existingRow.online_suggested_qty) || 0) - onlineSupplyDelta);
+  }
+  if (preserveOffline) {
+    result.values[idx('offline_suggested_qty')] = Math.max(0,
+      Math.trunc(Number(existingRow.offline_suggested_qty) || 0) - offlineSupplyDelta);
   }
   const total = Math.max(0, Number(result.values[idx('online_suggested_qty')]) || 0) +
     Math.max(0, Number(result.values[idx('offline_suggested_qty')]) || 0) +
@@ -8986,6 +9075,7 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, in
 
   const skuCodes = Array.from(new Set(affectedKeys.map(k => k.sku_code)));
   const inPh = skuCodes.map(() => '?').join(',');
+  const forecastPoConsumptionMap = await loadForecastPOConsumptionMap(exec, skuCodes);
   const now = new Date();
   const oneVal = async key => {
     const row = await exec.one("SELECT value FROM system_config WHERE key = ?", [key]);
@@ -9054,6 +9144,7 @@ async function refreshExistingSalesSuggestions({ exec, affectedKeys, dialect, in
   for (const target of targets) {
     const result = computeSuggestionForTarget({
       inv: target.inv, sku: target.sku, existing_rs: target.er, brandStopped: target.brandStopped,
+      forecastPoUnconfirmedQty: forecastPoConsumptionMap[target.inv.sku_code + '|' + (target.inv.country || '') + '|' + (target.inv.warehouse || '')] || 0,
       months, monthlyMap, aggMap, targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
       channelConfigMap, countriesCache, now, preserveManualOverrides: true
     });
@@ -9104,6 +9195,57 @@ async function refreshForecastSuggestionsForKeys(keys) {
     const exec = buildSqliteExec();
     return await refreshExistingSalesSuggestions({ exec, affectedKeys, dialect: 'sqlite', includeMissing: true });
   });
+}
+
+function collectPOForecastKeys(poId) {
+  const po = queryOne('SELECT country FROM purchase_orders WHERE id = ?', [poId]);
+  if (!po || !po.country) return [];
+  return query('SELECT DISTINCT sku_code FROM purchase_order_items WHERE po_id = ?', [poId]).rows
+    .map(row => ({ sku_code: row.sku_code, country: po.country }));
+}
+
+function collectPIForecastKeys(piId) {
+  const rows = query(
+    "SELECT DISTINCT pii.sku_code, COALESCE(NULLIF(pi.country,''), NULLIF(po.country,''), '') AS country " +
+    "FROM proforma_invoice_items pii JOIN proforma_invoices pi ON pi.id = pii.pi_id " +
+    "LEFT JOIN purchase_orders po ON pi.related_po_id = po.id WHERE pii.pi_id = ? " +
+    "UNION SELECT DISTINCT a.sku_code, po.country AS country FROM pi_po_allocations a " +
+    "JOIN purchase_orders po ON po.id = a.po_id WHERE a.pi_id = ?",
+    [piId, piId]
+  ).rows;
+  return normalizeForecastAffectedKeys(rows);
+}
+
+function collectForecastKeysForPIImportRows(rows) {
+  const map = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const poNo = s(pick(row, ['关联PO编号', 'PO编号', 'related_po_no', 'po_no']));
+    const sku = s(pick(row, ['SKU', 'sku_code']));
+    if (!poNo || !sku) continue;
+    const po = queryOne('SELECT country FROM purchase_orders WHERE po_no = ?', [poNo]);
+    if (!po || !po.country) continue;
+    map.set(JSON.stringify([sku, po.country]), { sku_code: sku, country: po.country });
+  }
+  return Array.from(map.values());
+}
+
+async function refreshForecastAfterProcurementMutationBestEffort(keys, source) {
+  const affectedKeys = normalizeForecastAffectedKeys(keys);
+  if (!affectedKeys.length) return { success: true, skipped: true, updated: 0, inserted: 0 };
+  try {
+    await updateInventoryTransitDataAsync();
+    const refreshed = await refreshForecastSuggestionsForKeys(affectedKeys);
+    const revision = bumpForecastDataRevision();
+    return {
+      success: true,
+      updated: refreshed.updated || 0,
+      inserted: refreshed.inserted || 0,
+      revision
+    };
+  } catch (err) {
+    console.warn('[' + (source || 'PROCUREMENT') + '] forecast sync failed (business record already committed):', err && err.message);
+    return { success: false, error: 'FORECAST_SYNC_FAILED' };
+  }
 }
 
 function bumpForecastDataRevision() {
@@ -9241,6 +9383,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
     );
     const aggMap = {};
     for (const r of aggRows) aggMap[r.sku_code + '|' + (r.country || '')] = r;
+    const forecastPoConsumptionMap = await loadForecastPOConsumptionMap({ all: (sql, params) => aq(sql, params) }, genSkuCodes);
 
     // CHANNEL-ALLOCATION: 预加载国家表和渠道配置
     const countriesCache = await aq('SELECT id, name, code FROM countries ORDER BY sort_order');
@@ -9291,6 +9434,7 @@ app.post('/api/replenishment-suggestions/generate', requireApiPermission('replen
         const existing_rs = existingMap[inv.sku_code + '|' + inv.country + '|' + inv.warehouse] || null;
         batchRows.push(computeSuggestionForTarget({
           inv, sku, existing_rs, brandStopped,
+          forecastPoUnconfirmedQty: forecastPoConsumptionMap[inv.sku_code + '|' + (inv.country || '') + '|' + (inv.warehouse || '')] || 0,
           months, monthlyMap, aggMap,
           targetMonths, leadTimeMonths, salesStatsDays, dimCfg,
           channelConfigMap, countriesCache, now
@@ -9623,7 +9767,7 @@ app.get('/api/purchase-orders/:id', requireApiPermission('po_view'), asyncHandle
   res.json({ ...po, items });
 }));
 
-app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
@@ -9673,14 +9817,19 @@ app.post('/api/purchase-orders', requireApiPermission('po_create'), asyncHandler
       }
     });
 
-    // 在途字段刷新（派生数据，幂等；失败仅告警，不影响已提交主事实）
-    // 注意：原 handler 为同步函数，transaction() 同步返回、并不等待异步回调，
-    // 故 Phase C 采用 fire-and-forget .catch()，保持原“响应不等待 transit”的语义。
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
-    });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(d.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(
+        itemRows.map(it => ({ sku_code: it.sku_code, country: d.country || '' })),
+        'PO-CREATE'
+      );
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
+      });
+    }
 
-    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings });
+    res.json({ id: poId, po_no: poNo, ...d, currency, total_amount: totalAmount, price_warnings: priceWarnings, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9690,13 +9839,14 @@ function poHasNoncancelledPI(poId){
       (SELECT 1 FROM pi_po_allocations a WHERE a.pi_id=pi.id AND a.po_id=?))
     LIMIT 1`,[poId,poId]);
 }
-app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler((req, res) => {
+app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
     const { id } = req.params;
     // 读取已存在 PO 表头币种：币种属于价格快照，必须锁定；任何抓价均以数据库已锁定币种为准
     const origPo = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [id]);
     if (!origPo) return res.status(404).json({ error: 'PO不存在' });
+    const oldForecastKeys = Number(origPo.from_suggestion) === 1 ? collectPOForecastKeys(id) : [];
     const origCurrency = origPo.currency;
     // A draft PO may already have a real PI. Preserve source facts that PI
     // depends on, even before any approval has happened.
@@ -9786,13 +9936,18 @@ app.put('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncHand
       });
       run('UPDATE purchase_orders SET total_amount = ? WHERE id = ?', [totalAmount, id]);
     }
-    // Wave 0B: 补 transit 刷新钩子——PO PUT 修改 po_qty/untransferred_pi_qty 直接
-    // 改变 po_unconfirmed_pi_qty 聚合输入（旧实现依赖 GET replenishment 自愈掩盖，
-    // GET 纯读化后必须在此刷新）。原生 async fire-and-forget，不阻塞响应。
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
-    res.json({ success: true });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(origPo.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(
+        oldForecastKeys.concat(collectPOForecastKeys(id)),
+        'PO-PUT'
+      );
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-PUT] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9800,6 +9955,7 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
   try {
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
+    const forecastKeys = Number(po.from_suggestion) === 1 ? collectPOForecastKeys(po.id) : [];
     // PO with an actual PI may not be deleted, including a draft PO.
     if(poHasNoncancelledPI(po.id))
       return res.status(409).json({error:'该PO已关联PI，请先处理关联的PI，不能删除PO'});
@@ -9820,11 +9976,15 @@ app.delete('/api/purchase-orders/:id', requireApiPermission('po_create'), asyncH
       run('DELETE FROM purchase_order_items WHERE po_id = ?', [req.params.id]);
       run('DELETE FROM purchase_orders WHERE id = ?', [req.params.id]);
     });
-    // Wave 0B: COMMIT 后原生 async 刷新（删除后回落 po_unconfirmed_pi_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-DELETE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
-    res.json({ success: true });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(po.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PO-DELETE');
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-DELETE] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -9836,17 +9996,22 @@ app.post('/api/purchase-orders/:id/void', requireApiPermission('po_create'), asy
     const po = queryOne('SELECT * FROM purchase_orders WHERE id = ?', [req.params.id]);
     if (!po) return res.status(404).json({ error: 'PO不存在' });
     if (po.po_status === 'cancelled') return res.status(400).json({ error: '该 PO 已作废，不能重复作废' });
+    const forecastKeys = Number(po.from_suggestion) === 1 ? collectPOForecastKeys(po.id) : [];
     if(poHasNoncancelledPI(po.id))
       return res.status(409).json({error:'该PO已关联PI，不能直接作废；请先处理关联PI'});
     const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
     const newRemark = (po.remark ? po.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
     run("UPDATE purchase_orders SET po_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, po.id]);
-    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 po_unconfirmed_pi_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PO-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
+    let forecastSync = { success: true, skipped: true };
+    if (Number(po.from_suggestion) === 1) {
+      forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PO-VOID');
+    } else {
+      updateInventoryTransitDataAsync().catch((err) => {
+        console.warn('[PO-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
+      });
+    }
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'purchase_order', operation_type: 'void', target_ids: [po.id], affected_count: 1, old_values: { po_status: po.po_status }, new_values: { po_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
-    res.json({ success: true });
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -10390,14 +10555,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       throw new Error('PI_CREATE_UNCONFIRMED');
     }
 
-    // 派生/在途汇总刷新（可重算，放事务外，确保原子 PI 已落库后再算）。
-    // Wave 0B: 改为 COMMIT 后原生 async 后台刷新（fire-and-forget），响应不再等待
-    // 全表重算；失败仅告警，绝不影响「PI 已创建成功」这一原子事实。
-    // transit_refresh_warning 字段移除（前端无消费，已核实 app.js 零引用）。
-    // 后续任意 PO/CI/PI 变更都会再次触发刷新，派生值会被重算补齐。
-    updateInventoryTransitDataAsync().catch((transitErr) => {
-      console.warn('[PI-CREATE] updateInventoryTransitDataAsync failed (best-effort, ignored):', transitErr && transitErr.message);
-    });
+    // PI confirmed quantities move from PO reservation into confirmed-unshipped PI stock.
+    const forecastSync = await refreshForecastAfterProcurementMutationBestEffort(collectPIForecastKeys(piId), 'PI-CREATE');
 
     const payableDeposit = (d.items && d.items.length > 0) ? (needDeposit ? totalAmount * depositRatio / 100 : 0) : 0;
     res.json({
@@ -10407,7 +10566,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       total_amount: totalAmount,
       need_deposit: needDeposit,
       deposit_ratio: depositRatio,
-      payable_deposit: payableDeposit
+      payable_deposit: payableDeposit,
+      forecast_sync: forecastSync
     });
   } catch (e) {
     const msg = e && e.message;
@@ -10547,6 +10707,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     if (d.attachment !== undefined) { fields.push('attachment = ?'); values.push(parseAttachment(d.attachment)); }
 
     const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
+    const oldForecastKeys = collectPIForecastKeys(id);
     let totalAmount = pi.total_amount || 0;
     let payableDeposit = 0;
     // 解析最新 PI号（若本次编辑修改了 pi_no，事务内新明细需用最新值）
@@ -10672,18 +10833,13 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
       console.error('[PI-LOG] operation log failed for ' + id + ':', logErr && logErr.message);
     }
 
-    // P0-B：PI 主事务已 COMMIT 成功，先返回 success，再 best-effort 刷新库存派生数据。
-    // 关键顺序约束（Gate 1）：必须等 response 真正 finish（已 flush 到 socket）后，
-    // 才在下一个事件循环 tick 启动 refresh。否则 DB-SYNC + Atomics.wait 的同步刷新
-    // 会在 response 完成边界前阻塞，导致前端仍可能收到 502 / 重复提交。
+    // PI 已提交后刷新库存与预测。保留旧、新 SKU/国家键，避免编辑时移除的 SKU 留下旧快照。
+    const forecastKeysForRefresh = oldForecastKeys.concat(collectPIForecastKeys(id));
     res.once('finish', () => {
       if (!invAffectingChanged) return;
       setImmediate(() => {
-        updateInventoryTransitDataAsync().catch((rfErr) => {
-          // 仅记录刷新失败，绝不 throw / 不调用 next / 不再写 res。
-          // PI 已成功提交，刷新失败不影响"PI 保存成功"的语义。
-          console.error('[PI-REFRESH] inventory refresh failed for ' + id + ':', rfErr && rfErr.message);
-        });
+        refreshForecastAfterProcurementMutationBestEffort(forecastKeysForRefresh, 'PI-PUT')
+          .catch((rfErr) => console.error('[PI-REFRESH] forecast refresh failed for ' + id + ':', rfErr && rfErr.message));
       });
     });
     res.status(200).json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
@@ -10721,6 +10877,7 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
     if (pi.pi_status === 'cancelled') return res.status(400).json({ error: '该 PI 已作废，不能重复作废' });
     if (pi.pi_status === 'completed') return res.status(400).json({ error: '已完结的 PI 不允许作废' });
     const multiRelated=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
+    const forecastKeys = collectPIForecastKeys(pi.id);
     if(multiRelated.length>1){
       // Only live CI rows lock a multi-PO PI. Cancelled/reversed CI item rows are audit history.
       const hasCI=queryOne("SELECT 1 FROM commercial_invoice_items cii JOIN commercial_invoices ci ON ci.id = cii.ci_id WHERE cii.pi_id = ? AND COALESCE(ci.ci_status,'') NOT IN ('cancelled','reversed') LIMIT 1",[pi.id]);
@@ -10738,15 +10895,30 @@ app.post('/api/proforma-invoices/:id/void', requireApiPermission('pi_edit'), asy
         // Any reserved/paid item was already blocked above; cancel only active.
         query("SELECT id FROM payable_items WHERE source_type='pi' AND source_id=? AND lifecycle_status='active'",[pi.id]).rows
           .forEach(it=>{if(!cancelPayableItem(it.id,req.currentUserId,'PI作废：'+void_reason))throw Error('PI定金应付取消失败');});
+      } else {
+        // Legacy single-PO PI: return transferred quantities to the source PO
+        // before cancelling PI, so the PO reservation and PI inventory stay balanced.
+        const singlePoId = pi.related_po_id || multiRelated[0] || '';
+        if (singlePoId) {
+          const transferredRows = query(
+            'SELECT sku_code, COALESCE(SUM(pi_confirmed_qty),0) AS qty FROM proforma_invoice_items WHERE pi_id = ? GROUP BY sku_code',
+            [pi.id]
+          ).rows;
+          for (const item of transferredRows) {
+            const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [singlePoId, item.sku_code]);
+            if (!poItem) continue;
+            const nextTransferred = Math.max(0, Number(poItem.transferred_pi_qty || 0) - Number(item.qty || 0));
+            run('UPDATE purchase_order_items SET transferred_pi_qty = ?, untransferred_pi_qty = ? WHERE id = ?',
+              [nextTransferred, Math.max(0, Number(poItem.po_qty || 0) - nextTransferred), poItem.id]);
+          }
+          piMultiPO.updatePOStatus(singlePoId,query,run);
+        }
       }
       run("UPDATE proforma_invoices SET pi_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, pi.id]);
     });
-    // Wave 0B: COMMIT 后原生 async 刷新（作废回落 pi_confirmed_unshipped_qty），不阻塞响应
-    updateInventoryTransitDataAsync().catch((err) => {
-      console.warn('[PI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
-    });
+    const forecastSync = await refreshForecastAfterProcurementMutationBestEffort(forecastKeys, 'PI-VOID');
     logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'proforma_invoice', operation_type: 'void', target_ids: [pi.id], affected_count: 1, old_values: { pi_status: pi.pi_status }, new_values: { pi_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
-    res.json({ success: true });
+    res.json({ success: true, forecast_sync: forecastSync });
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
@@ -12256,10 +12428,10 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
     // Wave 2B: PG 走原生 async 事务（零 sync bridge / set-based mutations）；SQLite 保持 legacy sync 分支
     if (process.env.DB_DRIVER === 'pg') {
       const pgResult = await importProformaInvoicesPg(rows, req);
-      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
       if (pgResult.success > 0) {
-        updateInventoryTransitDataAsync().catch((err) =>
-          console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
+        pgResult.forecast_sync = await refreshForecastAfterProcurementMutationBestEffort(
+          collectForecastKeysForPIImportRows(rows),
+          'PI-BATCH'
         );
       }
       return res.json(importResultWithMessages(pgResult));
@@ -12364,10 +12536,13 @@ app.post('/api/proforma-invoices/batch-import', requireApiPermission('pi_create'
           result.errors.push({ row: idx + 2, reason: e.message });
         }
       });
-      // PI 批量导入后刷新在途字段（po_unconfirmed_pi_qty / pi_confirmed_unshipped_qty）
-      updateInventoryTransitDataAsync().catch((err) =>
-        console.warn('[PI-BATCH] updateInventoryTransitData failed (best-effort, ignored):', err && err.message)
-      );
+      // PI 批量导入后同步 PO 预留、PI 未发货与预测建议。
+      if (result.success > 0) {
+        result.forecast_sync = await refreshForecastAfterProcurementMutationBestEffort(
+          collectForecastKeysForPIImportRows(rows),
+          'PI-BATCH'
+        );
+      }
     res.json(importResultWithMessages(result));
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
@@ -24073,6 +24248,22 @@ if (require.main === module) {
     console.log(`\n[Server] 进销存管理系统已启动: http://localhost:${PORT}`);
     console.log(`[Server] 登录方式：飞书 OAuth（中国/印尼团队统一）；应急入口：登录页底部"应急登录入口"`);
     console.log(`[Server] 默认账号 admin/admin 已停用；break-glass 本地管理员须通过 BREAKGLASS_ADMIN_PASSWORD 初始化\n`);
+    // Backfill forecast-generated POs that existed before PO-consumption tracking.
+    setImmediate(() => {
+      try {
+        const keys = query(
+          'SELECT DISTINCT poi.sku_code, po.country FROM purchase_order_items poi ' +
+          'JOIN purchase_orders po ON po.id = poi.po_id WHERE COALESCE(po.from_suggestion,0) = 1',
+          []
+        ).rows;
+        if (keys.length) {
+          refreshForecastAfterProcurementMutationBestEffort(keys, 'STARTUP-PO-FORECAST')
+            .then(result => console.log('[STARTUP] PO forecast backfill:', JSON.stringify(result)));
+        }
+      } catch (e) {
+        console.warn('[STARTUP] PO forecast backfill could not start:', e && e.message);
+      }
+    });
   });
 
   server.on('error', (err) => {

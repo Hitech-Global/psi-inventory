@@ -35,6 +35,9 @@ test('automatic forecast refresh preserves channel quantities explicitly saved b
     values[idx('offline_suggested_qty')] = 11;
     values[idx('other_suggested_qty')] = 3;
     values[idx('suggested_qty')] = 34;
+    values[idx('po_consumed_online_qty')] = 12;
+    values[idx('po_consumed_offline_qty')] = 4;
+    values[idx('total_inventory_pool')] = 100;
     return { mode: 'update', id: 'rs-1', values };
   };
 
@@ -44,13 +47,18 @@ test('automatic forecast refresh preserves channel quantities explicitly saved b
     offline_write_seq: 1,
     recalc_revision: 2,
     online_suggested_qty: 88,
-    offline_suggested_qty: 5
+    offline_suggested_qty: 5,
+    po_consumed_online_qty: 5,
+    po_consumed_offline_qty: 1,
+    total_inventory_pool: 100,
+    online_target_stock: 80,
+    offline_target_stock: 20
   }, false);
 
-  assert.equal(result.values[idx('online_suggested_qty')], 88, 'manually saved online quantity is retained');
+  assert.equal(result.values[idx('online_suggested_qty')], 81, 'manual online value is reduced only by the new PO reservation delta');
   assert.equal(result.values[idx('offline_suggested_qty')], 11, 'unmodified offline quantity is recalculated');
-  assert.equal(result.values[idx('suggested_qty')], 102, 'total suggested quantity follows the retained channel values');
-  assert.equal(result.values[idx('suggestion')], '正常动销|102', 'summary text matches the preserved total');
+  assert.equal(result.values[idx('suggested_qty')], 95, 'total suggested quantity follows the retained channel values');
+  assert.equal(result.values[idx('suggestion')], '正常动销|95', 'summary text matches the preserved total');
 });
 
 test('automatic refresh preserves an explicitly saved zero but safety-blocked SKUs remain zero', () => {
@@ -72,7 +80,9 @@ test('automatic refresh preserves an explicitly saved zero but safety-blocked SK
   result.values[idx('other_suggested_qty')] = 0;
   context.preserve(result, {
     online_write_seq: 4, offline_write_seq: 0, recalc_revision: 3,
-    online_suggested_qty: 0, offline_suggested_qty: 0
+    online_suggested_qty: 0, offline_suggested_qty: 0,
+    po_consumed_online_qty: 0, po_consumed_offline_qty: 0,
+    total_inventory_pool: 0, online_target_stock: 40, offline_target_stock: 8
   }, false);
   assert.equal(result.values[idx('online_suggested_qty')], 0, 'manual zero is a real override');
 
@@ -85,7 +95,9 @@ test('automatic refresh preserves an explicitly saved zero but safety-blocked SK
   blocked.values[idx('other_suggested_qty')] = 0;
   context.preserve(blocked, {
     online_write_seq: 9, offline_write_seq: 0, recalc_revision: 1,
-    online_suggested_qty: 88, offline_suggested_qty: 0
+    online_suggested_qty: 88, offline_suggested_qty: 0,
+    po_consumed_online_qty: 0, po_consumed_offline_qty: 0,
+    total_inventory_pool: 0, online_target_stock: 40, offline_target_stock: 8
   }, false);
   assert.equal(blocked.values[idx('online_suggested_qty')], 0, 'hard safety blocks override a prior manual quantity');
 });
@@ -135,4 +147,128 @@ test('re-importing unchanged valid sales rows still refreshes their SKU-country 
     ['SKU-A|ID', 'SKU-B|TH', 'SKU-C|MY'],
     'unchanged valid rows are included, deduplicated, and error rows stay excluded'
   );
+});
+
+test('forecast-generated PO consumption is allocated across channels without going negative', () => {
+  const helperMatch = server.match(/function calculateForecastPOConsumption\([\s\S]*?\n\}/);
+  assert.ok(helperMatch, 'forecast PO consumption allocator should exist');
+  const context = {};
+  vm.runInNewContext(helperMatch[0] + '\nthis.allocate = calculateForecastPOConsumption;', context);
+  assert.deepEqual(JSON.parse(JSON.stringify(context.allocate(6940, 340, 7280))), { online: 6940, offline: 340 });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.allocate(1300, 20, 1000))), { online: 985, offline: 15 });
+  assert.deepEqual(JSON.parse(JSON.stringify(context.allocate(1300, 20, 1500))), { online: 1300, offline: 20 });
+});
+
+test('PI transfer replaces a forecast PO reservation without double-consuming manual suggestions', () => {
+  const columnsMatch = server.match(/const RS_SET_COLS = \[[\s\S]*?\n\];/);
+  const helperMatch = server.match(/function preserveManualSuggestedQtyForRefresh\(result, existingRow, brandStopped\) \{[\s\S]*?\n\}/);
+  const context = {
+    shouldBlockReplenish: status => ['呆滞', '慢销', '无有效销售', '停采/清库存', '停采/停产'].includes(status),
+    buildSuggestionText: (status, lifecycle, quantity) => status + '|' + quantity
+  };
+  vm.runInNewContext(columnsMatch[0] + '\n' + helperMatch[0] +
+    '\nthis.columns = RS_SET_COLS; this.preserve = preserveManualSuggestedQtyForRefresh;', context);
+  const idx = name => context.columns.indexOf(name);
+  const values = Array(context.columns.length).fill(0);
+  values[idx('sales_status')] = '正常动销';
+  values[idx('risk_tags')] = '[]';
+  values[idx('lifecycle_status')] = 'stable';
+  values[idx('po_consumed_online_qty')] = 0;
+  values[idx('po_consumed_offline_qty')] = 0;
+  values[idx('total_inventory_pool')] = 100;
+  const result = { mode: 'update', id: 'rs-pi-transfer', values };
+  context.preserve(result, {
+    online_write_seq: 5, offline_write_seq: 5, recalc_revision: 2,
+    online_suggested_qty: 0, offline_suggested_qty: 0,
+    po_consumed_online_qty: 80, po_consumed_offline_qty: 20,
+    total_inventory_pool: 0, online_target_stock: 80, offline_target_stock: 20
+  }, false);
+  assert.equal(result.values[idx('online_suggested_qty')], 0);
+  assert.equal(result.values[idx('offline_suggested_qty')], 0);
+});
+
+test('cancelling a forecast-generated PO restores its channel suggestions', () => {
+  const columnsMatch = server.match(/const RS_SET_COLS = \[[\s\S]*?\n\];/);
+  const helperMatch = server.match(/function preserveManualSuggestedQtyForRefresh\(result, existingRow, brandStopped\) \{[\s\S]*?\n\}/);
+  const context = {
+    shouldBlockReplenish: status => ['呆滞', '慢销', '无有效销售', '停采/清库存', '停采/停产'].includes(status),
+    buildSuggestionText: (status, lifecycle, quantity) => status + '|' + quantity
+  };
+  vm.runInNewContext(columnsMatch[0] + '\n' + helperMatch[0] +
+    '\nthis.columns = RS_SET_COLS; this.preserve = preserveManualSuggestedQtyForRefresh;', context);
+  const idx = name => context.columns.indexOf(name);
+  const values = Array(context.columns.length).fill(0);
+  values[idx('sales_status')] = '正常动销';
+  values[idx('risk_tags')] = '[]';
+  values[idx('lifecycle_status')] = 'stable';
+  values[idx('po_consumed_online_qty')] = 0;
+  values[idx('po_consumed_offline_qty')] = 0;
+  values[idx('total_inventory_pool')] = 0;
+  const result = { mode: 'update', id: 'rs-po-cancel', values };
+  context.preserve(result, {
+    online_write_seq: 5, offline_write_seq: 5, recalc_revision: 2,
+    online_suggested_qty: 0, offline_suggested_qty: 0,
+    po_consumed_online_qty: 80, po_consumed_offline_qty: 20,
+    total_inventory_pool: 0, online_target_stock: 80, offline_target_stock: 20
+  }, false);
+  assert.equal(result.values[idx('online_suggested_qty')], 80);
+  assert.equal(result.values[idx('offline_suggested_qty')], 20);
+});
+
+test('manual suggestion consumption is capped so cancelling an oversized PO does not over-restore', () => {
+  const columnsMatch = server.match(/const RS_SET_COLS = \[[\s\S]*?\n\];/);
+  const helperMatch = server.match(/function preserveManualSuggestedQtyForRefresh\(result, existingRow, brandStopped\) \{[\s\S]*?\n\}/);
+  const context = {
+    shouldBlockReplenish: status => ['呆滞', '慢销', '无有效销售', '停采/清库存', '停采/停产'].includes(status),
+    buildSuggestionText: (status, lifecycle, quantity) => status + '|' + quantity
+  };
+  vm.runInNewContext(columnsMatch[0] + '\n' + helperMatch[0] +
+    '\nthis.columns = RS_SET_COLS; this.preserve = preserveManualSuggestedQtyForRefresh;', context);
+  const idx = name => context.columns.indexOf(name);
+  const makeResult = applied => {
+    const values = Array(context.columns.length).fill(0);
+    values[idx('sales_status')] = '正常动销';
+    values[idx('risk_tags')] = '[]';
+    values[idx('lifecycle_status')] = 'stable';
+    values[idx('online_suggested_qty')] = 100;
+    values[idx('offline_suggested_qty')] = 0;
+    values[idx('other_suggested_qty')] = 0;
+    values[idx('po_consumed_online_qty')] = applied;
+    values[idx('po_consumed_offline_qty')] = 0;
+    values[idx('total_inventory_pool')] = 0;
+    return { mode: 'update', id: 'rs-cap', values };
+  };
+  const afterCreate = makeResult(100);
+  context.preserve(afterCreate, {
+    online_write_seq: 5, offline_write_seq: 0, recalc_revision: 2,
+    online_suggested_qty: 50, offline_suggested_qty: 0,
+    po_consumed_online_qty: 0, po_consumed_offline_qty: 0,
+    total_inventory_pool: 0, online_target_stock: 100, offline_target_stock: 0
+  }, false);
+  assert.equal(afterCreate.values[idx('po_consumed_online_qty')], 50);
+  assert.equal(afterCreate.values[idx('online_suggested_qty')], 0);
+
+  const afterCancel = makeResult(0);
+  context.preserve(afterCancel, {
+    online_write_seq: 5, offline_write_seq: 0, recalc_revision: 2,
+    online_suggested_qty: 0, offline_suggested_qty: 0,
+    po_consumed_online_qty: 50, po_consumed_offline_qty: 0,
+    total_inventory_pool: 0, online_target_stock: 100, offline_target_stock: 0
+  }, false);
+  assert.equal(afterCancel.values[idx('online_suggested_qty')], 50);
+});
+
+test('forecast-generated PO and PI mutations refresh suggestions and publish a revision', () => {
+  assert.match(server, /async function loadForecastPOConsumptionMap/);
+  assert.match(server, /COALESCE\(po\.from_suggestion,0\) = 1/);
+  assert.match(server, /refreshForecastAfterProcurementMutationBestEffort/);
+  assert.match(server, /collectPIForecastKeys/);
+  assert.match(server, /collectPOForecastKeys/);
+  assert.match(server, /po_consumed_online_qty/);
+  assert.match(server, /po_consumed_offline_qty/);
+  assert.match(server, /const forecastPoConsumptionMap = await loadForecastPOConsumptionMap/);
+  assert.match(server, /app\.post\('\/api\/purchase-orders'[\s\S]*refreshForecastAfterProcurementMutationBestEffort/);
+  assert.match(server, /app\.put\('\/api\/purchase-orders\/:id'[\s\S]*refreshForecastAfterProcurementMutationBestEffort/);
+  assert.match(server, /app\.post\('\/api\/proforma-invoices'[\s\S]*collectPIForecastKeys/);
+  assert.match(server, /app\.post\('\/api\/proforma-invoices\/:id\/void'[\s\S]*refreshForecastAfterProcurementMutationBestEffort/);
 });
