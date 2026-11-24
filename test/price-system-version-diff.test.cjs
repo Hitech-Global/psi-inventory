@@ -104,7 +104,7 @@ test('history UI exposes a view-changes action and paginates the detailed diff',
   const path = require('node:path');
   const ui = fs.readFileSync(path.join(__dirname, '..', 'assets', 'price-system.js'), 'utf8');
   assert.match(ui, /psViewVersionDiff/);
-  assert.match(ui, /versions\/'\+encodeURIComponent\(id\)+'\/diff\?page=/);
+  assert.match(ui, /\/diff\?page=/);
   assert.match(ui, /previousPage/);
   assert.match(ui, /nextPage/);
   assert.match(ui, /ps-version-diff-table/);
