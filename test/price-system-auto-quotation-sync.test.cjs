@@ -9,6 +9,8 @@ function createHarness(){
  const values=new Map();for(const sid of ['scheme-id','scheme-my'])for(const [sku,value,currency] of [['SKU-1',8,'USD'],['SKU-2',20,'MYR'],['SKU-3',30,'IDR'],['SKU-4',40,'USD']])values.set(sid+'|'+sku+'|fob',{scheme_id:sid,sku_code:sku,field_key:'fob',value,currency});
  const versions=[],queries=[],runs=[];let next=0;
  function query(sql,params=[]){queries.push({sql,params});
+  if(sql.includes('SELECT * FROM price_system_schemes WHERE id = ?'))return{rows:schemes.filter(x=>x.id===params[0])};
+  if(sql.includes('MAX(version_no)'))return{rows:[{max_version:Math.max(0,...versions.filter(x=>x.scheme_id===params[0]).map(x=>x.version_no))}]};
   if(sql.includes('FROM price_system_schemes ps'))return{rows:schemes.filter(s=>s.status==='active'&&s.brand.toLowerCase()===String(params[0]).toLowerCase()&&fields.some(x=>x.scheme_id===s.id&&x.is_active===1&&x.sync_quotation===1))};
   if(sql.includes('SELECT sku_code, brand, category FROM skus')){const codes=new Set(params.slice(1).map(x=>String(x).toUpperCase()));return{rows:skus.filter(s=>s.brand.toLowerCase()===String(params[0]).toLowerCase()&&codes.has(s.sku_code.toUpperCase())&&s.status==='normal')};}
   if(sql.includes('FROM quotation_prices q INNER JOIN skus sm')){const brand=String(params[0]).toLowerCase(),codes=new Set(params.slice(1).map(x=>String(x).toUpperCase()));const rows=quotes.filter(q=>q.brand.toLowerCase()===brand&&q.match_status!=='unlinked'&&codes.has((q.psi_sku_code||q.sku_code).toUpperCase()));rows.sort((a,b)=>String(b.quote_date).localeCompare(String(a.quote_date))||String(b.created_at).localeCompare(String(a.created_at))||String(b.id).localeCompare(String(a.id)));return{rows:rows.map(q=>({...q,matched_sku_code:q.psi_sku_code||q.sku_code}))};}
