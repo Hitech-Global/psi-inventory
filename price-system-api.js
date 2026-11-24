@@ -857,10 +857,11 @@ function registerPriceSystemRoutes(app, deps) {
     );
     if (!sku) return res.status(404).json({ error: 'SKU 不存在或不属于当前品牌' });
     const category = primaryCategoryMapForSkus([sku]).get(skuCode) || '未分类';
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
     const fields = query(
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
       [scheme.id]
-    ).rows.slice();
+    ).rows.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).slice();
     if (!fields.some(field => field.field_key === 'srp')) {
       fields.push({
         id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',

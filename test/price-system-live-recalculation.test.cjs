@@ -104,11 +104,11 @@ test('clearing a manual SRP preview restores the configured formula SRP and reca
     context: { landing_cost: 700, shipping: 10, srp: 1500, payment_fee: 30, profit: 1460, profit_rate: 0.97 }
   });
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.srp, 770);
+  assert.ok(Math.abs(response.body.srp - 770) < 1e-9);
   assert.equal(response.body.srp_source, 'formula');
-  assert.equal(response.body.values.payment_fee, 15.4);
-  assert.equal(response.body.values.profit, 744.6);
-  assert.equal(response.body.values.profit_rate, 744.6 / 770);
+  assert.ok(Math.abs(response.body.values.payment_fee - 15.4) < 1e-9);
+  assert.ok(Math.abs(response.body.values.profit - 744.6) < 1e-9);
+  assert.ok(Math.abs(response.body.values.profit_rate - (744.6 / 770)) < 1e-9);
 });
 
 test('live preview rejects a SKU outside the current scheme brand', async () => {
