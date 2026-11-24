@@ -13,6 +13,7 @@ function ensurePriceSystemSchema(run, isPg) {
     status TEXT NOT NULL DEFAULT 'active',
     srp_formula TEXT NOT NULL DEFAULT '',
     srp_sort_order INTEGER NOT NULL DEFAULT 999999,
+    freeze_field_key TEXT NOT NULL DEFAULT '__sku',
     sync_wac INTEGER NOT NULL DEFAULT 0,
     notes TEXT NOT NULL DEFAULT '',
     created_by TEXT NOT NULL DEFAULT '',
@@ -70,6 +71,7 @@ function ensurePriceSystemSchema(run, isPg) {
   try { run("ALTER TABLE price_system_fields ADD COLUMN display_format TEXT NOT NULL DEFAULT 'auto'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run('ALTER TABLE price_system_fields ADD COLUMN decimal_places INTEGER NOT NULL DEFAULT 2'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run('ALTER TABLE price_system_schemes ADD COLUMN srp_sort_order INTEGER NOT NULL DEFAULT 999999'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
+  try { run("ALTER TABLE price_system_schemes ADD COLUMN freeze_field_key TEXT NOT NULL DEFAULT '__sku'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   run('CREATE INDEX IF NOT EXISTS idx_price_system_schemes_scope ON price_system_schemes(country, brand, status)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_fields_scheme ON price_system_fields(scheme_id, sort_order)');
   run('CREATE INDEX IF NOT EXISTS idx_price_system_values_scheme_sku ON price_system_values(scheme_id, sku_code)');
