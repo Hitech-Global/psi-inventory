@@ -579,7 +579,7 @@ window.psOpenVersionsModal=async function(){if(!state.scheme||!allowDiscardDirty
 window.psRestoreVersion=async function(id,no){if(!confirm(tr('restore')+' #'+no+'？'))return;try{await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/versions/'+encodeURIComponent(id)+'/restore','POST',{});closeModal();await loadData(state.schemeId);if(typeof showToast==='function')showToast(tr('restored'),'success');}catch(e){err(e);}};
 window.psDownloadImportTemplate=function(){
  if(!state.scheme||!state.rows.length||typeof XLSX==='undefined')return;
- const manual=state.fields.filter(f=>f.field_type!=='formula'&&Number(f.sync_wac||0)!==1);
+ const manual=state.fields.filter(f=>f.field_type!=='formula'&&Number(f.sync_wac||0)!==1&&Number(f.sync_quotation||0)!==1);
  const headers=['SKU',tr('category'),tr('srp')].concat(manual.map(f=>f.field_name+' ['+f.field_key+']'));
  const rows=state.rows.map(r=>[r.sku_code,r.category||'',''].concat(manual.map(()=>'')));
  const ws=XLSX.utils.aoa_to_sheet([headers].concat(rows));ws['!cols']=headers.map((h,i)=>({wch:i===0?30:(i===1?20:18)}));
