@@ -920,6 +920,7 @@ function registerPriceSystemRoutes(app, deps) {
       const sync = syncPriceSystemQuotationForKeys(skuKeys, userStamp(req), 'Enable field quotation auto sync');
       const currentSchemeVersioned = sync && Array.isArray(sync.versions) && sync.versions.some(item => item.scheme_id === scheme.id);
       if (!currentSchemeVersioned) createVersion(scheme.id, userStamp(req), existing ? '\u4fee\u6539\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName : '\u65b0\u589e\u8d39\u7528\u5b57\u6bb5\uff1a' + fieldName);
+    } else createVersion(scheme.id, userStamp(req), existing ? '修改费用字段：' + fieldName : '新增费用字段：' + fieldName);
     res.json(queryOne('SELECT * FROM price_system_fields WHERE id = ?', [id]));
   }));
 
