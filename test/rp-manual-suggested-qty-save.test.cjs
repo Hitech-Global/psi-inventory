@@ -14,10 +14,34 @@ function extractFunction(name) {
   assert.ok(match, 'production function must exist: ' + name);
   const open = APP.indexOf('{', match.index);
   let depth = 0;
+  let quote = null;
+  let lineComment = false;
+  let blockComment = false;
   let end = open;
   for (; end < APP.length; end++) {
-    if (APP[end] === '{') depth++;
-    else if (APP[end] === '}' && --depth === 0) break;
+    const ch = APP[end];
+    const next = APP[end + 1];
+    if (lineComment) {
+      if (ch === '\n') lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (ch === '*' && next === '/') { blockComment = false; end++; }
+      continue;
+    }
+    if (quote) {
+      if (ch === '\\') { end++; continue; }
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '/' && next === '/') { lineComment = true; end++; continue; }
+    if (ch === '/' && next === '*') { blockComment = true; end++; continue; }
+    if (ch === "'" || ch === '"' || ch === '\`') { quote = ch; continue; }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) break;
+    }
   }
   assert.ok(end < APP.length, 'production function must be balanced: ' + name);
   return APP.slice(match.index, end + 1);
@@ -69,6 +93,9 @@ function makeSaveHarness(api) {
     window,
     sessionStorage: { setItem() {}, removeItem() {} },
     api,
+    rpSetManualStock(channel, rid, value) {
+      window._rpManualStock[channel][rid] = value;
+    },
     rpPatchSnapshotRow: data => Object.assign(row, data),
     rpGetChannelC: (channel, current) => current._channelC[channel],
     rpClearDataCache() {},
@@ -175,12 +202,11 @@ test('tab and mode switches are blocked when pending manual saves cannot be conf
     showToast: (message, type) => messages.push({ message, type })
   };
   vm.createContext(context);
-  vm.runInContext(
-    extractFunction('rpEnsurePendingSavesBeforeViewChange') + '\\n' +
-    extractFunction('switchRpTab') + '\\n' +
-    extractFunction('switchRpMode'),
-    context
-  );
+  vm.runInContext([
+    extractFunction('rpEnsurePendingSavesBeforeViewChange'),
+    extractFunction('switchRpTab'),
+    extractFunction('switchRpMode')
+  ].join(String.fromCharCode(10)), context);
 
   await context.switchRpTab('online');
   await context.switchRpMode('daily');
