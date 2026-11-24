@@ -12,11 +12,15 @@ test('creates all price system tables and indexes idempotently through IF NOT EX
   }
   assert.match(joined, /UNIQUE \(country, brand, platform, shop_name\)/);
   assert.match(joined, /sync_wac INTEGER NOT NULL DEFAULT 0/);
+  assert.match(joined, /sync_quotation INTEGER NOT NULL DEFAULT 0/);
+  assert.match(joined, /currency TEXT NOT NULL DEFAULT ''/);
   assert.match(joined, /formula_rules TEXT NOT NULL DEFAULT '\{\}'/);
   assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN formula_rules/);
   assert.match(joined, /srp_sort_order INTEGER NOT NULL DEFAULT 999999/);
   assert.match(joined, /ALTER TABLE price_system_schemes ADD COLUMN srp_sort_order/);
   assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN sync_wac/);
+  assert.match(joined, /ALTER TABLE price_system_fields ADD COLUMN sync_quotation/);
+  assert.match(joined, /ALTER TABLE price_system_values ADD COLUMN currency/);
   assert.match(joined, /UNIQUE \(scheme_id, sku_code, field_key\)/);
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_values_scheme_sku/);
   assert.match(joined, /CREATE INDEX IF NOT EXISTS idx_price_system_landing_costs_scheme_sku/);

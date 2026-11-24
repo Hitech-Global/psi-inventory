@@ -27,7 +27,7 @@ test('formula editor groups base data, fee fields and SRP separately without dup
 });
 
 test('formula rules support multiple formulas with multi-category selection and quick actions', () => {
-  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||type==='percent'?'display:none':'')+'"`));
+  assert.ok(ui.includes(`id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'?'display:none':'')+'"`));
   assert.ok(ui.includes('window.__psFormulaRulesDraft='));
   assert.ok(ui.includes('function formulaRuleDraftsFromMap(map,legacyFormula,legacyCategories,categoryList)'));
   assert.ok(ui.includes('window.psAddFormulaRule=function()'));
@@ -109,8 +109,8 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
 });
 
 test('percentage field type displays percentage settings and hides formula calculation settings', () => {
-  assert.ok(ui.includes("isWac||type==='percent'?'display:none':''"));
-  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||t==='percent'?'none':'';"));
+  assert.ok(ui.includes("isWac||isQuote||type==='percent'?'display:none':''"));
+  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||(q&&q.checked)||t==='percent'?'none':'';"));
   assert.ok(ui.includes("if(p)p.style.display=t==='percent'?'':'none';"));
 });
 

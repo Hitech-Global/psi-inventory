@@ -33,6 +33,7 @@ function ensurePriceSystemSchema(run, isPg) {
     display_format TEXT NOT NULL DEFAULT 'auto',
     decimal_places INTEGER NOT NULL DEFAULT 2,
     sync_wac INTEGER NOT NULL DEFAULT 0,
+    sync_quotation INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
     is_active INTEGER NOT NULL DEFAULT 1,
     created_at TEXT DEFAULT ${now},
@@ -45,6 +46,7 @@ function ensurePriceSystemSchema(run, isPg) {
     sku_code TEXT NOT NULL,
     field_key TEXT NOT NULL,
     value NUMERIC(18,6),
+    currency TEXT NOT NULL DEFAULT '',
     updated_by TEXT NOT NULL DEFAULT '',
     updated_at TEXT DEFAULT ${now},
     UNIQUE (scheme_id, sku_code, field_key)
@@ -62,6 +64,8 @@ function ensurePriceSystemSchema(run, isPg) {
   )`);
   // Idempotent upgrade for existing price-system installations.
   try { run('ALTER TABLE price_system_fields ADD COLUMN sync_wac INTEGER NOT NULL DEFAULT 0'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
+  try { run('ALTER TABLE price_system_fields ADD COLUMN sync_quotation INTEGER NOT NULL DEFAULT 0'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
+  try { run("ALTER TABLE price_system_values ADD COLUMN currency TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_fields ADD COLUMN formula_rules TEXT NOT NULL DEFAULT '{}'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_fields ADD COLUMN display_format TEXT NOT NULL DEFAULT 'auto'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run('ALTER TABLE price_system_fields ADD COLUMN decimal_places INTEGER NOT NULL DEFAULT 2'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
