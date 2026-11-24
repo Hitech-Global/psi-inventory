@@ -144,6 +144,238 @@ function isCategoryApplicable(field, category) {
   return categories.length === 0 || categories.includes(String(category || '').trim());
 }
 
+function stableVersionValue(value) {
+  if (Array.isArray(value)) return value.map(stableVersionValue);
+  if (value && typeof value === 'object') {
+    const result = {};
+    Object.keys(value).sort().forEach(key => { result[key] = stableVersionValue(value[key]); });
+    return result;
+  }
+  return value;
+}
+
+function sameVersionValue(left, right) {
+  return JSON.stringify(stableVersionValue(left)) === JSON.stringify(stableVersionValue(right));
+}
+
+function normalizeVersionFieldValue(field, key) {
+  if (!field) return null;
+  const value = field[key];
+  if (key === 'applicable_categories') return parseCategories(value);
+  if (key === 'formula_rules') return parseFormulaRules(value);
+  if (key === 'sync_wac' || key === 'sync_quotation' || key === 'is_active') return Number(value || 0) === 1;
+  if (key === 'sort_order' || key === 'decimal_places') return value == null || value === '' ? null : Number(value);
+  return String(value == null ? '' : value);
+}
+
+function buildPriceSystemVersionDiff(currentSnapshot, previousSnapshot, options) {
+  const opts = options || {};
+  const hasPrevious = opts.hasPrevious !== false;
+  const canViewQuotation = opts.canViewQuotation !== false;
+  const current = currentSnapshot && typeof currentSnapshot === 'object' ? currentSnapshot : {};
+  const previous = hasPrevious && previousSnapshot && typeof previousSnapshot === 'object' ? previousSnapshot : {};
+  const currentScheme = current.scheme || {};
+  const previousScheme = previous.scheme || {};
+  const currentFields = Array.isArray(current.fields) ? current.fields : [];
+  const previousFields = Array.isArray(previous.fields) ? previous.fields : [];
+  const hiddenQuotationKeys = new Set();
+  if (!canViewQuotation) {
+    previousFields.concat(currentFields).forEach(field => {
+      if (Number(field && field.sync_quotation || 0) === 1) hiddenQuotationKeys.add(String(field.field_key || ''));
+    });
+  }
+  const schemeProperties = [
+    ['currency', 'currency'],
+    ['srp_formula', 'srp_formula'],
+    ['srp_sort_order', 'srp_sort_order'],
+    ['status', 'status'],
+    ['shop_name', 'shop_name'],
+    ['platform', 'platform']
+  ];
+  const schemeChanges = [];
+  schemeProperties.forEach(([key, label]) => {
+    const before = previousScheme[key] == null ? null : previousScheme[key];
+    const after = currentScheme[key] == null ? null : currentScheme[key];
+    if (!sameVersionValue(before, after)) {
+      schemeChanges.push({
+        scope: 'scheme',
+        property_key: key,
+        property_label: label,
+        old_value: before,
+        new_value: after,
+        action: before == null ? 'added' : (after == null ? 'removed' : 'updated')
+      });
+    }
+  });
+
+  const fieldProperties = [
+    ['field_name', 'field_name'],
+    ['field_type', 'field_type'],
+    ['unit', 'unit'],
+    ['applicable_categories', 'applicable_categories'],
+    ['formula', 'formula'],
+    ['formula_rules', 'formula_rules'],
+    ['display_format', 'display_format'],
+    ['decimal_places', 'decimal_places'],
+    ['sync_wac', 'sync_wac'],
+    ['sync_quotation', 'sync_quotation'],
+    ['sort_order', 'sort_order'],
+    ['is_active', 'is_active']
+  ];
+  const oldFieldMap = new Map(previousFields.map(field => [String(field.field_key || ''), field]));
+  const newFieldMap = new Map(currentFields.map(field => [String(field.field_key || ''), field]));
+  const fieldKeys = Array.from(new Set(Array.from(oldFieldMap.keys()).concat(Array.from(newFieldMap.keys())))).sort();
+  const fieldChanges = [];
+  fieldKeys.forEach(fieldKey => {
+    if (!fieldKey || hiddenQuotationKeys.has(fieldKey)) return;
+    const beforeField = oldFieldMap.get(fieldKey) || null;
+    const afterField = newFieldMap.get(fieldKey) || null;
+    if (!beforeField && !afterField) return;
+    const action = !beforeField ? 'added' : (!afterField ? 'removed' : 'updated');
+    fieldProperties.forEach(([key, label]) => {
+      const before = normalizeVersionFieldValue(beforeField, key);
+      const after = normalizeVersionFieldValue(afterField, key);
+      if (!sameVersionValue(before, after)) {
+        fieldChanges.push({
+          scope: 'field',
+          field_key: fieldKey,
+          field_name: String(afterField && afterField.field_name || beforeField && beforeField.field_name || fieldKey),
+          property_key: key,
+          property_label: label,
+          old_value: before,
+          new_value: after,
+          action
+        });
+      }
+    });
+  });
+
+  function mapRows(rows, keyFn) {
+    const result = new Map();
+    (Array.isArray(rows) ? rows : []).forEach(row => {
+      const key = keyFn(row);
+      if (key) result.set(key, row);
+    });
+    return result;
+  }
+  function amountValue(row, fallbackCurrency) {
+    if (!row) return null;
+    const numeric = Number(row.value);
+    return {
+      value: Number.isFinite(numeric) ? numeric : row.value,
+      currency: String(row.currency || fallbackCurrency || '').trim().toUpperCase()
+    };
+  }
+  function sameAmountValue(left, right) {
+    if (!left || !right) return left === right;
+    return Number(left.value) === Number(right.value) && left.currency === right.currency;
+  }
+  const skuChanges = [];
+  const oldValues = mapRows(previous.values, row => String(row.sku_code || '') + '|' + String(row.field_key || ''));
+  const newValues = mapRows(current.values, row => String(row.sku_code || '') + '|' + String(row.field_key || ''));
+  const valueKeys = Array.from(new Set(Array.from(oldValues.keys()).concat(Array.from(newValues.keys())))).sort();
+  valueKeys.forEach(key => {
+    const beforeRow = oldValues.get(key) || null;
+    const afterRow = newValues.get(key) || null;
+    const row = afterRow || beforeRow;
+    const fieldKey = String(row.field_key || '');
+    if (hiddenQuotationKeys.has(fieldKey)) return;
+    const before = amountValue(beforeRow, previousScheme.currency);
+    const after = amountValue(afterRow, currentScheme.currency);
+    if (sameAmountValue(before, after)) return;
+    const field = newFieldMap.get(fieldKey) || oldFieldMap.get(fieldKey) || null;
+    skuChanges.push({
+      change_type: 'manual_value',
+      action: !beforeRow ? 'added' : (!afterRow ? 'removed' : 'updated'),
+      sku_code: String(row.sku_code || ''),
+      field_key: fieldKey,
+      field_name: String(field && field.field_name || fieldKey),
+      old_value: before,
+      new_value: after
+    });
+  });
+
+  const oldSrp = mapRows(previous.srpValues, row => String(row.sku_code || ''));
+  const newSrp = mapRows(current.srpValues, row => String(row.sku_code || ''));
+  Array.from(new Set(Array.from(oldSrp.keys()).concat(Array.from(newSrp.keys())))).sort().forEach(skuCode => {
+    const beforeRow = oldSrp.get(skuCode) || null;
+    const afterRow = newSrp.get(skuCode) || null;
+    const before = amountValue(beforeRow, previousScheme.currency);
+    const after = amountValue(afterRow, currentScheme.currency);
+    if (sameAmountValue(before, after)) return;
+    skuChanges.push({
+      change_type: 'srp_value',
+      action: !beforeRow ? 'added' : (!afterRow ? 'removed' : 'updated'),
+      sku_code: skuCode,
+      field_key: 'srp',
+      field_name: 'SRP',
+      old_value: before,
+      new_value: after
+    });
+  });
+
+  function landingCostValue(row, fallbackCurrency) {
+    if (!row) return null;
+    const amount = amountValue(row, fallbackCurrency);
+    return Object.assign(amount, {
+      ci_no: String(row.ci_no || ''),
+      warehouse: String(row.warehouse || ''),
+      version_no: Number(row.version_no || 0),
+      last_inbound_date: String(row.last_inbound_date || '')
+    });
+  }
+  function sameLandingCost(left, right) {
+    if (!left || !right) return left === right;
+    return sameAmountValue(left, right) &&
+      left.ci_no === right.ci_no &&
+      left.warehouse === right.warehouse &&
+      left.version_no === right.version_no &&
+      left.last_inbound_date === right.last_inbound_date;
+  }
+  const oldLanding = mapRows(previous.landingCosts, row => String(row.sku_code || ''));
+  const newLanding = mapRows(current.landingCosts, row => String(row.sku_code || ''));
+  Array.from(new Set(Array.from(oldLanding.keys()).concat(Array.from(newLanding.keys())))).sort().forEach(skuCode => {
+    const beforeRow = oldLanding.get(skuCode) || null;
+    const afterRow = newLanding.get(skuCode) || null;
+    const before = beforeRow ? landingCostValue(beforeRow, previousScheme.currency) : null;
+    const after = afterRow ? landingCostValue(afterRow, currentScheme.currency) : null;
+    if (sameLandingCost(before, after)) return;
+    skuChanges.push({
+      change_type: 'landing_cost',
+      action: !beforeRow ? 'added' : (!afterRow ? 'removed' : 'updated'),
+      sku_code: skuCode,
+      field_key: 'landing_cost',
+      field_name: 'Landing Cost',
+      old_value: before,
+      new_value: after
+    });
+  });
+
+  const actionCounts = { added: 0, removed: 0, updated: 0 };
+  schemeChanges.concat(fieldChanges, skuChanges).forEach(change => {
+    if (actionCounts[change.action] != null) actionCounts[change.action] += 1;
+  });
+  skuChanges.sort((left, right) =>
+    String(left.sku_code || '').localeCompare(String(right.sku_code || '')) ||
+    String(left.change_type || '').localeCompare(String(right.change_type || '')) ||
+    String(left.field_key || '').localeCompare(String(right.field_key || ''))
+  );
+  return {
+    scheme_changes: schemeChanges,
+    field_changes: fieldChanges,
+    sku_changes: skuChanges,
+    summary: {
+      scheme_changes: schemeChanges.length,
+      field_changes: fieldChanges.length,
+      sku_changes: skuChanges.length,
+      added: actionCounts.added,
+      removed: actionCounts.removed,
+      updated: actionCounts.updated
+    },
+    has_previous: hasPrevious
+  };
+}
+
 function primaryCategoryMapForSkus(skuRows) {
   const categories = new Map();
   (skuRows || []).forEach(sku => {
@@ -1208,6 +1440,50 @@ function registerPriceSystemRoutes(app, deps) {
     catch (e) { res.status(500).json({ error: '历史版本数据损坏' }); }
   }));
 
+  app.get('/api/price-system/schemes/:id/versions/:versionId/diff', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const version = queryOne('SELECT * FROM price_system_versions WHERE id = ? AND scheme_id = ?', [req.params.versionId, scheme.id]);
+    if (!version) return res.status(404).json({ error: '历史版本不存在' });
+    const previousVersion = queryOne(
+      'SELECT id, version_no, snapshot_json, created_at FROM price_system_versions WHERE scheme_id = ? AND version_no < ? ORDER BY version_no DESC LIMIT 1',
+      [scheme.id, Number(version.version_no)]
+    );
+    let currentSnapshot;
+    let previousSnapshot = {};
+    try {
+      currentSnapshot = JSON.parse(version.snapshot_json || '{}');
+      if (previousVersion) previousSnapshot = JSON.parse(previousVersion.snapshot_json || '{}');
+    } catch (error) {
+      return res.status(500).json({ error: '历史版本数据损坏，无法比较' });
+    }
+    const permissions = req.currentUserPermissions || [];
+    const diff = buildPriceSystemVersionDiff(currentSnapshot, previousSnapshot, {
+      hasPrevious: !!previousVersion,
+      canViewQuotation: permissions.includes('*') || permissions.includes('quotation_view')
+    });
+    const requestedPage = parseInt(req.query && req.query.page || '1', 10);
+    const requestedPageSize = parseInt(req.query && req.query.page_size || '100', 10);
+    const pageSize = Math.min(200, Math.max(1, Number.isFinite(requestedPageSize) ? requestedPageSize : 100));
+    const total = diff.sku_changes.length;
+    const pageCount = Math.max(1, Math.ceil(total / pageSize));
+    const page = Math.min(pageCount, Math.max(1, Number.isFinite(requestedPage) ? requestedPage : 1));
+    const offset = (page - 1) * pageSize;
+    res.json({
+      version_no: Number(version.version_no),
+      note: version.note || '',
+      created_at: version.created_at || '',
+      previous_version_no: previousVersion ? Number(previousVersion.version_no) : null,
+      previous_created_at: previousVersion ? previousVersion.created_at || '' : '',
+      scheme_changes: diff.scheme_changes,
+      field_changes: diff.field_changes,
+      sku_changes: diff.sku_changes.slice(offset, offset + pageSize),
+      summary: diff.summary,
+      has_previous: diff.has_previous,
+      pagination: { page, page_size: pageSize, total, page_count: pageCount }
+    });
+  }));
+
   app.post('/api/price-system/schemes/:id/versions/:versionId/restore', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
@@ -1285,4 +1561,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords, buildForecastMetricMap };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, deletePriceSystemSchemeRecords, buildForecastMetricMap, buildPriceSystemVersionDiff };
