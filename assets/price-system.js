@@ -131,6 +131,7 @@ async function loadSchemes(preferred){
  if(state.schemeId)await loadData(state.schemeId);else{state.scheme=null;state.fields=[];state.rows=[];state.dirty={};main();}
 }
 async function loadData(id){
+ cancelPendingPriceSystemFormulaPreviews();
  state.schemeId=id||'';state.dirty={};state.scheme=null;state.fields=[];state.rows=[];main();if(!id)return;
  try{const d=await api('/api/price-system/schemes/'+encodeURIComponent(id)+'/data');if(state.schemeId!==id)return;state.scheme=d.scheme;state.fields=d.fields||[];state.rows=d.rows||[];state.forecastStatsDays=Number(d.forecast_stats_days)||90;main();}
  catch(e){err(e);main();}
@@ -259,12 +260,12 @@ function main(){
     if(!applies(f,r))return '<td class="ps-value ps-muted"'+psSortValueAttr(null)+'>&mdash;</td>';
     const v=r.values?r.values[f.field_key]:null;
     if(f.field_key==='srp'){
-     const dirty=state.dirty[r.sku_code]&&Object.prototype.hasOwnProperty.call(state.dirty[r.sku_code],'srp');const shown=dirty?state.dirty[r.sku_code].srp:r.srp;
+     const dirty=state.dirty[r.sku_code]&&Object.prototype.hasOwnProperty.call(state.dirty[r.sku_code],'srp');const shown=dirty&&state.dirty[r.sku_code].srp!=null?state.dirty[r.sku_code].srp:r.srp;
      return '<td class="ps-value ps-srp"'+psSortValueAttr(shown)+'><input class="ps-input ps-srp-input '+(dirty?'dirty':'')+'" type="text" inputmode="decimal" data-decimal-places="2" value="'+esc(formatAmountInput(shown,2))+'" data-sku="'+esc(r.sku_code)+'" data-field="srp" onfocus="psPrepareAmountInput(this)" oninput="psMarkDirty(this)" onblur="psFormatAmountInput(this)" title="'+esc(tr('srpManualHint'))+'"><span class="ps-unit">'+currency()+'</span></td>';
     }
     if(Number(f.sync_wac||0)===1){const lc=r.landing_cost||null,unit=(lc&&lc.currency)||f.unit||scheme.currency||'';const rawDate=lc&&(lc.last_inbound_date||lc.confirmed_at)||'',wacDate=String(rawDate).slice(0,10),meta=wacDate?esc(wacDate):'';return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+meta+'"><div class="ps-landing-value">'+(v==null?'&mdash;':esc(unit)+' '+fmt(v))+'</div>'+(meta?'<div class="ps-landing-meta">'+meta+'</div>':'')+'</td>';}
     if(Number(f.sync_quotation||0)===1){const code=String(r.value_currencies&&r.value_currencies[f.field_key]||'').trim().toUpperCase(),symbol=currencySymbol(code);return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+esc(code)+'">'+(v==null?'&mdash;':(symbol?esc(symbol)+' ':'')+fmt(v))+'</td>';}
-    if(f.field_type==='formula'){const shown=f.field_key==='srp'?(v==null?'&mdash;':esc(scheme.currency||'')+' '+fmt(v)):fieldText(v,f);return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+esc(r.formula_errors&&r.formula_errors[f.field_key]||f.formula||'')+'">'+(r.formula_errors&&r.formula_errors[f.field_key]?'<span style="color:#d97706">!</span> ':'')+shown+'</td>';}
+    if(f.field_type==='formula'){const shown=f.field_key==='srp'?(v==null?'&mdash;':esc(scheme.currency||'')+' '+fmt(v)):fieldText(v,f);return '<td class="ps-value" data-field-key="'+esc(f.field_key)+'"'+psSortValueAttr(v)+' title="'+esc(r.formula_errors&&r.formula_errors[f.field_key]||f.formula||'')+'">'+(r.formula_errors&&r.formula_errors[f.field_key]?'<span style="color:#d97706">!</span> ':'')+shown+'</td>';}
     const dirty=state.dirty[r.sku_code]&&Object.prototype.hasOwnProperty.call(state.dirty[r.sku_code],f.field_key);const shown=dirty?state.dirty[r.sku_code][f.field_key]:v;const isAmountInput=f.field_type==='amount'||(f.field_type!=='percent'&&f.display_format==='amount');const inputPlaces=f.decimal_places==null?2:Number(f.decimal_places);const inputAttrs=isAmountInput?' inputmode="decimal" data-decimal-places="'+(Number.isFinite(inputPlaces)?Math.max(0,Math.min(6,inputPlaces)):2)+'" onfocus="psPrepareAmountInput(this)" onblur="psFormatAmountInput(this)"':'';const inputValue=shown==null?'':(isAmountInput?formatAmountInput(shown,inputPlaces):String(shown));return '<td class="ps-value"><input class="ps-input '+(dirty?'dirty':'')+'" type="'+(isAmountInput?'text':'number')+'" '+(isAmountInput?'':'step="0.01" ')+inputAttrs+' value="'+esc(inputValue)+'" data-sku="'+esc(r.sku_code)+'" data-field="'+esc(f.field_key)+'" oninput="psMarkDirty(this)" title="'+esc(f.unit||scheme.currency||'')+'">'+(f.field_type==='percent'?'<span class="ps-unit">%</span>':(f.field_type==='amount'?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':(f.unit?'<span class="ps-unit">'+esc(f.unit)+'</span>':'')))+'</td>';
    }).join('');
    const forecastAvg = r.forecast_avg_sales;
@@ -275,7 +276,7 @@ function main(){
    const inboundMeta = daysSinceInbound == null
     ? tr('daysSinceInboundUnknown')
     : tr('daysSinceInbound').replace('{days}',Number(daysSinceInbound).toLocaleString('en-US'));
-   return '<tr><td class="ps-category">'+(r.category?esc(r.category):'&mdash;')+'</td><td class="ps-sku">'+esc(r.sku_code)+'</td><td class="ps-value"'+psSortValueAttr(forecastAvg)+'>'+forecastAvgText+'</td><td class="ps-stock '+(Number(r.stock_qty)===0?'zero':'')+'"'+psSortValueAttr(Number(r.stock_qty||0))+'>'+Number(r.stock_qty||0).toLocaleString('en-US')+'<div class="ps-stock-meta">'+esc(inboundMeta)+'</div></td><td class="ps-value"'+psSortValueAttr(availableTurnover)+'>'+availableTurnoverText+'</td>'+cells+'</tr>';
+   return '<tr data-sku="'+esc(r.sku_code)+'"><td class="ps-category">'+(r.category?esc(r.category):'&mdash;')+'</td><td class="ps-sku">'+esc(r.sku_code)+'</td><td class="ps-value"'+psSortValueAttr(forecastAvg)+'>'+forecastAvgText+'</td><td class="ps-stock '+(Number(r.stock_qty)===0?'zero':'')+'"'+psSortValueAttr(Number(r.stock_qty||0))+'>'+Number(r.stock_qty||0).toLocaleString('en-US')+'<div class="ps-stock-meta">'+esc(inboundMeta)+'</div></td><td class="ps-value"'+psSortValueAttr(availableTurnover)+'>'+availableTurnoverText+'</td>'+cells+'</tr>';
   }).join('');
  const dirtyCount=Object.keys(state.dirty).reduce((n,k)=>n+Object.keys(state.dirty[k]||{}).length,0);
  html+='<div class="ps-card"><div class="ps-table-wrap"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div><div class="ps-bottom"><span>'+tr('importHint')+'</span><span class="'+(dirtyCount?'ps-dirty':'')+'">'+(dirtyCount?dirtyCount+' unsaved':'')+'</span></div></div>';
@@ -285,7 +286,100 @@ function updateSave(){const b=document.getElementById('ps-save-btn');if(!b)retur
 window.psSelectScheme=async function(id){const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);if(n&&!confirm(tr('unsaved'))){main();return;}await loadData(id);};
 window.psPrepareAmountInput=function(input){if(!input)return;const before=String(input.value||''),position=Number.isFinite(input.selectionStart)?input.selectionStart:before.length,clean=before.replace(/,/g,''),nextPosition=before.slice(0,position).replace(/,/g,'').length;input.value=clean;if(typeof input.setSelectionRange==='function')input.setSelectionRange(nextPosition,nextPosition);};
 window.psFormatAmountInput=function(input){if(!input)return;const raw=String(input.value==null?'':input.value).replace(/,/g,'').trim();if(raw===''){input.value='';return;}const n=Number(raw);if(!Number.isFinite(n))return;input.value=formatAmountInput(n,input.getAttribute('data-decimal-places'));};
-window.psMarkDirty=function(input){const sku=input.getAttribute('data-sku'),key=input.getAttribute('data-field'),raw=String(input.value==null?'':input.value).replace(/,/g,'').trim();if(raw!==''&&!Number.isFinite(Number(raw)))return;if(!state.dirty[sku])state.dirty[sku]={};state.dirty[sku][key]=raw===''?null:Number(raw);input.classList.add('dirty');updateSave();const b=document.querySelector('#ps-root .ps-bottom span:last-child');if(b){const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);b.textContent=n?n+' unsaved':'';b.classList.toggle('ps-dirty',n>0);}};
+const psFormulaPreviewTimers = new Map();
+const psFormulaPreviewSequences = new Map();
+function cancelPendingPriceSystemFormulaPreviews(){
+ psFormulaPreviewTimers.forEach(timer=>clearTimeout(timer));
+ psFormulaPreviewTimers.clear();
+ psFormulaPreviewSequences.forEach((seq,sku)=>psFormulaPreviewSequences.set(sku,seq+1));
+}
+function updatePriceSystemFormulaPreview(skuCode,preview){
+ const row=state.rows.find(item=>item.sku_code===skuCode);
+ if(!row)return;
+ row.values=Object.assign({},row.values||{},preview.values||{});
+ row.srp=preview.srp==null?null:Number(preview.srp);
+ row.srp_source=preview.srp_source||'';
+ row.formula_context=Object.assign({},row.formula_context||{},preview.formula_context||{});
+ row.formula_errors=preview.formula_errors||{};
+ const tableRow=Array.from(document.querySelectorAll('#ps-root .ps-table-wrap tbody tr[data-sku]'))
+  .find(item=>item.getAttribute('data-sku')===skuCode);
+ if(!tableRow)return;
+ state.fields.forEach(field=>{
+  if(field.field_type!=='formula'||field.field_key==='srp')return;
+  const cell=Array.from(tableRow.querySelectorAll('td[data-field-key]'))
+   .find(item=>item.getAttribute('data-field-key')===field.field_key);
+  if(!cell)return;
+  const value=Object.prototype.hasOwnProperty.call(preview.values||{},field.field_key)
+   ?preview.values[field.field_key]
+   :(row.values||{})[field.field_key];
+  const formulaError=(preview.formula_errors||{})[field.field_key]||'';
+  cell.innerHTML=(formulaError?'<span style="color:#d97706">!</span> ':'')+fieldText(value,field);
+  cell.title=formulaError||field.formula||'';
+  cell.setAttribute('data-sort-value',value==null?'':String(value));
+ });
+ const srpInput=Array.from(tableRow.querySelectorAll('input.ps-input[data-field="srp"]'))[0];
+ if(srpInput){
+  const dirty=state.dirty[skuCode]||{};
+  const hasDirtySrp=Object.prototype.hasOwnProperty.call(dirty,'srp');
+  if((hasDirtySrp&&dirty.srp===null&&document.activeElement!==srpInput)||(!hasDirtySrp&&row.srp_source==='formula')){
+   srpInput.value=formatAmountInput(row.srp,2);
+  }
+  const srpCell=srpInput.closest('td');
+  if(srpCell)srpCell.setAttribute('data-sort-value',row.srp==null?'':String(row.srp));
+ }
+ const table=tableRow.closest('table');
+ const sortState=table&&_psTableSort.get(table);
+ if(sortState&&sortState.dir!=='none')psApplyTableSort(table,sortState.col,sortState.dir);
+}
+async function runPriceSystemFormulaPreview(skuCode,schemeId,sequence){
+ if(state.schemeId!==schemeId||psFormulaPreviewSequences.get(skuCode)!==sequence)return;
+ const row=state.rows.find(item=>item.sku_code===skuCode);
+ if(!row)return;
+ const dirty=state.dirty[skuCode]||{};
+ const context=Object.assign({},row.formula_context||{},row.values||{});
+ Object.keys(dirty).forEach(key=>{context[key]=dirty[key]==null?0:Number(dirty[key]);});
+ const manualSrp=Object.prototype.hasOwnProperty.call(dirty,'srp')
+  ?dirty.srp
+  :(row.srp_source==='manual'?row.srp:null);
+ try{
+  const preview=await api('/api/price-system/schemes/'+encodeURIComponent(schemeId)+'/formula/recalculate-preview','POST',{
+   sku_code:skuCode,context,manual_srp:manualSrp
+  });
+  if(state.schemeId!==schemeId||psFormulaPreviewSequences.get(skuCode)!==sequence)return;
+  updatePriceSystemFormulaPreview(skuCode,preview);
+ }catch(error){
+  if(state.schemeId===schemeId&&psFormulaPreviewSequences.get(skuCode)===sequence)err(error);
+ }
+}
+function schedulePriceSystemFormulaPreview(skuCode){
+ const key=String(skuCode||'');
+ if(!key||!state.schemeId||!state.fields.some(field=>field.field_type==='formula'))return;
+ const sequence=(psFormulaPreviewSequences.get(key)||0)+1;
+ psFormulaPreviewSequences.set(key,sequence);
+ const previous=psFormulaPreviewTimers.get(key);
+ if(previous)clearTimeout(previous);
+ const schemeId=state.schemeId;
+ const timer=setTimeout(()=>{
+  psFormulaPreviewTimers.delete(key);
+  runPriceSystemFormulaPreview(key,schemeId,sequence);
+ },220);
+ psFormulaPreviewTimers.set(key,timer);
+}
+window.psMarkDirty=function(input){
+ const sku=input.getAttribute('data-sku'),key=input.getAttribute('data-field'),raw=String(input.value==null?'':input.value).replace(/,/g,'').trim();
+ if(raw!==''&&!Number.isFinite(Number(raw)))return;
+ if(!state.dirty[sku])state.dirty[sku]={};
+ state.dirty[sku][key]=raw===''?null:Number(raw);
+ input.classList.add('dirty');
+ updateSave();
+ const b=document.querySelector('#ps-root .ps-bottom span:last-child');
+ if(b){
+  const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);
+  b.textContent=n?n+' unsaved':'';
+  b.classList.toggle('ps-dirty',n>0);
+ }
+ schedulePriceSystemFormulaPreview(sku);
+};
 window.psSaveChanges=async function(){const rows=Object.keys(state.dirty).map(sku=>{const values=Object.assign({},state.dirty[sku]||{}),row={sku_code:sku,values};if(Object.prototype.hasOwnProperty.call(values,'srp')){row.srp=values.srp;delete row.values.srp;}return row;}).filter(row=>Object.keys(row.values).length||Object.prototype.hasOwnProperty.call(row,'srp'));if(!rows.length)return;try{await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/values','POST',{rows});state.dirty={};if(typeof showToast==='function')showToast(tr('saved'),'success');await loadSchemes(state.schemeId);}catch(e){err(e);updateSave();}};
 function readSchemeCreateFormValues(){
  return {

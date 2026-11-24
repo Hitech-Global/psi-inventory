@@ -845,6 +845,117 @@ function registerPriceSystemRoutes(app, deps) {
     }
   }));
 
+  app.post('/api/price-system/schemes/:id/formula/recalculate-preview', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const body = req.body || {};
+    const skuCode = String(body.sku_code || '').trim();
+    if (!skuCode) return res.status(400).json({ error: 'SKU 编码不能为空' });
+    const sku = queryOne(
+      'SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?',
+      [scheme.brand, skuCode]
+    );
+    if (!sku) return res.status(404).json({ error: 'SKU 不存在或不属于当前品牌' });
+    const category = primaryCategoryMapForSkus([sku]).get(skuCode) || '未分类';
+    const fields = query(
+      'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
+      [scheme.id]
+    ).rows.slice();
+    if (!fields.some(field => field.field_key === 'srp')) {
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: 'formula', unit: '', applicable_categories: [],
+        formula: String(scheme.srp_formula || ''), formula_rules: '{}',
+        sync_wac: 0, sync_quotation: 0, is_builtin_srp: true
+      });
+    }
+    const fieldMap = new Map(fields.map(field => [field.field_key, field]));
+    const supplied = body.context && typeof body.context === 'object' && !Array.isArray(body.context)
+      ? body.context
+      : {};
+    const context = {};
+    try {
+      allowedFormulaVariables(fields).forEach(key => {
+        const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
+        const value = raw == null || raw === '' ? 0 : Number(raw);
+        if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
+        context[key] = value;
+      });
+      let manualSrp = null;
+      if (body.manual_srp !== null && body.manual_srp !== undefined && body.manual_srp !== '') {
+        manualSrp = Number(body.manual_srp);
+        if (!Number.isFinite(manualSrp) || manualSrp < 0) throw new Error('SRP 必须为有效的非负数');
+      }
+      const resolved = {};
+      const resolving = new Set();
+      const errors = {};
+      function resolveField(key) {
+        if (key === 'srp' && manualSrp !== null) {
+          resolved[key] = manualSrp;
+          return manualSrp;
+        }
+        if (Object.prototype.hasOwnProperty.call(resolved, key)) return resolved[key];
+        const field = fieldMap.get(key);
+        if (!field) return Object.prototype.hasOwnProperty.call(context, key) ? context[key] : 0;
+        if (!isCategoryApplicable(field, category)) {
+          resolved[key] = 0;
+          return 0;
+        }
+        if (field.field_type !== 'formula' || Number(field.sync_wac || 0) === 1) {
+          resolved[key] = Object.prototype.hasOwnProperty.call(context, key) ? context[key] : 0;
+          return resolved[key];
+        }
+        const categoryFormula = formulaForCategory(field, category);
+        if (!categoryFormula) {
+          resolved[key] = null;
+          return null;
+        }
+        if (resolving.has(key)) {
+          errors[key] = '公式存在循环引用';
+          resolved[key] = 0;
+          return 0;
+        }
+        resolving.add(key);
+        try {
+          const expression = normalizeFormulaExpression(categoryFormula, fields);
+          const variables = Object.assign({}, context, resolved);
+          getFormulaVariables(expression).forEach(dependency => {
+            if (fieldMap.has(dependency)) variables[dependency] = resolveField(dependency);
+          });
+          resolved[key] = evaluateFormula(expression, variables);
+        } catch (error) {
+          errors[key] = error.message;
+          resolved[key] = 0;
+        }
+        resolving.delete(key);
+        return resolved[key];
+      }
+      const values = {};
+      fields.forEach(field => {
+        if (field.field_type !== 'formula') return;
+        values[field.field_key] = isCategoryApplicable(field, category) && formulaForCategory(field, category)
+          ? resolveField(field.field_key)
+          : null;
+      });
+      const srp = manualSrp !== null
+        ? manualSrp
+        : (fieldMap.has('srp') ? resolveField('srp') : null);
+      values.srp = srp;
+      const formulaContext = Object.assign({}, context, resolved, { srp });
+      res.json({
+        sku_code: skuCode,
+        category,
+        values,
+        srp,
+        srp_source: manualSrp !== null ? 'manual' : (formulaForCategory(fieldMap.get('srp'), category) ? 'formula' : ''),
+        formula_context: formulaContext,
+        formula_errors: errors
+      });
+    } catch (error) {
+      res.status(400).json({ error: error.message || '公式重算失败' });
+    }
+  }));
+
   app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
