@@ -149,6 +149,31 @@ test('re-importing unchanged valid sales rows still refreshes their SKU-country 
   );
 });
 
+test('manual saved suggestions remain the PO-consumption base after forecast recalculation', () => {
+  const resolverMatch = server.match(/function resolveForecastSuggestionBase\(suggestionParts, existingRow, preserveManualOverrides\) \{[\s\S]*?\n\}/);
+  const allocatorMatch = server.match(/function calculateForecastPOConsumption\([\s\S]*?\n\}/);
+  assert.ok(resolverMatch, 'manual suggestion baseline resolver should exist');
+  const context = {};
+  vm.runInNewContext(resolverMatch[0] + '\n' + allocatorMatch[0] +
+    '\nthis.resolveBase = resolveForecastSuggestionBase; this.consume = calculateForecastPOConsumption;', context);
+
+  const base = context.resolveBase(
+    { online_suggested_qty: 0, offline_suggested_qty: 0 },
+    {
+      online_write_seq: 32, offline_write_seq: 18, recalc_revision: 3,
+      online_suggested_qty: 1300, offline_suggested_qty: 20,
+      po_consumed_online_qty: 0, po_consumed_offline_qty: 0
+    },
+    true
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(base)), { online: 1300, offline: 20 });
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(context.consume(base.online, base.offline, 1320))),
+    { online: 1300, offline: 20 },
+    'an existing generated PO consumes the manual saved quantity even if the recalculated stock target is zero'
+  );
+});
+
 test('forecast-generated PO consumption is allocated across channels without going negative', () => {
   const helperMatch = server.match(/function calculateForecastPOConsumption\([\s\S]*?\n\}/);
   assert.ok(helperMatch, 'forecast PO consumption allocator should exist');
