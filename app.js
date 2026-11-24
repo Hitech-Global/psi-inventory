@@ -7098,7 +7098,7 @@ async function renderReplenishment(){
   rpPerfLog({warm_entry:_warm?'HIT':'MISS'});
   rpTab = 'total';
   if(!_warm){ rpClearDataCache(); rpClearAllViews(); }
-  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="loadRpSummary();loadRp()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')loadRp()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
+  document.getElementById('content-inner').innerHTML=t('html.renderReplenishment', `<div id="flash-container"></div><div id="rp-collapsible"><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>国家</label><select id="rp-c" onchange="onRpCountryChange()"><option value="">全部</option></select></div><div class="filter-group"><label>仓库</label><select id="rp-w" onchange="onRpWarehouseChange()"><option value="">全部</option></select></div><div class="filter-group"><label>品牌</label><select id="rp-b" onchange="onRpBrandChange()"><option value="">全部</option></select></div><div class="filter-actions">{v1}<button class="btn btn-default btn-sm" onclick="exportRpExcel()">⬇ 导出Excel</button><button class="btn btn-default btn-sm" onclick="openRpParams()">⚙ 预测参数设置</button></div></div></div></div><div class="tab-bar" style="margin:12px 20px 0;display:flex;justify-content:space-between;align-items:center"><div style="display:flex"><div class="tab-item active" onclick="switchRpTab('total')">📊 总预测</div><div class="tab-item" onclick="switchRpTab('online')">🛒 线上预测</div><div class="tab-item" onclick="switchRpTab('offline')">🏪 线下预测</div></div><div style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-secondary)"><span>显示方式：</span><div class="rp-mode-switch"><button class="rp-mode-btn active" onclick="switchRpMode('monthly')">按月</button><button class="rp-mode-btn" onclick="switchRpMode('daily')">按天</button></div><button class="btn btn-default btn-sm rp-collapse-btn" id="rp-collapse-btn" onclick="toggleRpCollapse()" title="收起/展开 顶部筛选区与指标卡片">▾ 收起</button></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left" id="rp-tab-title">📊 SKU动销与订单预测（总预测）</div><div class="table-section-actions"><input type="text" id="rp-s" placeholder="SKU搜索" onkeypress="if(event.key==='Enter')onRpSearchSubmit()" style="width:140px;height:28px;padding:4px 8px;border:1px solid #d0d7de;border-radius:4px;font-size:13px;margin-right:8px">{v2}{v3}<button class="btn btn-default btn-sm" id="rp-field-config-btn" onclick="openRpFieldConfig(rpTab)" title="字段显示与排序" style="margin-left:8px">⚙ 字段配置</button></div></div><div id="rp-table"></div></div>`, {v1: hasPermission('replenishment_edit')?t('gen.L3813.1','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()">🔄 重新计算</button>'):'', v2: hasPermission('replenishment_edit')?t('gen.L3813.2','<button class="btn btn-success btn-sm rp-gen-btn" onclick="genRp()" style="margin-right:8px">🔄 重新计算</button>'):'', v3: hasPermission('po_create')?t('gen.L3813.3','<button class="btn btn-primary btn-sm" id="rp-po-btn" onclick="genPOModal()">🛒 生成PO</button>'):''});
   var rpFilterActions=document.querySelector('#rp-collapsible .filter-actions');
   if(rpFilterActions){
     var statusFilter=document.createElement('div');
@@ -7224,6 +7224,7 @@ async function loadRpFilterOptions(){
 }
 // 国家变化时联动：仓库列表 + 品牌列表都从 warehouses 表按国家筛选
 async function onRpCountryChange(skipDataReload){
+  if(!skipDataReload && !(await rpEnsurePendingSavesBeforeViewChange())) return false;
   const country=document.getElementById('rp-c')?.value||'';
   const prevWarehouse=document.getElementById('rp-w')?.value||'';
   const prevBrand=document.getElementById('rp-b')?.value||'';
@@ -7322,6 +7323,7 @@ window.__restoreRpFilterState=function(){
 };
 // 品牌变化时联动：仓库列表按 国家+品牌 筛选
 async function onRpBrandChange(){
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
   const country=document.getElementById('rp-c')?.value||'';
   const brand=document.getElementById('rp-b')?.value||'';
   const prevWarehouse=document.getElementById('rp-w')?.value||'';
@@ -7383,14 +7385,29 @@ function saveRpPreferences(){
     .catch(function(e){console.warn('replenishment preferences save failed',e);return null;});
   return _rpPreferencesSaveQueue;
 }
-function onRpFilterChange(){
-  rpFlushAllPending();   // 筛选/搜索变化前主动 flush 手工作业（普通查看，不重算、不覆盖）
-  saveRpPreferences();
-  loadRpSummary();
-  rpShowCachedViewOrLoad();
+async function onRpFilterChange(){
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
+  await saveRpPreferences();
+  await loadRpSummary();
+  await rpShowCachedViewOrLoad();
+  return true;
+}
+async function onRpWarehouseChange(){
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
+  await saveRpPreferences();
+  await loadRpSummary();
+  await loadRp();
+  return true;
+}
+async function onRpSearchSubmit(){
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
+  await saveRpPreferences();
+  await loadRpSummary();
+  await loadRp();
+  return true;
 }
 async function resetRpFilters(){
-  rpFlushAllPending();   // 重置筛选前主动 flush 手工作业（普通查看，不重算、不覆盖）
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
   ['rp-c','rp-w','rp-b','rp-status','rp-lifecycle','rp-s'].forEach(function(id){
     var el=document.getElementById(id);
     if(el)el.value='';
@@ -8036,7 +8053,7 @@ window._rpSaveJournalPrefix='rpj::';          // sessionStorage key = rpj::<rid>
 function rpGetSaveState(channel, rid){
   if(!window._rpSaveState) window._rpSaveState={online:{},offline:{}};
   if(!window._rpSaveState[channel]) window._rpSaveState[channel]={};
-  if(!window._rpSaveState[channel][rid]) window._rpSaveState[channel][rid]={pending:null,inFlight:false,timer:null,flightPromise:null};
+  if(!window._rpSaveState[channel][rid]) window._rpSaveState[channel][rid]={pending:null,inFlight:false,timer:null,flightPromise:null,failed:false};
   return window._rpSaveState[channel][rid];
 }
 // 同步写 sessionStorage journal（同一 session 内刷新可 replay 最新 pending）。不使用 localStorage，避免陈旧值跨 session 覆盖。
@@ -8121,10 +8138,12 @@ function rpReplayJournal(){
 // 当前请求完成后若仍有 newer pending 立即链式发送最新值。最终 DB 收敛到最后一个用户值。
 function rpFlushOne(channel, rid){
   var st=rpGetSaveState(channel, rid);
-  if(st.inFlight) return st.flightPromise||Promise.resolve(true);
-  if(st.pending===null) return Promise.resolve(true);
+  if(st.inFlight) return st.flightPromise||Promise.resolve(false);
+  if(st.pending===null) return Promise.resolve(!st.failed);
+  if(st.failed) return Promise.resolve(false);
   var val=st.pending; st.pending=null; st.inFlight=true;
   var sentVal=val;
+  var retryPendingAfterFlight=false;
   var r=rpGetRow(channel, rid);
   var expRecalc = r ? (r._serverRecalc||0) : 0;
   var data={};
@@ -8134,6 +8153,7 @@ function rpFlushOne(channel, rid){
   st.flightPromise=api('/api/replenishment-suggestions/'+rid,'PUT',data)
     .then(function(resp){
       var d=resp&&resp.data;
+      if(!resp || resp.success===false || !d) throw new Error('建议采购数量保存未返回权威结果');
       rpPatchSnapshotRow(d);   // RP-SNAPSHOT：server 权威行就地 merge 进 L0（success 与 stale 都要，防「切走再回来显示旧值」）
       var r2=rpGetRow(channel, rid);
       var c=r2?rpGetChannelC(channel,r2):null;
@@ -8146,20 +8166,27 @@ function rpFlushOne(channel, rid){
           // stale：区分 manual conflict 与 system recompute invalidation
           var jRecalc = (st.journal && st.journal.baseRecalcRevision!=null) ? st.journal.baseRecalcRevision : r2._serverRecalc;
           if(jRecalc !== r2._serverRecalc){
-            // 系统重算已发生 → journal 失效，禁止 retry，清保护层，接受 server truth
+            // 系统重算已发生 → journal 失效，禁止 retry，接受 server truth
             if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
             rpClearJournalKey(channel, rid);
             st.pending=null;
+            st.failed=true;
+            rpClearDataCache(); rpInvalidateSuggestionViews();
+            return false;
+          }
+          // manual conflict：若仍有 newer pending（用户已输入更新值），用新 baseline 重发最新值
+          if(st.pending!==null){
+            retryPendingAfterFlight=true;
+            st.failed=false;
             rpClearDataCache(); rpInvalidateSuggestionViews();
             return true;
           }
-          // manual conflict：若仍有 newer pending（用户已输入更新值），.finally 用新 baseline 重发最新值
-          if(st.pending!==null){ rpClearDataCache(); rpInvalidateSuggestionViews(); return true; }
-          // 无更新意图：接受 server truth，清保护层
+          // 无更新意图：接受 server truth，但明确报告本次手工值未被保存
           if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
           rpClearJournalKey(channel, rid);
+          st.failed=true;
           rpClearDataCache(); rpInvalidateSuggestionViews();
-          return true;
+          return false;
         }
         // success：同步 server truth 到内存缓存
         if(channel==='online'){ r2.online_suggested_qty=d.online_suggested_qty; }
@@ -8170,21 +8197,30 @@ function rpFlushOne(channel, rid){
         if(st.pending===null){
           if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
           rpClearJournalKey(channel, rid);
+        }else{
+          retryPendingAfterFlight=true;
         }
+        st.failed=false;
       }
       rpClearDataCache();
       rpInvalidateSuggestionViews();
       return true;
     })
     .catch(function(){
-      st.pending=sentVal; // 网络失败：保留待重试（override + journal 已含此值，下次操作重试）
-      return false;
+      // 请求失败时保留最新用户输入。若在途期间已有新输入，只重发新值，不用旧值覆盖它。
+      if(st.pending===null){
+        st.pending=sentVal;
+        st.failed=true;
+        return false;
+      }
+      st.failed=false;
+      retryPendingAfterFlight=true;
+      return true;
     })
     .finally(function(){
       st.inFlight=false; st.flightPromise=null;
-      // 在途期间用户又输入了新值（coalesce 后的最新值）→ 重新发起一次请求（此时 inFlight 已 false）。
-      // 注意：不可在 .then 中 return rpFlushOne()，否则 inFlight 仍为真会返回自身 promise 形成死锁。
-      if(st.pending!==null) rpFlushOne(channel, rid);
+      // 只自动发送在途期间产生的新输入；同一失败值保留待重试，但不进入无限重试循环。
+      if(st.pending!==null && retryPendingAfterFlight && !st.failed) rpFlushOne(channel, rid);
     });
   return st.flightPromise;
 }
@@ -8197,30 +8233,86 @@ function rpScheduleSaveStock(channel, rid){
     rpFlushOne(channel, rid);
   }, 500);
 }
-// 切换 Tab / mode / 筛选 / 重置前：主动把在途+pending 全部发出（fire-and-forget，单飞保证顺序）。
+// 切换 Tab / mode / 筛选 / 重置前：清除防抖定时器并启动所有待保存请求，返回可等待的 Promise 列表。
 function rpFlushAllPending(){
-  if(!window._rpSaveState) return;
+  var jobs=[];
+  if(!window._rpSaveState) return jobs;
   ['online','offline'].forEach(function(ch){
     var cm=window._rpSaveState[ch]; if(!cm) return;
-    Object.keys(cm).forEach(function(rid){ rpFlushOne(ch, rid); });
+    Object.keys(cm).forEach(function(rid){
+      var st=cm[rid];
+      if(st.timer){ clearTimeout(st.timer); st.timer=null; }
+      if(st.inFlight){
+        if(st.flightPromise) jobs.push(st.flightPromise);
+      }else if(st.pending!==null && !st.failed){
+        jobs.push(rpFlushOne(ch, rid));
+      }
+    });
   });
+  return jobs;
 }
-// 重新计算前必须排空所有手工作业：全部成功才返回 true；任一失败返回 false，禁止继续 generate。
+// 等待单个 SKU/渠道真正收敛到服务器权威值；在途期间产生的新输入也必须完成保存。
+async function rpDrainOne(channel, rid){
+  var st=rpGetSaveState(channel, rid);
+  st.failed=false; // 本次显式保存动作允许重试上一次失败的值
+  for(var pass=0;pass<30;pass++){
+    if(st.timer){ clearTimeout(st.timer); st.timer=null; }
+    if(st.inFlight){
+      var inFlight=st.flightPromise;
+      if(!inFlight) return false;
+      var inFlightOk=await inFlight;
+      if(inFlightOk!==true) return false;
+      continue;
+    }
+    if(st.pending!==null){
+      if(st.failed) return false;
+      var pendingOk=await rpFlushOne(channel, rid);
+      if(pendingOk!==true) return false;
+      continue;
+    }
+    return !st.failed;
+  }
+  return false;
+}
+// 重新计算、切换视图、筛选前必须排空所有手工作业；任何保存失败都阻止后续动作。
 async function rpDrainAllPending(){
-  rpFlushAllPending();
-  var ps=[];
-  if(window._rpSaveState){
+  if(!window._rpSaveState) return true;
+  // 每次用户明确发起的切换/重算都是一次新的保存尝试；失败后本轮不自动无限重试。
+  ['online','offline'].forEach(function(ch){
+    var cm=window._rpSaveState[ch]; if(!cm) return;
+    Object.keys(cm).forEach(function(rid){ cm[rid].failed=false; });
+  });
+  for(var pass=0;pass<50;pass++){
+    var jobs=rpFlushAllPending();
+    if(jobs.length) await Promise.all(jobs);
+    var hasInFlight=false, hasRetryablePending=false, hasFailure=false;
     ['online','offline'].forEach(function(ch){
       var cm=window._rpSaveState[ch]; if(!cm) return;
       Object.keys(cm).forEach(function(rid){
         var st=cm[rid];
-        if(st.flightPromise) ps.push(st.flightPromise);
+        if(st.timer){ clearTimeout(st.timer); st.timer=null; }
+        if(st.inFlight) hasInFlight=true;
+        else if(st.pending!==null && !st.failed) hasRetryablePending=true;
+        if(st.failed) hasFailure=true;
       });
     });
+    if(hasInFlight || hasRetryablePending) continue;
+    return !hasFailure;
   }
-  if(!ps.length) return true;
-  var results=await Promise.all(ps);
-  return results.every(function(x){ return x===true; });
+  return false;
+}
+// 视图变更前的统一保存门禁：失败时留在当前页面，不让新视图读取旧数据库值。
+async function rpEnsurePendingSavesBeforeViewChange(){
+  var ok=await rpDrainAllPending();
+  if(!ok){
+    var lang=typeof getLang==='function'?getLang():'zh';
+    var message=(lang==='en'||lang==='en-US')
+      ? 'Some suggested purchase quantities were not saved. This action was cancelled. Please check your connection and try again.'
+      : '有建议采购数量尚未保存成功，当前操作已取消。请检查网络后重试。';
+    showToast(message,'danger');
+    return false;
+  }
+  return true;
 }
 // 页面卸载兜底：keepalive 尽力发送尚未确认的手工作业（仅兜底，正确性由 sessionStorage replay 保证）。
 // 不依赖 response seq / AbortController，仅作为「快速关闭页面」的最后缓冲；幂等（后端直接 SET 指定值）。
@@ -8348,9 +8440,9 @@ function rpRestoreScroll(viewKey){
   if(sc){if(v.scrollTop)sc.scrollTop=v.scrollTop;if(v.scrollLeft)sc.scrollLeft=v.scrollLeft;}
 }
 // ==================== 订单预测：Tab/Mode 切换 ====================
-function switchRpTab(tab){
+async function switchRpTab(tab){
   var _t0=performance.now();
-  rpFlushAllPending();   // 切 Tab 前主动 flush 手工作业（普通查看，不重算、不覆盖）
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
   rpTab=tab;
   document.querySelectorAll('#content-inner .tab-bar .tab-item').forEach((t,i)=>{
     const tabs=['total','online','offline'];
@@ -8375,12 +8467,17 @@ function switchRpTab(tab){
   loadRp();
   updateRpFieldConfigBtn(tab);
 }
-function switchRpMode(mode){
+async function switchRpMode(mode){
   var _t0=performance.now();
-  rpFlushAllPending();   // 切月/天前主动 flush 手工作业（普通查看，不重算、不覆盖）
+  var clicked=typeof event!=='undefined'&&event?event.target:null; // 在 await 前捕获，避免异步后丢失全局 event
+  if(!(await rpEnsurePendingSavesBeforeViewChange())) return false;
   rpMode=mode;
-  document.querySelectorAll('.rp-mode-btn').forEach(b=>b.classList.remove('active'));
-  event.target.classList.add('active');
+  document.querySelectorAll('.rp-mode-btn').forEach(function(b){b.classList.remove('active');});
+  var activeBtn=clicked&&clicked.closest?clicked.closest('.rp-mode-btn'):null;
+  if(activeBtn) activeBtn.classList.add('active');
+  else document.querySelectorAll('.rp-mode-btn').forEach(function(b){
+    if((b.getAttribute('onclick')||'').indexOf("switchRpMode('"+mode+"')")>=0) b.classList.add('active');
+  });
   saveRpPreferences();
   var viewKey=rpCurrentViewKey();
   var cached=rpGetViewNode(viewKey);
@@ -10159,7 +10256,7 @@ function onChannelTargetStockInput(input){
   var qty=parseInt(input.value)||0;
   // 三层写：override（UI 保护）+ pending（latest 值）+ sessionStorage journal（防刷新丢 pending）
   rpSetManualStock(channel, rid, qty);
-  var st=rpGetSaveState(channel, rid); st.pending=qty;
+  var st=rpGetSaveState(channel, rid); st.pending=qty; st.failed=false;
   rpWriteJournal(channel, rid, qty);
   rpScheduleSaveStock(channel, rid);
   // 仅更新前端派生展示（不发 PUT、不写库）：当前行预计下单后周转 + 两个汇总 cell
@@ -10198,6 +10295,7 @@ async function onChannelTargetStockChange(input){
   if(st.timer){ clearTimeout(st.timer); st.timer=null; }
   rpSetManualStock(channel, rid, qty);
   st.pending=qty;
+  st.failed=false;
   rpWriteJournal(channel, rid, qty);
   var vc=input.closest('.rp-view-container')||rpActiveContainer();
   // 从缓存读取行数据用于前端派生展示
@@ -10222,8 +10320,9 @@ async function onChannelTargetStockChange(input){
   }
   // 立即单飞保存；失败提示，但不静默回退（override + journal 保留待重试）
   try{
-    await rpFlushOne(channel, rid);
-    showRpAutoSaved(input);
+    var saved=await rpDrainOne(channel, rid);
+    if(saved===true) showRpAutoSaved(input);
+    else showRpSaveFailed(input);
   }catch(e){
     showRpSaveFailed(input);
   }
