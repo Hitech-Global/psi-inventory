@@ -1048,6 +1048,7 @@ function registerPriceSystemRoutes(app, deps) {
     const body = req.body || {};
     const currency = String(body.currency || scheme.currency || '').trim().toUpperCase();
     const notes = body.notes == null ? scheme.notes : String(body.notes);
+    const schemeDetailsChanged = currency !== String(scheme.currency || '').trim().toUpperCase() || notes !== String(scheme.notes || '');
     let freezeFieldKey = String(scheme.freeze_field_key || '__sku').trim() || '__sku';
     if (Object.prototype.hasOwnProperty.call(body, 'freeze_field_key')) {
       freezeFieldKey = String(body.freeze_field_key == null ? '' : body.freeze_field_key).trim();
@@ -1058,7 +1059,7 @@ function registerPriceSystemRoutes(app, deps) {
       }
     }
     run('UPDATE price_system_schemes SET currency = ?, notes = ?, freeze_field_key = ?, updated_at = datetime(\'now\') WHERE id = ?', [currency, notes, freezeFieldKey, scheme.id]);
-    createVersion(scheme.id, userStamp(req), '更新价格方案信息');
+    if (schemeDetailsChanged) createVersion(scheme.id, userStamp(req), '更新价格方案信息');
     res.json(getSchemeOrNull(scheme.id));
   }));
 
