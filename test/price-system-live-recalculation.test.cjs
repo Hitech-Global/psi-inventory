@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { registerPriceSystemRoutes } = require('../price-system-api');
 
-function createHarness() {
+function createHarness(extraFields = []) {
   const routes = new Map();
   const scheme = {
     id: 'scheme-1', country: 'Indonesia', brand: 'Netac', platform: 'Shopee',
@@ -20,6 +20,7 @@ function createHarness() {
     { id: 'profit_rate', scheme_id: 'scheme-1', field_key: 'profit_rate', field_name: 'Profit Rate', field_type: 'formula', formula: 'profit / srp', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'category_fee', scheme_id: 'scheme-1', field_key: 'category_fee', field_name: 'Category Fee', field_type: 'formula', formula: '', formula_rules: JSON.stringify({ Accessories: 'srp * 3%', SSD: 'srp * 5%' }), applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
   ];
+  fields.push(...extraFields);
   const app = {
     get: (route, ...handlers) => routes.set('GET ' + route, handlers),
     post: (route, ...handlers) => routes.set('POST ' + route, handlers),
@@ -109,6 +110,35 @@ test('clearing a manual SRP preview restores the configured formula SRP and reca
   assert.ok(Math.abs(response.body.values.payment_fee - 15.4) < 1e-9);
   assert.ok(Math.abs(response.body.values.profit - 744.6) < 1e-9);
   assert.ok(Math.abs(response.body.values.profit_rate - (744.6 / 770)) < 1e-9);
+});
+
+test('live preview uses a referenced source-field value in a dependent formula', async () => {
+  const harness = createHarness([
+    { id: 'source-fob', scheme_id: 'scheme-1', field_key: 'source_fob', field_name: 'Source FOB', field_type: 'reference', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'source-plus-shipping', scheme_id: 'scheme-1', field_key: 'source_plus_shipping', field_name: 'Source FOB + Shipping', field_type: 'formula', formula: 'source_fob + shipping', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ]);
+  const response = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, source_fob: 250 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.values.source_fob, 250);
+  assert.equal(response.body.values.source_plus_shipping, 260);
+});
+
+test('a missing referenced SKU value stays blank in dependent formula previews', async () => {
+  const harness = createHarness([
+    { id: 'source-fob', scheme_id: 'scheme-1', field_key: 'source_fob', field_name: 'Source FOB', field_type: 'reference', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'source-plus-shipping', scheme_id: 'scheme-1', field_key: 'source_plus_shipping', field_name: 'Source FOB + Shipping', field_type: 'formula', formula: 'source_fob + shipping', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ]);
+  const response = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, source_fob: null }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.values.source_fob, null);
+  assert.equal(response.body.values.source_plus_shipping, null);
+  assert.match(response.body.formula_errors.source_plus_shipping, /引用字段缺少/);
 });
 
 test('live preview rejects a SKU outside the current scheme brand', async () => {
