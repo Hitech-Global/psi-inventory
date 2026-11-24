@@ -945,8 +945,8 @@ function registerPriceSystemRoutes(app, deps) {
       const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
       transaction(() => {
         run(
-          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_sort_order, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(req.body.notes || ''), req.currentUserId || '']
+          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_sort_order, freeze_field_key, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(source.freeze_field_key || '__sku'), String(req.body.notes || ''), req.currentUserId || '']
         );
         copiedFields.forEach(field => {
           run(
@@ -1045,9 +1045,19 @@ function registerPriceSystemRoutes(app, deps) {
   app.put('/api/price-system/schemes/:id', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
-    const currency = String(req.body.currency || scheme.currency || '').trim().toUpperCase();
-    const notes = req.body.notes == null ? scheme.notes : String(req.body.notes);
-    run('UPDATE price_system_schemes SET currency = ?, notes = ?, updated_at = datetime(\'now\') WHERE id = ?', [currency, notes, scheme.id]);
+    const body = req.body || {};
+    const currency = String(body.currency || scheme.currency || '').trim().toUpperCase();
+    const notes = body.notes == null ? scheme.notes : String(body.notes);
+    let freezeFieldKey = String(scheme.freeze_field_key || '__sku').trim() || '__sku';
+    if (Object.prototype.hasOwnProperty.call(body, 'freeze_field_key')) {
+      freezeFieldKey = String(body.freeze_field_key == null ? '' : body.freeze_field_key).trim();
+      const builtInKeys = new Set(['none', '__category', '__sku', '__forecast_avg_sales', '__stock_qty', '__available_turnover']);
+      if (!builtInKeys.has(freezeFieldKey)) {
+        const field = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [scheme.id, freezeFieldKey]);
+        if (!field) return res.status(400).json({ error: '冻结列字段不存在或已停用' });
+      }
+    }
+    run('UPDATE price_system_schemes SET currency = ?, notes = ?, freeze_field_key = ?, updated_at = datetime(\'now\') WHERE id = ?', [currency, notes, freezeFieldKey, scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新价格方案信息');
     res.json(getSchemeOrNull(scheme.id));
   }));
