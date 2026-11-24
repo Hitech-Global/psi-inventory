@@ -114,8 +114,8 @@ test('percentage fields have a bulk default control and batch-apply to SKUs in t
 });
 
 test('percentage field type displays percentage settings and hides formula calculation settings', () => {
-  assert.ok(ui.includes("isWac||isQuote||type==='percent'?'display:none':''"));
-  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||(q&&q.checked)||t==='percent'?'none':'';"));
+  assert.ok(ui.includes("isWac||isQuote||type==='percent'||type==='reference'?'display:none':''"));
+  assert.ok(ui.includes("if(w)w.style.display=(c&&c.checked)||(q&&q.checked)||t==='percent'||t==='reference'?'none':'';"));
   assert.ok(ui.includes("if(p)p.style.display=t==='percent'?'':'none';"));
 });
 
@@ -231,7 +231,7 @@ test('formula fields support independent cell display format and decimal precisi
   assert.ok(ui.includes("displayFormat:'Cell Format'") || ui.includes("displayFormat:'单元格格式'"));
   assert.ok(ui.includes('id="ps-field-display-format"'));
   assert.ok(ui.includes('id="ps-field-decimal-places"'));
-  assert.ok(ui.includes("if(format==='percent')return number(f.field_type==='formula'?raw*100:raw)+'%'"));
+  assert.ok(ui.includes("if(format==='percent')return number(valueType==='formula'?raw*100:raw)+'%'"));
   assert.ok(ui.includes('display_format,decimal_places'));
   assert.ok(ui.includes("f.display_format==='percent'?'<span class=\"ps-unit\">%</span>'"));
   assert.ok(ui.includes("cell.z='0.00%'"));
