@@ -1,15 +1,16 @@
 'use strict';
 function parseCategories(value){if(Array.isArray(value))return value.map(x=>String(x||'').trim()).filter(Boolean);try{const p=JSON.parse(value||'[]');return Array.isArray(p)?p.map(x=>String(x||'').trim()).filter(Boolean):[];}catch(_e){return[];}}
 function createPriceSystemQuotationSync(deps){
- const {query,queryOne,run,genId}=deps;
+ const {query,run,genId}=deps;
  function createSnapshotVersion(schemeId,actor,note){
-  const scheme=queryOne('SELECT * FROM price_system_schemes WHERE id = ?',[schemeId]);if(!scheme)return null;
+  const schemeRows=query('SELECT * FROM price_system_schemes WHERE id = ?',[schemeId]).rows;
+  const scheme=schemeRows[0];if(!scheme)return null;
   const fields=query('SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name',[schemeId]).rows;
   const values=query('SELECT sku_code, field_key, value, currency FROM price_system_values WHERE scheme_id = ? ORDER BY sku_code, field_key',[schemeId]).rows;
   const landingCosts=query('SELECT * FROM price_system_landing_costs WHERE scheme_id = ? ORDER BY sku_code',[schemeId]).rows;
   const srpValues=query('SELECT * FROM price_system_srp_values WHERE scheme_id = ? ORDER BY sku_code',[schemeId]).rows;
-  const previous=queryOne('SELECT MAX(version_no) AS max_version FROM price_system_versions WHERE scheme_id = ?',[schemeId]);
-  const versionNo=Number(previous&&previous.max_version||0)+1;
+  const previousRows=query('SELECT MAX(version_no) AS max_version FROM price_system_versions WHERE scheme_id = ?',[schemeId]).rows;
+  const versionNo=Number(previousRows[0]&&previousRows[0].max_version||0)+1;
   run('INSERT INTO price_system_versions (id, scheme_id, version_no, snapshot_json, note, created_by, created_by_name) VALUES (?, ?, ?, ?, ?, ?, ?)',[genId('psv'),schemeId,versionNo,JSON.stringify({scheme,fields,values,landingCosts,srpValues}),String(note||''),String(actor&&actor.id||''),String(actor&&actor.name||'')]);
   return versionNo;
  }
