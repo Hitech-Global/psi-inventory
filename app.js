@@ -8195,8 +8195,9 @@ function rpFlushOne(channel, rid){
       }
       if(resp.stale===true){
           // stale：区分 manual conflict 与 system recompute invalidation
-          var jRecalc = (st.journal && st.journal.baseRecalcRevision!=null) ? st.journal.baseRecalcRevision : r2._serverRecalc;
-          if(jRecalc !== r2._serverRecalc){
+          var currentRecalc = st.serverRecalc;
+          var jRecalc = (st.journal && st.journal.baseRecalcRevision!=null) ? st.journal.baseRecalcRevision : currentRecalc;
+          if(Number(jRecalc) !== Number(currentRecalc)){
             // 系统重算已发生 → journal 失效，禁止 retry，接受 server truth
             if(window._rpManualStock&&window._rpManualStock[channel]) delete window._rpManualStock[channel][rid];
             rpClearJournalKey(channel, rid);
