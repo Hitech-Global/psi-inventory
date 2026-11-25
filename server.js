@@ -2029,7 +2029,8 @@ app.use('/api', apiAuth);
 
 // 价格体系 API：独立维护国家/品牌/平台/店铺价格配置，不改动库存与 WAC 业务逻辑。
 priceSystemApi.registerPriceSystemRoutes(app, {
-  query, queryOne, run, transaction, genId, requireApiPermission, asyncHandler, needsDataScopeFilter
+  query, queryOne, run, transaction, genId, requireApiPermission, asyncHandler, needsDataScopeFilter,
+  resolveInventoryCurrencyRates, fetchImpl: fetch
 });
 
 // ==================== 认证：飞书 OAuth + break-glass 本地登录 ====================

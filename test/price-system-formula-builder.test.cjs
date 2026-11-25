@@ -160,7 +160,7 @@ test('all price-system table fields, including dynamically added fields, are cen
   assert.ok(ui.includes('padding:3px 7px;text-align:center;'));
   assert.ok(ui.includes('#ps-root .ps-srp{font-weight:700;color:#1d1d1f;text-align:center}'));
   assert.ok(ui.includes('justify-content:center;gap:8px;text-align:center}#ps-root .ps-landing-value'));
-  assert.ok(ui.includes("state.fields.map(f=>'<th"));
+  assert.ok(ui.includes('state.fields.map(f=>{'));
   assert.ok(ui.includes("return '<td class=\"ps-value\"><input"));
 });
 
@@ -267,4 +267,14 @@ test('all editable amount inputs display thousand separators while save values r
   assert.ok(ui.includes("type=\"'+(isAmountInput?'text':'number')+'\""));
   assert.ok(ui.includes('formatAmountInput(shown,inputPlaces)'));
   assert.ok(ui.includes("row.srp=values.srp;delete row.values.srp"));
+});
+
+
+test('formula builder exposes inventory-synced live exchange rate and compact column header metadata', () => {
+  assert.ok(ui.includes("{key:'exchange_rate',label:'liveExchangeRate'}"));
+  assert.ok(ui.includes("liveExchangeRate:'实时汇率'"));
+  assert.ok(ui.includes('formulaExchangeRateLabel'));
+  assert.ok(ui.includes('state.formulaFx=data.formula_fx||{}'));
+  assert.ok(ui.includes('ps-formula-fx-info'));
+  assert.ok(api.includes("exchange_rate: ['实时汇率', 'Live Exchange Rate'"));
 });

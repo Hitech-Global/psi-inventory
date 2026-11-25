@@ -3,6 +3,7 @@
 const BUILTIN_PRICE_VARIABLES = Object.freeze([
   'purchase_price_rmb',
   'purchase_price_usd',
+  'exchange_rate',
   'standard_purchase_price',
   'reference_customs_rate',
   'landing_cost',
@@ -109,11 +110,12 @@ function evaluateFormula(expression, variables, options) {
         if (!Number.isFinite(result)) throw new Error('公式计算结果不是有效数字');
         return result;
       }
-      if (!Object.prototype.hasOwnProperty.call(values, name)) {
+      if (!Object.prototype.hasOwnProperty.call(values, name) && name !== 'exchange_rate') {
         throw new Error('公式引用了未知字段：' + name);
       }
       let value = Number(values[name] == null ? 0 : values[name]);
       if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + name);
+      if (name === 'exchange_rate' && value <= 0) throw new Error('实时汇率暂不可用，请检查库存总表汇率');
       if (percentVariables.has(name)) value /= 100;
       return value;
     }
