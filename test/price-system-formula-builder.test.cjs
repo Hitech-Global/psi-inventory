@@ -268,3 +268,13 @@ test('all editable amount inputs display thousand separators while save values r
   assert.ok(ui.includes('formatAmountInput(shown,inputPlaces)'));
   assert.ok(ui.includes("row.srp=values.srp;delete row.values.srp"));
 });
+
+
+test('formula builder exposes inventory-synced live exchange rate and compact column header metadata', () => {
+  assert.ok(ui.includes("{key:'exchange_rate',label:'liveExchangeRate'}"));
+  assert.ok(ui.includes("liveExchangeRate:'实时汇率'"));
+  assert.ok(ui.includes('formulaExchangeRateLabel'));
+  assert.ok(ui.includes('state.formulaFx=data.formula_fx||{}'));
+  assert.ok(ui.includes('ps-formula-fx-info'));
+  assert.ok(api.includes("exchange_rate: ['实时汇率', 'Live Exchange Rate'"));
+});

@@ -65,3 +65,11 @@ test('automatically normalizes referenced percentage fields without changing for
   assert.ok(Math.abs(evaluateFormula('srp * (1 - profit_rate)', { srp: 1000, profit_rate: 0.18 }, options) - 820) < 1e-9);
   assert.equal(validateFormula('srp * (1 - dealer_profit_rate)', ['srp', 'dealer_profit_rate'], options).valid, true);
 });
+
+
+test('supports live exchange-rate formula variable and fails closed when unavailable', () => {
+  assert.ok(BUILTIN_PRICE_VARIABLES.includes('exchange_rate'));
+  assert.equal(evaluateFormula('fob * exchange_rate', { fob: 4.38, exchange_rate: 18200 }), 79716);
+  assert.equal(validateFormula('fob * exchange_rate', ['fob']).valid, true);
+  assert.throws(() => evaluateFormula('fob * exchange_rate', { fob: 4.38 }), /实时汇率暂不可用/);
+});
