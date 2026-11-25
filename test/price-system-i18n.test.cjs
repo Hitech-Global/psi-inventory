@@ -44,8 +44,6 @@ test('Price System visible helper strings use translation keys', () => {
 test('language switching refreshes Price System without clearing dirty edits', () => {
   assert.ok(priceSystem.includes('window.psHandleLanguageChange=function()'));
   assert.ok(priceSystem.includes('window.psHasUnsavedChanges=function(){return psDirtyCount()>0;}'));
-  assert.ok(priceSystem.includes('window.psHandleLanguageChange=function()'));
-  assert.ok(priceSystem.includes('window.psHasUnsavedChanges=function(){return psDirtyCount()>0;}'));
   const hook = i18n.indexOf('priceSystemHandled = !!window.psHandleLanguageChange()');
   const save = i18n.indexOf("api('/api/users/me/language-preference', 'PUT'");
   const guard = i18n.indexOf('if (priceSystemHandled) return;');
