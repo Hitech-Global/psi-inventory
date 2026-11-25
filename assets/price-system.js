@@ -518,12 +518,12 @@ function main(){
      const referenceScale=isReference&&f.display_format==='percent'&&f.reference_value_type==='formula'?100:1;
      const places=isReference&&f.decimal_places!=null?Math.max(0,Math.min(6,Number(f.decimal_places)||0)):2;
      const inputValue=shown==null?'':(isReference?formatAmountInput(Number(shown)*referenceScale,places):formatAmountInput(shown,2));
-     const decimalPlacesAttr=isReference?places:2;
+     const decimalPlacesAttribute=isReference?'data-decimal-places="'+places+'"':'data-decimal-places="2"';
      const quoteCode=String(r.value_currencies&&r.value_currencies.srp||'').trim().toUpperCase();
      const unitLabel=isReference
       ?(r.srp_source==='manual'?(f.display_format==='percent'?'%':(f.unit||scheme.currency||'')):(f.reference_sync_quotation&&quoteCode?(currencySymbol(quoteCode)||quoteCode):(f.display_format==='percent'||(f.display_format==='auto'&&f.reference_value_type==='percent')?'%':(f.unit||''))))
       :currency();
-     return '<td class="ps-value ps-srp"'+psSortValueAttr(shown)+'><input class="ps-input ps-srp-input '+(dirty?'dirty':'')+'" type="text" inputmode="decimal" data-decimal-places="'+decimalPlacesAttr+'" data-value-scale="'+referenceScale+'" value="'+esc(inputValue)+'" data-sku="'+esc(r.sku_code)+'" data-field="srp" onfocus="psPrepareAmountInput(this)" oninput="psMarkDirty(this)" onblur="psFormatAmountInput(this)" title="'+esc(tr('srpManualHint'))+'"><span class="ps-unit">'+esc(unitLabel)+'</span></td>';
+     return '<td class="ps-value ps-srp"'+psSortValueAttr(shown)+'><input class="ps-input ps-srp-input '+(dirty?'dirty':'')+'" type="text" inputmode="decimal" '+decimalPlacesAttribute+' data-value-scale="'+referenceScale+'" value="'+esc(inputValue)+'" data-sku="'+esc(r.sku_code)+'" data-field="srp" onfocus="psPrepareAmountInput(this)" oninput="psMarkDirty(this)" onblur="psFormatAmountInput(this)" title="'+esc(tr('srpManualHint'))+'"><span class="ps-unit">'+esc(unitLabel)+'</span></td>';
     }
     if(Number(f.sync_wac||0)===1){const lc=r.landing_cost||null,unit=(lc&&lc.currency)||f.unit||scheme.currency||'';const rawDate=lc&&(lc.last_inbound_date||lc.confirmed_at)||'',wacDate=String(rawDate).slice(0,10),meta=wacDate?esc(wacDate):'';return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+meta+'"><div class="ps-landing-value">'+(v==null?'&mdash;':esc(unit)+' '+fmt(v))+'</div>'+(meta?'<div class="ps-landing-meta">'+meta+'</div>':'')+'</td>';}
     if(Number(f.sync_quotation||0)===1||(f.field_type==='reference'&&f.reference_sync_quotation===true)){const code=String(r.value_currencies&&r.value_currencies[f.field_key]||'').trim().toUpperCase(),symbol=currencySymbol(code);return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+esc(code)+'">'+(v==null?'&mdash;':(symbol?esc(symbol)+' ':'')+fmt(v))+'</td>';}
