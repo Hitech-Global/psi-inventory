@@ -5,7 +5,171 @@ zh:{title:'价格体系',subtitle:'按国家、品牌和销售渠道维护独立
 en:{title:'Price System',subtitle:'Maintain separate pricing schemes by country, brand and sales channel',scheme:'Pricing Scheme',newScheme:'New Scheme',blankScheme:'Create Blank Scheme',copyScheme:'Copy Existing Scheme',copySource:'Choose a scheme to copy',copySourcePlaceholder:'Select an existing pricing scheme',copySchemeHelp:'Copies fee fields, category scopes, field order, frozen-column settings, cross-channel references and SRP formulas. SKU-specific prices, fee values and WAC data are not copied.',copyAndCreate:'Copy & Create',copySchemeEmpty:'No pricing schemes available to copy',copySourceRequired:'Select a pricing scheme to copy',copySchemeCreated:'Pricing scheme copied',fields:'Fee Fields',fieldOrderTitle:'Field Order',fieldOrderHint:'Drag the handle on the left to change the column order in the price table.',freezeTo:'Freeze through',freezeNone:'None',freezeSaved:'Frozen columns saved',freezeHint:'Freeze the selected column and all columns to its left.',fieldEditorHint:'Set the field name, type and applicable categories. Changes apply to this pricing scheme.',basicInfo:'Basic Information',scopeInfo:'Applicable Scope',calculationInfo:'Calculation Settings',systemField:'System Field',savingOrder:'Saving order…',orderSaved:'Field order saved',fieldCount:'fields',formula:'SRP Formula',history:'Version History',viewChanges:'View Changes',changeDetails:'Change Details',changeSummary:'Change Summary',settingsChanges:'Settings Changes',skuDataChanges:'SKU Data Changes',changeType:'Change Type',changeTarget:'Item',beforeValue:'Before',afterValue:'After',noChanges:'No actual data changes were detected in this version.',initialVersion:'Initial version (no previous version)',compareWith:'Compared with version',previousPage:'Previous',nextPage:'Next',page:'Page',totalItems:'{count} items',fieldAdded:'Field added',fieldRemoved:'Field removed',fieldUpdated:'Field updated',fieldChanges:'Field changes',schemeUpdated:'Scheme settings',status:'Status',manualValue:'Manual Fee',srpValue:'SRP',landingCost:'Landing Cost',added:'Added',removed:'Removed',updated:'Updated',import:'Import Excel',export:'Export Excel',save:'Save Changes',saved:'Saved successfully',loading:'Loading price data…',emptyTitle:'No pricing scheme yet',emptyHint:'Create a scheme for a country, brand and sales channel before maintaining SKU prices.',country:'Country',brand:'Brand',platform:'Sales Channel',shop:'Shop',currency:'Currency',category:'Category',sku:'SKU',stock:'Stock Qty',forecastAvg:'{days}-Day Avg Monthly Sales',availableTurnover:'Current Available Turnover',daysSinceInbound:'Last inbound {days} days ago',daysSinceInboundUnknown:'Last inbound date unknown',daysSinceInboundHeader:'Days Since Last Inbound',sortHint:'Click to sort: descending / ascending / default',srp:'SRP',noData:'No SKU master data for this brand',noFields:'No fee fields configured. Add the price items you need to maintain.',add:'Add',edit:'Edit',delete:'Delete',cancel:'Cancel',confirm:'Confirm',close:'Close',fieldName:'Field Name',fieldKey:'Field Key',fieldType:'Field Type',unit:'Display Unit',displayFormat:'Cell Format',decimalPlaces:'Decimal Places',formatAuto:'Auto',formatAmount:'Amount',formatNumber:'Number',formatPercent:'Percentage',amount:'Amount',percent:'Percentage',number:'Number',calc:'Formula',reference:'Reference Another Scheme Field',referenceType:'Reference',referenceSourceScheme:'Source Scheme',referenceSourceField:'Referenced Field',referenceHelp:'The system matches the source field by the same SKU and reads the latest value whenever this scheme is loaded. The source currency is preserved; no FX conversion is applied.',referencePreview:'Reference Preview',referenceLoading:'Loading source fields…',referenceNoFields:'No fields are available in the source scheme.',referenceNoSchemes:'No other sales-channel schemes exist for this country and brand.',switchChannel:'Switch Sales Channel',addChannel:'Add Sales Channel Scheme',syncWacField:'Sync WAC automatically',syncWacFieldHelp:'When enabled, the system matches the latest valid confirmed WAC by SKU, country and brand. This field updates automatically and does not need manual maintenance.',syncQuotationField:'Sync Latest Quotation Automatically',syncQuotationFieldHelp:'When enabled, the latest quote in Quotation Management is matched by brand and SKU. The original currency is retained and shown with its currency symbol; no FX conversion is applied.',quoteSource:'Quotation auto-sync',quoteCurrency:'Quote currency',wacSource:'WAC auto sync',formulaText:'Formula',categoryFormulaRules:'Formula Rules by Category',addCategoryRule:'Add Category Rule',previewCategoryFormula:'Validate & Preview',categoryFormulaEmpty:'No product categories are available. Maintain categories in SKU master first.',categoryFormulaPreviewEmpty:'Enter a formula, then validate and preview it.',categoryFormulaPreviewOk:'Formula validated',allCategories:'Apply to all categories',categoryScope:'Applicable Categories',allCategoriesHelp:'Leave blank to apply to all categories.',selectAllCategories:'Select all',percentSettings:'Percentage Settings',defaultPercent:'Default Percentage',batchApplyPercent:'Apply to matched SKUs',percentBatchHint:'Apply this percentage to SKUs in the current scope. You can still edit each SKU separately in the price list.',percentRequired:'Enter a valid non-negative percentage.',percentApplied:'Percentage applied to applicable SKUs',noPercentSkus:'No SKUs match the current scope.',formulaHelp:'Supports +, -, *, /, parentheses, %, MIN() and MAX(). A leading = is optional. Example: MIN(srp*6.5%,80000). Percentage fields store 8 for 8%; divide by 100 when referencing them.',formulaFields:'Available Fields',formulaRulesTitle:'Formula Rules',addFormulaRule:'Add Formula',copyFormulaRule:'Copy',formulaRuleLabel:'Formula',formulaText:'Formula',formulaApplyCategories:'Applicable Categories',formulaApplyCategoriesHint:'Choose the product categories this formula applies to. Multiple selections are allowed.',searchCategories:'Search categories',clearCategories:'Clear',selectedCount:'Selected',selectedCategories:'Selected Categories',formulaAppliedToCategories:'This formula applies to',chooseFormulaCategories:'Select the categories for this formula.',formulaEnterHint:'Enter a formula, then validate and preview.',formulaValidating:'Validating and previewing…',formulaValidPreview:'Validation passed',formulaValidationFailed:'Formula validation failed',formulaRequired:'Enter a formula first.',formulaRuleIncomplete:'Each formula rule needs an expression and at least one category.',formulaCategoryDuplicate:'A category is selected in multiple formula rules. Please resolve the overlap.',formulaCategoryAssigned:'This category is already assigned to another formula rule.',noFormulaRules:'No formula rules yet. Click “Add Formula”.',noProductCategories:'No product categories.',formulaBaseFields:'Base Data',formulaFeeFields:'Other Fee Fields',formulaPriceFields:'Price Fields',formulaNoFeeFields:'No other fee fields configured',formulaOperators:'Operators',formulaFunctions:'Functions',formulaPreviewHint:'The formula is validated automatically. Preview uses the first SKU in this pricing scheme.',formulaPreviewValid:'Formula is valid',formulaPreviewResult:'Preview result',formulaPreviewSample:'Preview SKU',formulaPreviewEmpty:'Enter a formula to validate and preview it.',formulaPreviewNoSku:'No SKU data; preview uses zero values.',formulaPreviewError:'Formula error',formulaBuilderHint:'Click a field, function, or operator to insert it, or type directly. Entering a formula switches this field to Formula automatically.',systemLandingCost:'System Landing Cost',srpManualHint:'Edit SRP directly in the list. A manual value overrides the formula; clear it to restore the formula result.',purchasePriceRmb:'Purchase Price RMB',purchasePriceUsd:'Purchase Price USD',standardPurchasePrice:'Standard Purchase Price',weightedAvgCost:'SKU Weighted Average Cost',inventoryWac:'Inventory WAC',customsRate:'Reference Customs Rate',inventoryQty:'Inventory Quantity',formulaEmpty:'Leave blank to keep SRP calculation disabled.',version:'Version',restore:'Restore this version',importHint:'Use the template for SRP and manual fee fields. WAC-enabled fields are updated automatically from confirmed WAC; stock is synced automatically.',importDone:'Excel import completed',exportDone:'Excel exported',unsaved:'You have unsaved changes. Switch scheme anyway?',discardChanges:'You have unsaved changes. Continuing will discard them. Continue?',schemeCreated:'Pricing scheme created',fieldSaved:'Fee field saved',formulaSaved:'SRP formula saved',restored:'Historical version restored',noHistory:'No version history',stop:'Deactivate Scheme',stopConfirm:'Deactivate this pricing scheme? It will no longer appear in the scheme list.',actions:'Actions',deleteScheme:'Delete Scheme',deleteSchemeTitle:'Delete Pricing Scheme',deleteSchemeConfirm:'Are you sure you want to permanently delete this pricing scheme?',deleteSchemeWarning:'All SKU prices, fee fields, WAC cost links and version history for this scheme will be deleted. Original WAC history will not be affected. This action cannot be undone.',schemeDeleted:'Pricing scheme deleted',selectCountry:'Select a country',selectBrand:'Select a brand',enterPlatform:'Enter sales channel name',fieldKeyHint:'Lowercase letters, numbers and underscores only, e.g. platform_fee',saveFailed:'Save failed',skuRequired:'SKU column was not found in Excel',missingCategories:' SKUs have no category in SKU master. Maintain categories before applying category-specific fees.',landingCost:'Landing Cost',selectWac:'Select WAC',wacHistory:'WAC History',noWacHistory:'No confirmed WAC history is available for this SKU',latest:'Latest',choose:'Use this WAC',current:'Current',clearLandingCost:'Clear Landing Cost',warehouse:'Warehouse',ciNo:'CI No.',confirmedAt:'Confirmed At',inboundDate:'Inbound Date',manualSrp:'Manual Import',formulaSrp:'Formula',syncWac:'Sync WAC in Bulk',syncWacTitle:'Bulk Sync Landing Cost',syncWacDesc:'Match WAC history by SKU within this pricing scheme country and brand. The latest valid WAC is used for each SKU. Unmatched SKUs keep their existing values.',matched:'Matched',unmatched:'Unmatched',willUpdate:'To update',unchanged:'Unchanged',unmatchedSamples:'Unmatched SKUs',noWacMatch:'No valid WAC found. Existing Landing Cost values will not be changed.',syncWacDone:'Bulk WAC sync completed',downloadTemplate:'Download Import Template',templateInstructions:'Instructions',templateSku:'SKU codes are generated by the system. Do not edit them.',templateSrp:'Fill in SRP and fee fields applicable to each SKU category. Blank cells are not changed.',templateLanding:'Landing Cost is not imported from Excel. Fields configured for WAC auto sync are updated by the system.',templateStock:'Category is for reference. Stock is synced automatically.'},
 id:{title:'Sistem Harga',subtitle:'Kelola skema harga berdasarkan negara, merek, dan saluran penjualan',scheme:'Skema Harga',newScheme:'Skema Baru',blankScheme:'Buat Skema Kosong',copyScheme:'Salin Skema yang Ada',copySource:'Pilih skema untuk disalin',copySourcePlaceholder:'Pilih skema harga yang ada',copySchemeHelp:'Menyalin kolom biaya, cakupan kategori, urutan kolom, pengaturan kolom beku, referensi antar saluran, dan rumus SRP. Harga dan nilai biaya per SKU serta data WAC tidak disalin.',copyAndCreate:'Salin & Buat',copySchemeEmpty:'Tidak ada skema harga untuk disalin',copySourceRequired:'Pilih skema harga yang akan disalin',copySchemeCreated:'Skema harga berhasil disalin',fields:'Kolom Biaya',fieldOrderTitle:'Urutan Kolom',fieldOrderHint:'Tarik pegangan di kiri untuk mengubah urutan kolom pada tabel harga.',freezeTo:'Bekukan hingga',freezeNone:'Tidak dibekukan',freezeSaved:'Pengaturan kolom beku disimpan',freezeHint:'Bekukan kolom yang dipilih dan semua kolom di sebelah kirinya.',fieldEditorHint:'Atur nama, jenis, dan kategori yang berlaku. Perubahan diterapkan pada skema harga ini.',basicInfo:'Informasi Dasar',scopeInfo:'Cakupan Kategori',calculationInfo:'Pengaturan Perhitungan',systemField:'Kolom Sistem',savingOrder:'Menyimpan urutan…',orderSaved:'Urutan kolom disimpan',fieldCount:'kolom',formula:'Rumus SRP',history:'Riwayat Versi',viewChanges:'Lihat Perubahan',changeDetails:'Detail Perubahan',changeSummary:'Ringkasan Perubahan',settingsChanges:'Perubahan Pengaturan',skuDataChanges:'Perubahan Data SKU',changeType:'Jenis Perubahan',changeTarget:'Objek',beforeValue:'Sebelum',afterValue:'Sesudah',noChanges:'Tidak ada perubahan data aktual pada versi ini.',initialVersion:'Versi awal (tanpa versi sebelumnya)',compareWith:'Dibandingkan dengan versi',previousPage:'Sebelumnya',nextPage:'Berikutnya',page:'Halaman',totalItems:'{count} item',fieldAdded:'Kolom ditambahkan',fieldRemoved:'Kolom dihapus',fieldUpdated:'Kolom diubah',fieldChanges:'Perubahan kolom',schemeUpdated:'Pengaturan skema',status:'Status',manualValue:'Biaya Manual',srpValue:'SRP',landingCost:'Landing Cost',added:'Ditambahkan',removed:'Dihapus',updated:'Diubah',import:'Impor Excel',export:'Ekspor Excel',save:'Simpan Perubahan',saved:'Berhasil disimpan',loading:'Memuat data harga…',emptyTitle:'Belum ada skema harga',emptyHint:'Buat skema berdasarkan negara, merek, platform, dan toko terlebih dahulu.',country:'Negara',brand:'Merek',platform:'Saluran Penjualan',shop:'Toko',currency:'Mata Uang',category:'Kategori',sku:'SKU',stock:'Jumlah Stok',forecastAvg:'Rata-rata penjualan bulanan {days} hari',availableTurnover:'Perputaran Stok Tersedia',daysSinceInbound:'Terakhir masuk {days} hari lalu',daysSinceInboundUnknown:'Tanggal masuk terakhir tidak diketahui',daysSinceInboundHeader:'Hari Sejak Masuk Terakhir',sortHint:'Klik untuk mengurutkan: menurun / menaik / default',srp:'SRP',noData:'Belum ada data SKU untuk merek ini',noFields:'Belum ada kolom biaya. Tambahkan item harga yang perlu dikelola.',add:'Tambah',edit:'Edit',delete:'Hapus',cancel:'Batal',confirm:'Konfirmasi',close:'Tutup',fieldName:'Nama Kolom',fieldKey:'Kode Kolom',fieldType:'Jenis Kolom',unit:'Satuan Tampilan',displayFormat:'Format Sel',decimalPlaces:'Jumlah Desimal',formatAuto:'Otomatis',formatAmount:'Jumlah',formatNumber:'Angka',formatPercent:'Persentase',amount:'Jumlah',percent:'Persentase',number:'Angka',calc:'Rumus',reference:'Referensi Kolom Skema Lain',referenceType:'Referensi',referenceSourceScheme:'Skema Sumber',referenceSourceField:'Kolom Referensi',referenceHelp:'Sistem mencocokkan kolom sumber berdasarkan SKU yang sama dan membaca nilai terbaru saat skema ini dimuat ulang. Mata uang sumber dipertahankan; tidak ada konversi kurs otomatis.',referencePreview:'Pratinjau Referensi',referenceLoading:'Memuat kolom sumber…',referenceNoFields:'Tidak ada kolom yang dapat dirujuk pada skema sumber.',referenceNoSchemes:'Tidak ada skema saluran penjualan lain untuk negara dan merek ini.',switchChannel:'Ganti Saluran Penjualan',addChannel:'Tambah Skema Saluran Penjualan',syncWacField:'Sinkronkan WAC otomatis',syncWacFieldHelp:'Jika diaktifkan, sistem mencocokkan WAC terkonfirmasi terbaru berdasarkan SKU, negara, dan merek. Kolom ini diperbarui otomatis.',syncQuotationField:'Sinkronkan Penawaran Terbaru Otomatis',syncQuotationFieldHelp:'Jika diaktifkan, penawaran terbaru di Manajemen Penawaran dicocokkan berdasarkan merek dan SKU. Mata uang asli dipertahankan dan ditampilkan dengan simbolnya; tanpa konversi kurs.',quoteSource:'Sinkronisasi penawaran otomatis',quoteCurrency:'Mata uang penawaran',wacSource:'Sinkronisasi WAC otomatis',formulaText:'Rumus',categoryFormulaRules:'Aturan Rumus per Kategori',addCategoryRule:'Tambah Aturan Kategori',previewCategoryFormula:'Validasi & Pratinjau',categoryFormulaEmpty:'Tidak ada kategori produk. Atur kategori di master SKU terlebih dahulu.',categoryFormulaPreviewEmpty:'Masukkan rumus, lalu validasi dan pratinjau.',categoryFormulaPreviewOk:'Rumus valid',allCategories:'Semua kategori',categoryScope:'Kategori yang Berlaku',allCategoriesHelp:'Kosongkan untuk menerapkan ke semua kategori.',selectAllCategories:'Pilih semua',percentSettings:'Pengaturan Persentase',defaultPercent:'Persentase Default',batchApplyPercent:'Terapkan ke SKU yang cocok',percentBatchHint:'Terapkan persentase ini ke SKU dalam cakupan saat ini. Setiap SKU tetap dapat diedit secara terpisah di daftar harga.',percentRequired:'Masukkan persentase non-negatif yang valid.',percentApplied:'Persentase berhasil diterapkan ke SKU terkait',noPercentSkus:'Tidak ada SKU yang cocok dengan cakupan ini.',formulaHelp:'Mendukung +, -, *, /, tanda kurung, %, MIN(), dan MAX(). Awalan = opsional. Contoh: MIN(srp*6.5%,80000). Nilai kolom persentase 8 berarti 8%; bagi dengan 100 saat digunakan dalam rumus.',formulaFields:'Kolom yang Tersedia',formulaRulesTitle:'Aturan Rumus',addFormulaRule:'Tambah Rumus',copyFormulaRule:'Salin',formulaRuleLabel:'Rumus',formulaText:'Rumus',formulaApplyCategories:'Kategori Berlaku',formulaApplyCategoriesHint:'Pilih kategori produk untuk rumus ini. Anda dapat memilih beberapa kategori.',searchCategories:'Cari kategori',clearCategories:'Hapus Pilihan',selectedCount:'Dipilih',selectedCategories:'Kategori Terpilih',formulaAppliedToCategories:'Rumus ini berlaku untuk',chooseFormulaCategories:'Pilih kategori untuk rumus ini.',formulaEnterHint:'Masukkan rumus, lalu validasi dan pratinjau.',formulaValidating:'Memvalidasi dan melihat pratinjau…',formulaValidPreview:'Validasi berhasil',formulaValidationFailed:'Validasi rumus gagal',formulaRequired:'Masukkan rumus terlebih dahulu.',formulaRuleIncomplete:'Setiap aturan rumus harus memiliki rumus dan minimal satu kategori.',formulaCategoryDuplicate:'Satu kategori dipilih pada beberapa aturan rumus. Periksa kembali pilihan kategori.',formulaCategoryAssigned:'Kategori ini sudah ditetapkan ke aturan rumus lain.',noFormulaRules:'Belum ada aturan rumus. Klik “Tambah Rumus”.',noProductCategories:'Tidak ada kategori produk.',formulaBaseFields:'Data Dasar',formulaFeeFields:'Kolom Biaya Lain',formulaPriceFields:'Kolom Harga',formulaNoFeeFields:'Belum ada kolom biaya lain',formulaOperators:'Operator',formulaFunctions:'Fungsi',formulaPreviewHint:'Rumus divalidasi otomatis. Pratinjau menggunakan SKU pertama pada skema harga ini.',formulaPreviewValid:'Rumus valid',formulaPreviewResult:'Hasil pratinjau',formulaPreviewSample:'SKU pratinjau',formulaPreviewEmpty:'Masukkan rumus untuk validasi dan pratinjau.',formulaPreviewNoSku:'Tidak ada data SKU; pratinjau menggunakan nilai nol.',formulaPreviewError:'Kesalahan rumus',formulaBuilderHint:'Klik kolom, fungsi, atau operator untuk menyisipkannya, atau ketik langsung. Mengisi rumus otomatis mengubah jenis kolom menjadi Rumus.',systemLandingCost:'Landing Cost Sistem',srpManualHint:'SRP dapat diedit langsung di daftar. Nilai manual menggantikan hasil rumus; kosongkan untuk kembali ke hasil rumus.',purchasePriceRmb:'Harga Beli RMB',purchasePriceUsd:'Harga Beli USD',standardPurchasePrice:'Harga Beli Standar',weightedAvgCost:'Biaya Rata-rata Tertimbang SKU',inventoryWac:'WAC Persediaan',customsRate:'Tarif Bea Cukai Referensi',inventoryQty:'Jumlah Persediaan',formulaEmpty:'Kosongkan jika SRP belum dihitung.',version:'Versi',restore:'Pulihkan versi ini',importHint:'Gunakan template untuk SRP dan kolom biaya manual. Kolom dengan sinkronisasi WAC aktif diperbarui otomatis dari WAC terkonfirmasi; stok juga disinkronkan otomatis.',importDone:'Impor Excel selesai',exportDone:'Excel diekspor',unsaved:'Ada perubahan yang belum disimpan. Tetap ganti skema?',discardChanges:'Ada perubahan yang belum disimpan. Melanjutkan akan membuang perubahan tersebut. Lanjutkan?',schemeCreated:'Skema harga dibuat',fieldSaved:'Kolom biaya disimpan',formulaSaved:'Rumus SRP disimpan',restored:'Versi sebelumnya dipulihkan',noHistory:'Belum ada riwayat versi',stop:'Nonaktifkan Skema',stopConfirm:'Nonaktifkan skema harga ini? Skema tidak akan muncul lagi di daftar.',actions:'Tindakan',deleteScheme:'Hapus Skema',deleteSchemeTitle:'Hapus Skema Harga',deleteSchemeConfirm:'Yakin ingin menghapus skema harga ini secara permanen?',deleteSchemeWarning:'Harga SKU, kolom biaya, tautan biaya WAC, dan riwayat versi untuk skema ini akan dihapus. Riwayat WAC asli tidak akan terpengaruh. Tindakan ini tidak dapat dibatalkan.',schemeDeleted:'Skema harga dihapus',selectCountry:'Pilih negara',selectBrand:'Pilih merek',enterPlatform:'Masukkan nama saluran penjualan',fieldKeyHint:'Gunakan huruf kecil, angka, dan garis bawah, contoh platform_fee',saveFailed:'Gagal menyimpan',skuRequired:'Kolom SKU tidak ditemukan di Excel',missingCategories:' SKU belum memiliki kategori pada data master. Lengkapi kategori sebelum menerapkan biaya per kategori.',landingCost:'Landing Cost',selectWac:'Pilih WAC',wacHistory:'Riwayat WAC',noWacHistory:'Tidak ada riwayat WAC terkonfirmasi untuk SKU ini',latest:'Terbaru',choose:'Gunakan WAC ini',current:'Digunakan',clearLandingCost:'Hapus Landing Cost',warehouse:'Gudang',ciNo:'No. CI',confirmedAt:'Waktu Konfirmasi',inboundDate:'Tanggal Masuk',manualSrp:'Impor Manual',formulaSrp:'Rumus',syncWac:'Sinkronkan WAC Massal',syncWacTitle:'Sinkronisasi Landing Cost Massal',syncWacDesc:'Cocokkan riwayat WAC berdasarkan SKU, negara, dan merek pada skema ini. Gunakan WAC valid terbaru untuk setiap SKU. SKU tanpa kecocokan mempertahankan nilai lama.',matched:'Cocok',unmatched:'Tidak cocok',willUpdate:'Akan diperbarui',unchanged:'Tidak berubah',unmatchedSamples:'SKU tidak cocok',noWacMatch:'WAC valid tidak ditemukan. Landing Cost yang ada tidak akan diubah.',syncWacDone:'Sinkronisasi WAC massal selesai',downloadTemplate:'Unduh Template Impor',templateInstructions:'Petunjuk',templateSku:'Kode SKU dibuat oleh sistem. Jangan diubah.',templateSrp:'Isi SRP dan kolom biaya yang berlaku untuk kategori SKU. Sel kosong tidak akan mengubah data.',templateLanding:'Landing Cost tidak diimpor dari Excel. Kolom dengan sinkronisasi WAC aktif diperbarui otomatis oleh sistem.',templateStock:'Kategori hanya referensi. Stok disinkronkan otomatis.'}
 };
-const state={countries:[],skus:[],brands:[],schemes:[],schemeId:'',scheme:null,fields:[],rows:[],forecastStatsDays:90,dirty:{},orderSaving:false,freezeSaving:false,draggingFieldId:'',schemeCreateMode:'blank',schemeCopySourceId:'',referenceDataCache:{}};
+const state={countries:[],skus:[],brands:[],schemes:[],schemeId:'',scheme:null,fields:[],rows:[],forecastStatsDays:90,dirty:{},orderSaving:false,freezeSaving:false,draggingFieldId:'',schemeCreateMode:'blank',schemeCopySourceId:'',referenceDataCache:{},_psUseCachedView:false};
+
+ // ==================== 价格方案瞬时切换缓存 ====================
+ // 对齐订单预测：保留最近 6 个真实 DOM 视图，并缓存每个方案的数据快照。
+ // 切换时优先恢复原 DOM（含排序、横向/纵向滚动与冻结列）；未访问方案使用后台预取数据。
+ const PS_SCHEME_DATA_TTL=45000;
+ const PS_MAX_SCHEME_DATA=12;
+ const PS_MAX_SCHEME_VIEWS=6;
+ const PS_MAX_SCHEME_PREFETCH=8;
+ window._psSchemeCache=window._psSchemeCache||{data:new Map(),pending:new Map(),views:new Map(),viewOrder:[],sequence:0,generation:0,prefetchGeneration:0,scope:''};
+ function psCurrentCacheScope(){
+  const user=(typeof currentUser!=='undefined'&&currentUser)||window.currentUser||{};
+  const permissions=Array.isArray(user.permissions)?user.permissions.slice().sort().join(','):'';
+  let dataScope='';try{dataScope=JSON.stringify(user.data_scope||user.dataScope||{});}catch(e){}
+  return [user.id||user.user_id||user.username||'',user.role||'',permissions,dataScope].join('|');
+ }
+ function psRemoveSchemeView(id){
+  const cache=window._psSchemeCache,key=String(id||''),view=cache.views.get(key);
+  if(view&&view.node&&!view.node.isConnected)view.node.remove();
+  cache.views.delete(key);
+  const index=cache.viewOrder.indexOf(key);if(index>=0)cache.viewOrder.splice(index,1);
+ }
+ function psInvalidateAllSchemeCaches(){
+  const cache=window._psSchemeCache;
+  cache.generation++;cache.prefetchGeneration++;
+  cache.data.clear();cache.pending.clear();
+  cache.views.forEach(view=>{if(view&&view.node&&!view.node.isConnected)view.node.remove();});
+  cache.views.clear();cache.viewOrder=[];
+ }
+ function psEnsureCacheScope(){
+  const cache=window._psSchemeCache,scope=psCurrentCacheScope();
+  if(cache.scope!==scope){psInvalidateAllSchemeCaches();cache.scope=scope;}
+ }
+ function psTouchSchemeData(id){
+  const cache=window._psSchemeCache,key=String(id||''),entry=cache.data.get(key);
+  if(!entry)return null;
+  cache.data.delete(key);cache.data.set(key,entry);return entry;
+ }
+ function psGetSchemeData(id){
+  psEnsureCacheScope();
+  return psTouchSchemeData(id);
+ }
+ function psSetSchemeData(id,data,generation){
+  const cache=window._psSchemeCache,key=String(id||'');
+  if(!key||generation!==cache.generation)return null;
+  psRemoveSchemeView(key);
+  const entry={data,fetchedAt:Date.now(),version:++cache.sequence,scope:cache.scope};
+  cache.data.delete(key);cache.data.set(key,entry);
+  while(cache.data.size>PS_MAX_SCHEME_DATA){
+   const oldest=cache.data.keys().next().value;
+   cache.data.delete(oldest);psRemoveSchemeView(oldest);
+  }
+  return entry;
+ }
+ function psFetchSchemeData(id,force){
+  psEnsureCacheScope();
+  const cache=window._psSchemeCache,key=String(id||'');
+  if(!key)return Promise.reject(new Error('Missing price scheme ID'));
+  const cached=psGetSchemeData(key);
+  if(!force&&cached&&Date.now()-cached.fetchedAt<PS_SCHEME_DATA_TTL)return Promise.resolve(cached.data);
+  if(cache.pending.has(key))return cache.pending.get(key);
+  const generation=cache.generation;
+  let promise;
+  promise=api('/api/price-system/schemes/'+encodeURIComponent(key)+'/data')
+   .then(data=>{
+    if(!data||data.error)throw new Error(data&&data.error||tr('saveFailed'));
+    psSetSchemeData(key,data,generation);
+    return data;
+   })
+   .finally(()=>{if(cache.pending.get(key)===promise)cache.pending.delete(key);});
+  cache.pending.set(key,promise);
+  return promise;
+ }
+ function psSchemeViewLanguage(){return typeof getLang==='function'?getLang():'zh';}
+ function psGetSchemeView(id){
+  psEnsureCacheScope();
+  const cache=window._psSchemeCache,key=String(id||''),view=cache.views.get(key),data=cache.data.get(key);
+  if(!view||!data||view.version!==data.version||view.scope!==cache.scope||view.language!==psSchemeViewLanguage()){
+   if(view)psRemoveSchemeView(key);
+   return null;
+  }
+  return view;
+ }
+ function psTouchSchemeView(id){
+  const cache=window._psSchemeCache,key=String(id||''),index=cache.viewOrder.indexOf(key);
+  if(index>=0)cache.viewOrder.splice(index,1);
+  if(cache.views.has(key))cache.viewOrder.push(key);
+ }
+ function psCaptureSchemeView(id){
+  const cache=window._psSchemeCache,key=String(id||''),view=cache.views.get(key);
+  if(!view||!view.node)return;
+  const scroller=view.node.querySelector('.ps-table-wrap');
+  if(scroller){view.scrollTop=scroller.scrollTop;view.scrollLeft=scroller.scrollLeft;}
+ }
+ function psStoreSchemeView(id,node){
+  if(!id||!node)return;
+  const cache=window._psSchemeCache,key=String(id);
+  const previous=cache.views.get(key);
+  let scrollTop=previous?Number(previous.scrollTop||0):0,scrollLeft=previous?Number(previous.scrollLeft||0):0;
+  if(previous&&previous.node){
+   const oldScroller=previous.node.querySelector('.ps-table-wrap');
+   if(oldScroller){scrollTop=oldScroller.scrollTop;scrollLeft=oldScroller.scrollLeft;}
+   if(previous.node!==node&&!previous.node.isConnected)previous.node.remove();
+  }
+  let data=cache.data.get(key);
+  if(!data)data=psSetSchemeData(key,{scheme:state.scheme,fields:state.fields,rows:state.rows,forecast_stats_days:state.forecastStatsDays},cache.generation);
+  const scroller=node.querySelector('.ps-table-wrap');
+  if(scroller){scroller.scrollTop=scrollTop;scroller.scrollLeft=scrollLeft;}
+  cache.views.set(key,{node,version:data?data.version:0,scope:cache.scope,language:psSchemeViewLanguage(),scrollTop,scrollLeft});
+  const index=cache.viewOrder.indexOf(key);if(index>=0)cache.viewOrder.splice(index,1);
+  cache.viewOrder.push(key);
+  while(cache.viewOrder.length>PS_MAX_SCHEME_VIEWS){
+   const oldest=cache.viewOrder.shift(),view=cache.views.get(oldest);
+   if(view&&view.node&&view.node.parentNode)view.node.remove();
+   cache.views.delete(oldest);
+  }
+ }
+ function psApplySchemeData(data){
+  state.scheme=data.scheme;state.fields=data.fields||[];state.rows=data.rows||[];
+  state.forecastStatsDays=Number(data.forecast_stats_days)||90;
+ }
+ function psScheduleSchemePrefetch(currentId){
+  psEnsureCacheScope();
+  const current=state.schemes.find(item=>String(item.id)===String(currentId));
+  if(!current)return;
+  const related=state.schemes.filter(item=>String(item.id)!==String(currentId)&&String(item.country||'')===String(current.country||'')&&String(item.brand||'')===String(current.brand||''));
+  const others=state.schemes.filter(item=>String(item.id)!==String(currentId)&&!related.some(match=>String(match.id)===String(item.id)));
+  const ids=related.concat(others).slice(0,PS_MAX_SCHEME_PREFETCH).map(item=>String(item.id));
+  const cache=window._psSchemeCache,generation=++cache.prefetchGeneration;
+  const run=async()=>{
+   for(const id of ids){
+    if(generation!==cache.prefetchGeneration)return;
+    const cached=psGetSchemeData(id);
+    if(cached&&Date.now()-cached.fetchedAt<PS_SCHEME_DATA_TTL)continue;
+    try{await psFetchSchemeData(id,false);}catch(e){}
+   }
+   psTouchSchemeData(currentId);
+  };
+  if(typeof window.requestIdleCallback==='function')window.requestIdleCallback(()=>run(),{timeout:900});
+  else setTimeout(()=>run(),120);
+ }
+ function psPriceSystemMutationAffectsCache(url){
+  const path=String(url||'').split('?')[0];
+  if(path.indexOf('/api/price-system/schemes')===0){
+   if(path.indexOf('/formula/preview')>=0||path.indexOf('/formula/recalculate-preview')>=0)return false;
+   return true;
+  }
+  return ['/api/inventory','/api/inventory-imports','/api/replenishment-suggestions','/api/sales','/api/quotations','/api/wac-history','/api/skus','/api/sku-master']
+   .some(prefix=>path===prefix||path.indexOf(prefix+'/')===0);
+ }
+ function psInstallApiMutationInvalidation(){
+  if(window.__psSchemeApiWrapped||typeof window.api!=='function')return;
+  const originalApi=window.api;
+  const wrappedApi=async function(url,method,body,options){
+   const result=await originalApi.call(this,url,method,body,options);
+   const verb=String(method||'GET').toUpperCase();
+   if(verb!=='GET'&&psPriceSystemMutationAffectsCache(url))psInvalidateAllSchemeCaches();
+   return result;
+  };
+  wrappedApi.__psSchemeApiWrapped=true;
+  window.api=wrappedApi;
+  window.__psSchemeApiWrapped=true;
+ }
+ psInstallApiMutationInvalidation();
+
 function tr(k){const l=typeof getLang==='function'?getLang():'zh';return (TXT[l]&&TXT[l][k])||TXT.zh[k]||k;}
 function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function fmt(v){const n=Number(v);return v==null||v===''||!Number.isFinite(n)?'—':n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -181,11 +345,29 @@ async function loadSchemes(preferred){
  else if(!state.schemes.some(s=>s.id===state.schemeId))state.schemeId=state.schemes.length?state.schemes[0].id:'';
  if(state.schemeId)await loadData(state.schemeId);else{state.scheme=null;state.fields=[];state.rows=[];state.dirty={};main();}
 }
-async function loadData(id){
+async function loadData(id,options){
+ options=options||{};
+ const useCache=options.useCache!==false;
  cancelPendingPriceSystemFormulaPreviews();
- state.schemeId=id||'';state.dirty={};state.scheme=null;state.fields=[];state.rows=[];main();if(!id)return;
- try{const d=await api('/api/price-system/schemes/'+encodeURIComponent(id)+'/data');if(state.schemeId!==id)return;state.scheme=d.scheme;state.fields=d.fields||[];state.rows=d.rows||[];state.forecastStatsDays=Number(d.forecast_stats_days)||90;main();}
- catch(e){err(e);main();}
+ psEnsureCacheScope();
+ state.schemeId=id||'';state.dirty={};state._psUseCachedView=false;
+ if(!id){state.scheme=null;state.fields=[];state.rows=[];main();return;}
+ const cached=useCache?psGetSchemeData(id):null;
+ if(cached){
+  psApplySchemeData(cached.data);
+  state._psUseCachedView=!!psGetSchemeView(id);
+  main();
+  psTouchSchemeData(id);
+  if(Date.now()-cached.fetchedAt>=PS_SCHEME_DATA_TTL)psFetchSchemeData(id,true).catch(()=>{});
+  psScheduleSchemePrefetch(id);
+  return;
+ }
+ state.scheme=null;state.fields=[];state.rows=[];main();
+ try{
+  const data=await psFetchSchemeData(id,true);
+  if(state.schemeId!==id)return;
+  psApplySchemeData(data);main();psScheduleSchemePrefetch(id);
+ }catch(e){err(e);main();}
 }
 async function refreshDataPreservingDirty(id){
  const dirty=state.dirty;const d=await api('/api/price-system/schemes/'+encodeURIComponent(id)+'/data');if(state.schemeId!==id)return;
@@ -312,9 +494,19 @@ function main(){
   return '<button type="button" class="ps-channel-button '+(active?'active':'')+'" onclick="psSelectScheme(\''+esc(target.id)+'\')">'+esc(channel)+'</button>';
  }).join('');
  html+='<div class="ps-channel-switcher"><span class="ps-channel-switch-label">'+tr('switchChannel')+'：</span><div class="ps-channel-buttons">'+channelButtons+'</div><button type="button" class="ps-channel-add" onclick="psOpenChannelSchemeModal()">＋ '+tr('addChannel')+'</button></div></div>';
+ const cachedView=state._psUseCachedView?psGetSchemeView(scheme.id):null;
+ state._psUseCachedView=false;
+ if(cachedView){
+  html+='<div id="ps-scheme-view-host"></div>';
+  el.innerHTML=html;
+  const host=el.querySelector('#ps-scheme-view-host');
+  if(host)host.appendChild(cachedView.node);
+  psTouchSchemeView(scheme.id);updateSave();return;
+ }
+ html+='<div id="ps-scheme-view-host"><div class="ps-scheme-view" data-scheme-id="'+esc(scheme.id)+'">';
  const missingCategoryCount=state.rows.filter(r=>!String(r.category||'').trim()||String(r.category||'').trim()==='未分类').length;
  if(missingCategoryCount) html+='<div class="ps-warning">'+missingCategoryCount+tr('missingCategories')+'</div>';
- if(!state.rows.length){html+='<div class="ps-card"><div class="ps-empty"><strong>'+tr('noData')+'</strong></div></div>';el.innerHTML=html;return;}
+ if(!state.rows.length){html+='<div class="ps-card"><div class="ps-empty"><strong>'+tr('noData')+'</strong></div></div></div></div>';el.innerHTML=html;const viewNode=el.querySelector('#ps-scheme-view-host .ps-scheme-view');psStoreSchemeView(scheme.id,viewNode);updateSave();return;}
   const head='<th>'+tr('category')+'</th><th>'+tr('sku')+'</th><th>'+esc(forecastAverageLabel())+'</th><th>'+tr('stock')+'</th><th>'+tr('availableTurnover')+'</th>'+state.fields.map(f=>'<th title="'+esc(f.formula||'')+'">'+esc(f.field_name)+(Number(f.sync_quotation||0)===1?'<span class="ps-unit">'+tr('quoteCurrency')+'</span>':(f.display_format==='percent'?'<span class="ps-unit">%</span>':((f.display_format==='amount'||(f.display_format!=='number'&&f.display_format!=='percent'&&(f.unit||f.field_type==='amount')))?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':'')))+'</th>').join('');
   const rows=state.rows.map(r=>{
    const cells=state.fields.map(f=>{
@@ -340,11 +532,18 @@ function main(){
    return '<tr data-sku="'+esc(r.sku_code)+'"><td class="ps-category">'+(r.category?esc(r.category):'&mdash;')+'</td><td class="ps-sku">'+esc(r.sku_code)+'</td><td class="ps-value"'+psSortValueAttr(forecastAvg)+'>'+forecastAvgText+'</td><td class="ps-stock '+(Number(r.stock_qty)===0?'zero':'')+'"'+psSortValueAttr(Number(r.stock_qty||0))+'>'+Number(r.stock_qty||0).toLocaleString('en-US')+'<div class="ps-stock-meta">'+esc(inboundMeta)+'</div></td><td class="ps-value"'+psSortValueAttr(availableTurnover)+'>'+availableTurnoverText+'</td>'+cells+'</tr>';
   }).join('');
  const dirtyCount=Object.keys(state.dirty).reduce((n,k)=>n+Object.keys(state.dirty[k]||{}).length,0);
- html+='<div class="ps-card"><div class="ps-table-wrap"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div><div class="ps-bottom"><span>'+tr('importHint')+'</span><span class="'+(dirtyCount?'ps-dirty':'')+'">'+(dirtyCount?dirtyCount+' unsaved':'')+'</span></div></div>';
- el.innerHTML=html;initPriceSystemTableSort(el);psApplyFrozenColumns(el);updateSave();
+ html+='<div class="ps-card"><div class="ps-table-wrap"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div><div class="ps-bottom"><span>'+tr('importHint')+'</span><span class="'+(dirtyCount?'ps-dirty':'')+'">'+(dirtyCount?dirtyCount+' unsaved':'')+'</span></div></div></div></div>';
+ el.innerHTML=html;const viewNode=el.querySelector('#ps-scheme-view-host .ps-scheme-view');psStoreSchemeView(scheme.id,viewNode);initPriceSystemTableSort(viewNode);psApplyFrozenColumns(viewNode);updateSave();
 }
 function updateSave(){const b=document.getElementById('ps-save-btn');if(!b)return;const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);b.disabled=!n;b.innerHTML='<span class="ps-menu-icon">✓</span>'+tr('save')+(n?' ('+n+')':'');}
-window.psSelectScheme=async function(id){const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);if(n&&!confirm(tr('unsaved'))){main();return;}await loadData(id);};
+window.psSelectScheme=async function(id){
+ if(String(id||'')===String(state.schemeId||''))return;
+ const n=Object.keys(state.dirty).reduce((x,k)=>x+Object.keys(state.dirty[k]||{}).length,0);
+ if(n&&!confirm(tr('unsaved'))){main();return;}
+ psCaptureSchemeView(state.schemeId);
+ if(n){state.dirty={};psRemoveSchemeView(state.schemeId);}
+ await loadData(id,{useCache:true});
+};
 window.psPrepareAmountInput=function(input){if(!input)return;const before=String(input.value||''),position=Number.isFinite(input.selectionStart)?input.selectionStart:before.length,clean=before.replace(/,/g,''),nextPosition=before.slice(0,position).replace(/,/g,'').length;input.value=clean;if(typeof input.setSelectionRange==='function')input.setSelectionRange(nextPosition,nextPosition);};
 window.psFormatAmountInput=function(input){if(!input)return;const raw=String(input.value==null?'':input.value).replace(/,/g,'').trim();if(raw===''){input.value='';return;}const n=Number(raw);if(!Number.isFinite(n))return;input.value=formatAmountInput(n,input.getAttribute('data-decimal-places'));};
 const psFormulaPreviewTimers = new Map();
