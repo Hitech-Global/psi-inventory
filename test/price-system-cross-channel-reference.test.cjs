@@ -169,3 +169,16 @@ test('builtin SRP formula rules and reference settings survive history restore a
   assert.ok(api.includes("String(source.srp_source_scheme_id || '')"));
   assert.ok(ui.includes("srp_formula_rules:data.formula_rules"));
 });
+
+
+test('reference source selection and saving preserve quotation permissions through nested references', () => {
+  assert.ok(api.includes('function fieldRequiresQuotationPermission'));
+  assert.ok(api.includes('fieldRequiresQuotationPermission(sourceScheme.id, sourceFieldKey)'));
+  assert.ok(api.includes('!fieldRequiresQuotationPermission(scheme.id, field.field_key)'));
+  assert.ok(api.includes("fieldRequiresQuotationPermission(scheme.id, 'srp')"));
+});
+
+test('builtin SRP reference uses source field formatting instead of always forcing target currency', () => {
+  assert.ok(ui.includes("f.field_key==='srp'&&f.field_type!=='reference'"));
+  assert.ok(ui.includes("fieldText(value,sourceField||{field_type:'number',display_format:'number'})"));
+});
