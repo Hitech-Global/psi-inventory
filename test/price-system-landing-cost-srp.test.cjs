@@ -33,7 +33,7 @@ test('manual SRP import overrides formula output and is included in version hist
   assert.match(api, /srpSource = 'manual'/);
   assert.match(api, /snapshotLandingCosts/);
   assert.match(api, /snapshotSrpValues/);
-  assert.match(api, /sync_wac, sync_quotation, sort_order, is_active/);
+  assert.match(api, /sync_wac, sync_quotation, source_scheme_id, source_field_key, sort_order, is_active/);
   assert.ok(api.includes("fieldMap.has('srp')"));
   assert.ok(api.includes("id: 'builtin-srp'"));
   assert.match(ui, /srpIdx=headers\.findIndex/);
@@ -45,7 +45,7 @@ test('Excel export includes Landing Cost and SRP without a Product Name column',
   assert.match(ui, /const exportFields=state\.fields\.filter/);
   assert.match(ui, /r\.values\?r\.values\[f\.field_key\]/);
   assert.match(ui, /Number\(f\.sync_wac\|\|0\)===1/);
-  assert.match(ui, /field_type!=='formula'&&Number\(f\.sync_wac\|\|0\)!==1/);
+  assert.match(ui, /field_key!=='srp'/);
   assert.match(ui, /r\.srp==null\?'':r\.srp/);
 });
 
