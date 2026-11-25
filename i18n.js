@@ -45,6 +45,14 @@
     if (typeof renderSidebar === 'function') { try { renderSidebar(); } catch (e) {} }
     if (typeof renderUserRole === 'function') { try { renderUserRole(); } catch (e) {} }
     applyI18n();
+    // Price System refreshes its localized view from in-memory state.
+    // This avoids reloading the page and dropping unsaved SKU edits.
+    var priceSystemHandled = false;
+    try {
+      if (typeof window.psHandleLanguageChange === 'function') {
+        priceSystemHandled = !!window.psHandleLanguageChange();
+      }
+    } catch (e) {}
     // I18N-B1-BUGFIX-01：保存语言偏好必须在 showPage 之前执行。
     // 根因：showPage 触发 renderDashboard() → api('/api/dashboard')（async），
     // 若该请求返回 401 则 api() 调用 doLogout() 销毁 session，
@@ -65,6 +73,7 @@
     // 仅当 ①当前页面存在 ②modal 未打开 ③无未保存 inline 编辑 时调用 showPage(currentPage)。
     // 不改动 showPage 核心逻辑，不引入复杂 dirty 系统（仅用 window.__brandUnsaved 最小标志）。
     try {
+      if (priceSystemHandled) return;
       if (typeof currentPage !== 'undefined' && currentPage && typeof showPage === 'function') {
         var modalOpen = (typeof isModalOpen === 'function') ? isModalOpen() : false;
         if (modalOpen) return;
