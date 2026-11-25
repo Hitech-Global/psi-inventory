@@ -54,3 +54,11 @@ test('rejects unsupported functions, malformed function arguments and repeated e
   assert.throws(() => evaluateFormula('==MIN(1, 2)', {}), /一个等号/);
   assert.throws(() => evaluateFormula('1, 2', {}), /多余内容/);
 });
+
+test('automatically normalizes referenced percentage fields without changing formula ratios', () => {
+  const options = { percentVariables: ['dealer_profit_rate', 'ads_budget'] };
+  assert.equal(evaluateFormula('srp * (1 - dealer_profit_rate)', { srp: 120700, dealer_profit_rate: 18 }, options), 98974);
+  assert.equal(evaluateFormula('srp * ads_budget', { srp: 1000, ads_budget: 8 }, options), 80);
+  assert.equal(evaluateFormula('srp * (1 - profit_rate)', { srp: 1000, profit_rate: 0.18 }, options), 820);
+  assert.equal(validateFormula('srp * (1 - dealer_profit_rate)', ['srp', 'dealer_profit_rate'], options).valid, true);
+});
