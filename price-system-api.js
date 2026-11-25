@@ -1318,7 +1318,6 @@ function registerPriceSystemRoutes(app, deps) {
         formula: String(scheme.srp_formula || ''), formula_rules: '{}',
         source_scheme_id: srpIsReference ? String(scheme.srp_source_scheme_id) : '',
         source_field_key: srpIsReference ? String(scheme.srp_source_field_key) : '',
-        reference_value_type: srpIsReference ? 'formula' : '',
         display_format: 'amount', decimal_places: 2,
         sync_wac: 0, sync_quotation: 0, is_builtin_srp: true
       });
