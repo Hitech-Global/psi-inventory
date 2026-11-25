@@ -50,7 +50,6 @@ const state={countries:[],skus:[],brands:[],schemes:[],schemeId:'',scheme:null,f
  function psSetSchemeData(id,data,generation){
   const cache=window._psSchemeCache,key=String(id||'');
   if(!key||generation!==cache.generation)return null;
-  psRemoveSchemeView(key);
   const entry={data,fetchedAt:Date.now(),version:++cache.sequence,scope:cache.scope};
   cache.data.delete(key);cache.data.set(key,entry);
   while(cache.data.size>PS_MAX_SCHEME_DATA){
