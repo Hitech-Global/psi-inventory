@@ -110,7 +110,7 @@ function evaluateFormula(expression, variables, options) {
         if (!Number.isFinite(result)) throw new Error('公式计算结果不是有效数字');
         return result;
       }
-      if (!Object.prototype.hasOwnProperty.call(values, name)) {
+      if (!Object.prototype.hasOwnProperty.call(values, name) && name !== 'exchange_rate') {
         throw new Error('公式引用了未知字段：' + name);
       }
       let value = Number(values[name] == null ? 0 : values[name]);

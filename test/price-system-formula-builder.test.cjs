@@ -160,7 +160,8 @@ test('all price-system table fields, including dynamically added fields, are cen
   assert.ok(ui.includes('padding:3px 7px;text-align:center;'));
   assert.ok(ui.includes('#ps-root .ps-srp{font-weight:700;color:#1d1d1f;text-align:center}'));
   assert.ok(ui.includes('justify-content:center;gap:8px;text-align:center}#ps-root .ps-landing-value'));
-  assert.ok(ui.includes("state.fields.map(f=>'<th"));
+  assert.ok(ui.includes('state.fields.map(f=>{'));
+  assert.ok(ui.includes("return '<th title='"));
   assert.ok(ui.includes("return '<td class=\"ps-value\"><input"));
 });
 

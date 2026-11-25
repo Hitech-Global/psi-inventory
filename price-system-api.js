@@ -1707,8 +1707,7 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 
 
-
-    app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
+  app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
     const body = req.body || {};

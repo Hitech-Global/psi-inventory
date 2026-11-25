@@ -70,6 +70,6 @@ test('automatically normalizes referenced percentage fields without changing for
 test('supports live exchange-rate formula variable and fails closed when unavailable', () => {
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('exchange_rate'));
   assert.equal(evaluateFormula('fob * exchange_rate', { fob: 4.38, exchange_rate: 18200 }), 79716);
-  assert.equal(validateFormula('fob * exchange_rate', ['fob']).valid, true);
+  assert.equal(validateFormula('fob * exchange_rate', ['fob', ...BUILTIN_PRICE_VARIABLES]).valid, true);
   assert.throws(() => evaluateFormula('fob * exchange_rate', { fob: 4.38 }), /实时汇率暂不可用/);
 });
