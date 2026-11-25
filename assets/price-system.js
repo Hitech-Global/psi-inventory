@@ -507,14 +507,22 @@ function main(){
  const missingCategoryCount=state.rows.filter(r=>!String(r.category||'').trim()||String(r.category||'').trim()==='未分类').length;
  if(missingCategoryCount) html+='<div class="ps-warning">'+missingCategoryCount+tr('missingCategories')+'</div>';
  if(!state.rows.length){html+='<div class="ps-card"><div class="ps-empty"><strong>'+tr('noData')+'</strong></div></div></div></div>';el.innerHTML=html;const viewNode=el.querySelector('#ps-scheme-view-host .ps-scheme-view');psStoreSchemeView(scheme.id,viewNode);updateSave();return;}
-  const head='<th>'+tr('category')+'</th><th>'+tr('sku')+'</th><th>'+esc(forecastAverageLabel())+'</th><th>'+tr('stock')+'</th><th>'+tr('availableTurnover')+'</th>'+state.fields.map(f=>'<th title="'+esc(f.formula||'')+'">'+esc(f.field_name)+(Number(f.sync_quotation||0)===1?'<span class="ps-unit">'+tr('quoteCurrency')+'</span>':(f.display_format==='percent'?'<span class="ps-unit">%</span>':((f.display_format==='amount'||(f.display_format!=='number'&&f.display_format!=='percent'&&(f.unit||f.field_type==='amount')))?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':'')))+'</th>').join('');
+  const head='<th>'+tr('category')+'</th><th>'+tr('sku')+'</th><th>'+esc(forecastAverageLabel())+'</th><th>'+tr('stock')+'</th><th>'+tr('availableTurnover')+'</th>'+state.fields.map(f=>'<th title="'+esc(f.formula||'')+'">'+esc(f.field_name)+(Number(f.sync_quotation||0)===1?'<span class="ps-unit">'+tr('quoteCurrency')+'</span>':((f.display_format==='percent'||(f.field_type==='reference'&&f.reference_value_type==='percent'))?'<span class="ps-unit">%</span>':((f.display_format==='amount'||(f.display_format!=='number'&&f.display_format!=='percent'&&(f.unit||f.field_type==='amount')))?'<span class="ps-unit">'+esc(f.unit||scheme.currency||'')+'</span>':'')))+'</th>').join('');
   const rows=state.rows.map(r=>{
    const cells=state.fields.map(f=>{
     if(!applies(f,r))return '<td class="ps-value ps-muted"'+psSortValueAttr(null)+'>&mdash;</td>';
     const v=r.values?r.values[f.field_key]:null;
     if(f.field_key==='srp'){
      const dirty=state.dirty[r.sku_code]&&Object.prototype.hasOwnProperty.call(state.dirty[r.sku_code],'srp');const shown=dirty&&state.dirty[r.sku_code].srp!=null?state.dirty[r.sku_code].srp:r.srp;
-     return '<td class="ps-value ps-srp"'+psSortValueAttr(shown)+'><input class="ps-input ps-srp-input '+(dirty?'dirty':'')+'" type="text" inputmode="decimal" data-decimal-places="2" value="'+esc(formatAmountInput(shown,2))+'" data-sku="'+esc(r.sku_code)+'" data-field="srp" onfocus="psPrepareAmountInput(this)" oninput="psMarkDirty(this)" onblur="psFormatAmountInput(this)" title="'+esc(tr('srpManualHint'))+'"><span class="ps-unit">'+currency()+'</span></td>';
+     const isReference=f.field_type==='reference';
+     const referenceScale=isReference&&f.display_format==='percent'&&f.reference_value_type==='formula'?100:1;
+     const places=isReference&&f.decimal_places!=null?Math.max(0,Math.min(6,Number(f.decimal_places)||0)):2;
+     const inputValue=shown==null?'':formatAmountInput(Number(shown)*referenceScale,places);
+     const quoteCode=String(r.value_currencies&&r.value_currencies.srp||'').trim().toUpperCase();
+     const unitLabel=isReference
+      ?(r.srp_source==='manual'?(f.display_format==='percent'?'%':(f.unit||scheme.currency||'')):(f.reference_sync_quotation&&quoteCode?(currencySymbol(quoteCode)||quoteCode):(f.display_format==='percent'||(f.display_format==='auto'&&f.reference_value_type==='percent')?'%':(f.unit||''))))
+      :currency();
+     return '<td class="ps-value ps-srp"'+psSortValueAttr(shown)+'><input class="ps-input ps-srp-input '+(dirty?'dirty':'')+'" type="text" inputmode="decimal" data-decimal-places="'+places+'" data-value-scale="'+referenceScale+'" value="'+esc(inputValue)+'" data-sku="'+esc(r.sku_code)+'" data-field="srp" onfocus="psPrepareAmountInput(this)" oninput="psMarkDirty(this)" onblur="psFormatAmountInput(this)" title="'+esc(tr('srpManualHint'))+'"><span class="ps-unit">'+esc(unitLabel)+'</span></td>';
     }
     if(Number(f.sync_wac||0)===1){const lc=r.landing_cost||null,unit=(lc&&lc.currency)||f.unit||scheme.currency||'';const rawDate=lc&&(lc.last_inbound_date||lc.confirmed_at)||'',wacDate=String(rawDate).slice(0,10),meta=wacDate?esc(wacDate):'';return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+meta+'"><div class="ps-landing-value">'+(v==null?'&mdash;':esc(unit)+' '+fmt(v))+'</div>'+(meta?'<div class="ps-landing-meta">'+meta+'</div>':'')+'</td>';}
     if(Number(f.sync_quotation||0)===1||(f.field_type==='reference'&&f.reference_sync_quotation===true)){const code=String(r.value_currencies&&r.value_currencies[f.field_key]||'').trim().toUpperCase(),symbol=currencySymbol(code);return '<td class="ps-value"'+psSortValueAttr(v)+' title="'+esc(code)+'">'+(v==null?'&mdash;':(symbol?esc(symbol)+' ':'')+fmt(v))+'</td>';}
@@ -630,6 +638,8 @@ window.psMarkDirty=function(input){
  if(raw!==''&&!Number.isFinite(Number(raw)))return;
  if(!state.dirty[sku])state.dirty[sku]={};
  state.dirty[sku][key]=raw===''?null:Number(raw);
+ const valueScale=key==='srp'?Math.max(1,Number(input.getAttribute('data-value-scale')||1)):1;
+ if(raw!==''&&valueScale!==1)state.dirty[sku][key]=Number(raw)/valueScale;
  input.classList.add('dirty');
  updateSave();
  const b=document.querySelector('#ps-root .ps-bottom span:last-child');
