@@ -1067,7 +1067,7 @@ window.psReferenceSourceChanged=async function(preserveField){
   const fields=data.fields||[];
   window.__psReferenceFields=fields;window.__psReferenceSchemeMeta=data.scheme||{};
   const wanted=preserveField?String(window.__psReferenceFieldDraft||''):'';
-  fieldSelect.innerHTML=fields.map(item=>'<option value="'+esc(item.field_key)+'">'+esc(item.field_name)+' ['+esc(item.field_key)+']</option>').join('')||'<option value="">'+tr('referenceNoFields')+'</option>';
+  fieldSelect.innerHTML=fields.map(item=>'<option value="'+esc(item.field_key)+'">'+esc(item.field_name)+'</option>').join('')||'<option value="">'+tr('referenceNoFields')+'</option>';
   fieldSelect.disabled=!fields.length;
   fieldSelect.value=fields.some(item=>item.field_key===wanted)?wanted:(fields[0]?fields[0].field_key:'');
   window.__psReferenceFieldDraft=fieldSelect.value;
