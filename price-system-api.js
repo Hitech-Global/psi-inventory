@@ -1374,7 +1374,7 @@ function registerPriceSystemRoutes(app, deps) {
       if (!sourceField) return res.status(400).json({ error: '引用来源字段不存在或已停用' });
       if (fieldRequiresQuotationPermission(sourceScheme.id, sourceFieldKey) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
       if (referenceChainReachesScheme(sourceScheme.id, scheme.id)) return res.status(400).json({ error: '引用会形成循环依赖，请选择其他来源方案' });
-      run("UPDATE price_system_schemes SET srp_formula = '', srp_source_scheme_id = ?, srp_source_field_key = ?, updated_at = datetime('now') WHERE id = ?", [sourceScheme.id, sourceFieldKey, scheme.id]);
+      run("UPDATE price_system_schemes SET srp_source_scheme_id = ?, srp_source_field_key = ?, updated_at = datetime('now') WHERE id = ?", [sourceScheme.id, sourceFieldKey, scheme.id]);
       createVersion(scheme.id, userStamp(req), '设置 SRP 引用来源');
       return res.json({ success: true, field_type: 'reference', source_scheme_id: sourceScheme.id, source_field_key: sourceFieldKey });
     }
