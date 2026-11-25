@@ -126,6 +126,38 @@ function buildForecastMetricMap(rows) {
   return metrics;
 }
 
+function normalizePriceCurrencyCode(value) {
+  const code = String(value || '').trim().toUpperCase();
+  return code === 'CNY' ? 'RMB' : code;
+}
+
+function calculateLiveExchangeRate(fromCurrency, toCurrency, inventoryRates) {
+  const from = normalizePriceCurrencyCode(fromCurrency);
+  const to = normalizePriceCurrencyCode(toCurrency);
+  if (!from || !to) throw new Error('实时汇率缺少来源币种或目标币种');
+  if (from === to) {
+    return { from_currency: from, to_currency: to, rate: 1, from_rate_date: '', to_rate_date: '', used_fallback: false };
+  }
+  const rates = inventoryRates && inventoryRates.rates && typeof inventoryRates.rates === 'object'
+    ? inventoryRates.rates
+    : (inventoryRates || {});
+  const fromInfo = from === 'RMB' ? { rate: 1, source: 'base' } : rates[from];
+  const toInfo = to === 'RMB' ? { rate: 1, source: 'base' } : rates[to];
+  const fromRate = Number(fromInfo && fromInfo.rate);
+  const toRate = Number(toInfo && toInfo.rate);
+  if (!Number.isFinite(fromRate) || fromRate <= 0 || !Number.isFinite(toRate) || toRate <= 0) {
+    throw new Error('实时汇率暂不可用：' + from + '/' + to + '，请检查库存总表汇率');
+  }
+  return {
+    from_currency: from,
+    to_currency: to,
+    rate: toRate / fromRate,
+    from_rate_date: String(fromInfo && fromInfo.date || ''),
+    to_rate_date: String(toInfo && toInfo.date || ''),
+    used_fallback: !!((fromInfo && fromInfo.source === 'fallback') || (toInfo && toInfo.source === 'fallback'))
+  };
+}
+
 function formulaForCategory(field, category) {
   const rules = parseFormulaRules(field && field.formula_rules);
   if (Object.keys(rules).length) {
@@ -143,6 +175,7 @@ const BUILTIN_FORMULA_LABELS = Object.freeze({
   reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
   landing_cost: ['最新确认 WAC', 'Latest Confirmed WAC', 'WAC Terkonfirmasi Terbaru', '系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
   stock_qty: ['库存数量', 'Stock Qty', 'Jumlah Stok'],
+  exchange_rate: ['实时汇率', 'Live Exchange Rate', 'Kurs Real-Time'],
   srp: ['SRP']
 });
 
@@ -525,7 +558,7 @@ function createPriceSystemWacSync(deps) {
 function registerPriceSystemRoutes(app, deps) {
   const {
     query, queryOne, run, transaction, genId,
-    requireApiPermission, asyncHandler, needsDataScopeFilter
+    requireApiPermission, asyncHandler, needsDataScopeFilter, resolveInventoryCurrencyRates, fetchImpl
   } = deps;
   function requirePricePermissions(write) {
     return (req, res, next) => {
@@ -812,14 +845,188 @@ function registerPriceSystemRoutes(app, deps) {
     };
   }
 
-  function getSchemeData(req, res, scheme) {
+  function formulaUsesLiveExchangeRate(expression, fields) {
+    try {
+      return getFormulaVariables(normalizeFormulaExpression(expression, fields)).includes('exchange_rate');
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function schemeRequiresLiveExchangeRate(scheme, fields, visited) {
+    if (!scheme) return false;
+    const seen = visited || new Set();
+    const schemeId = String(scheme.id || '');
+    if (!schemeId || seen.has(schemeId)) return false;
+    seen.add(schemeId);
+    const currentFields = Array.isArray(fields) ? fields : query(
+      'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
+      [schemeId]
+    ).rows;
+    const hasOwnFxFormula = currentFields.some(field => {
+      const formulas = [field.formula].concat(Object.values(parseFormulaRules(field.formula_rules)));
+      return formulas.some(expression => String(expression || '').trim() && formulaUsesLiveExchangeRate(expression, currentFields));
+    }) || [scheme.srp_formula].concat(Object.values(parseFormulaRules(scheme.srp_formula_rules))).some(expression =>
+      String(expression || '').trim() && formulaUsesLiveExchangeRate(expression, currentFields)
+    );
+    if (hasOwnFxFormula) return true;
+    for (const field of currentFields.filter(item => item && item.field_type === 'reference' && item.source_scheme_id)) {
+      const sourceScheme = getSchemeOrNull(field.source_scheme_id);
+      if (!sourceScheme) continue;
+      const sourceFields = query(
+        'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
+        [sourceScheme.id]
+      ).rows;
+      if (schemeRequiresLiveExchangeRate(sourceScheme, sourceFields, seen)) return true;
+    }
+    return false;
+  }
+
+  async function resolveSchemeInventoryRates(scheme, fields) {
+    const currencySet = new Set(['RMB', normalizePriceCurrencyCode(scheme && scheme.currency)]);
+    query('SELECT code FROM currencies WHERE status = ?', ['active']).rows.forEach(row => {
+      const code = normalizePriceCurrencyCode(row.code);
+      if (code) currencySet.add(code);
+    });
+    query(
+      'SELECT DISTINCT currency FROM price_system_values WHERE scheme_id = ? AND currency IS NOT NULL AND currency != ?',
+      [scheme.id, '']
+    ).rows.forEach(row => {
+      const code = normalizePriceCurrencyCode(row.currency);
+      if (code) currencySet.add(code);
+    });
+    (fields || []).filter(field => field && field.field_type === 'reference' && field.source_scheme_id).forEach(field => {
+      const sourceScheme = getSchemeOrNull(field.source_scheme_id);
+      if (sourceScheme && sourceScheme.currency) currencySet.add(normalizePriceCurrencyCode(sourceScheme.currency));
+    });
+    const currencies = Array.from(currencySet).filter(Boolean);
+    const today = new Date().toISOString().split('T')[0];
+    if (typeof resolveInventoryCurrencyRates === 'function') {
+      try {
+        return await resolveInventoryCurrencyRates({
+          currencies,
+          today,
+          fetchImpl: fetchImpl || (typeof fetch === 'function' ? fetch : null)
+        });
+      } catch (error) {
+        // If the shared inventory resolver is temporarily unavailable, use the same
+        // exchange_rates cache as a clearly marked fallback rather than breaking the page.
+      }
+    }
+    const rates = {};
+    currencies.forEach(currency => {
+      if (currency === 'RMB') {
+        rates[currency] = { rate: 1, date: today, source: 'base' };
+        return;
+      }
+      const row = queryOne(
+        'SELECT rate, rate_date FROM exchange_rates WHERE from_currency = ? AND to_currency = ? ORDER BY rate_date DESC, created_at DESC LIMIT 1',
+        [currency, 'RMB']
+      );
+      const foreignToRmb = Number(row && row.rate);
+      rates[currency] = Number.isFinite(foreignToRmb) && foreignToRmb > 0
+        ? { rate: 1 / foreignToRmb, date: String(row.rate_date || ''), source: 'fallback' }
+        : null;
+    });
+    return { rates, rate_date: today, used_fallback: true };
+  }
+
+  function resolveFormulaExchangeRate(expression, context) {
+    const scheme = context.scheme || {};
+    const targetCurrency = normalizePriceCurrencyCode(scheme.currency);
+    const sku = context.sku || {};
+    const skuCode = String(sku.sku_code || context.skuCode || '').trim();
+    const fieldMap = context.fieldMap || new Map();
+    const storedBySku = context.storedCurrencyBySku || new Map();
+    const storedCurrencies = storedBySku.get(skuCode) || {};
+    const referenceCurrenciesByField = context.referenceCurrenciesByField || new Map();
+    const landingCost = context.landingCost || null;
+    const currencies = [];
+
+    function currencyForVariable(key) {
+      if (key === 'purchase_price_usd') return 'USD';
+      if (key === 'purchase_price_rmb') return 'RMB';
+      if (key === 'standard_purchase_price') return normalizePriceCurrencyCode(sku.purchase_currency || targetCurrency);
+      if (key === 'landing_cost') return normalizePriceCurrencyCode(landingCost && landingCost.currency || targetCurrency);
+      if (key === 'srp') return targetCurrency;
+      if (key === 'stock_qty' || key === 'inventory_qty' || key === 'reference_customs_rate' || key === 'exchange_rate') return '';
+      const field = fieldMap.get(key);
+      if (!field) return '';
+      const fieldType = String(field.field_type || '').toLowerCase();
+      if (fieldType === 'percent' || fieldType === 'number' || field.display_format === 'percent' || field.reference_value_type === 'percent') return '';
+      if (Number(field.sync_wac || 0) === 1) return normalizePriceCurrencyCode(landingCost && landingCost.currency || targetCurrency);
+      if (fieldType === 'formula') return normalizePriceCurrencyCode(field.unit || targetCurrency);
+      if (fieldType === 'reference') {
+        const perSku = referenceCurrenciesByField.get(key);
+        return normalizePriceCurrencyCode((perSku && perSku.get(skuCode)) || storedCurrencies[key] || field.unit || targetCurrency);
+      }
+      return normalizePriceCurrencyCode(storedCurrencies[key] || field.unit || targetCurrency);
+    }
+
+    getFormulaVariables(expression).forEach(key => {
+      if (key === 'exchange_rate') return;
+      const currency = currencyForVariable(key);
+      if (currency) currencies.push(currency);
+    });
+    const uniqueCurrencies = Array.from(new Set(currencies));
+    const foreignCurrencies = uniqueCurrencies.filter(currency => currency !== targetCurrency);
+    if (foreignCurrencies.length > 1) {
+      throw new Error('公式引用了多种不同外币，无法自动确定实时汇率；请拆分公式或统一币种');
+    }
+    const fromCurrency = foreignCurrencies[0] || (uniqueCurrencies.includes(targetCurrency) ? targetCurrency : '');
+    if (!fromCurrency || !targetCurrency) {
+      throw new Error('实时汇率需要与一个有币种的金额字段一起使用，例如 FOB * 实时汇率');
+    }
+    return calculateLiveExchangeRate(fromCurrency, targetCurrency, context.fxRates);
+  }
+
+  function storedCurrencyMapForSku(schemeId, skuCode, suppliedCurrencies) {
+    const currencyRows = query(
+      'SELECT field_key, currency FROM price_system_values WHERE scheme_id = ? AND sku_code = ?',
+      [schemeId, skuCode]
+    ).rows;
+    const values = {};
+    currencyRows.forEach(row => {
+      const code = normalizePriceCurrencyCode(row.currency);
+      if (code) values[row.field_key] = code;
+    });
+    const supplied = suppliedCurrencies && typeof suppliedCurrencies === 'object' && !Array.isArray(suppliedCurrencies)
+      ? suppliedCurrencies
+      : {};
+    Object.keys(supplied).forEach(key => {
+      const code = normalizePriceCurrencyCode(supplied[key]);
+      if (code) values[key] = code;
+    });
+    return new Map([[skuCode, values]]);
+  }
+
+  function referenceCurrencyMapForSku(skuCode, suppliedCurrencies) {
+    const map = new Map();
+    const supplied = suppliedCurrencies && typeof suppliedCurrencies === 'object' && !Array.isArray(suppliedCurrencies)
+      ? suppliedCurrencies
+      : {};
+    Object.keys(supplied).forEach(key => {
+      const code = normalizePriceCurrencyCode(supplied[key]);
+      if (code) map.set(key, new Map([[skuCode, code]]));
+    });
+    return map;
+  }
+
+  async function getSchemeData(req, res, scheme) {
     if (!schemeAccess(req, res, scheme)) return;
+    const rawFields = query(
+      'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name',
+      [scheme.id]
+    ).rows;
+    const fxRates = schemeRequiresLiveExchangeRate(scheme, rawFields)
+      ? await resolveSchemeInventoryRates(scheme, rawFields)
+      : null;
     const cache = new Map();
-    const data = buildSchemeData(req, res, scheme, [], cache);
+    const data = buildSchemeData(req, res, scheme, [], cache, fxRates);
     if (data) res.json(data);
   }
 
-  function buildSchemeData(req, res, scheme, referenceStack, cache) {
+  function buildSchemeData(req, res, scheme, referenceStack, cache, fxRates) {
     if (!scheme) throw new Error('引用的来源价格方案不存在');
     if (referenceStack.includes(String(scheme.id))) throw new Error('价格方案之间存在循环引用，请检查引用关系');
     if (cache.has(String(scheme.id))) return cache.get(String(scheme.id));
@@ -925,7 +1132,7 @@ function registerPriceSystemRoutes(app, deps) {
       if (!sourceScheme) { referenceValuesByField.set(field.field_key, new Map()); return; }
       if (String(sourceScheme.country || '') !== String(scheme.country || '') || String(sourceScheme.brand || '') !== String(scheme.brand || '')) throw new Error('引用来源必须与当前方案属于同一国家和品牌：' + field.field_name);
       if (!schemeAccess(req, res, sourceScheme)) throw new Error('没有权限读取引用来源价格方案：' + sourceScheme.id);
-      const sourceData = buildSchemeData(req, res, sourceScheme, referenceStack.concat(String(scheme.id)), cache);
+      const sourceData = buildSchemeData(req, res, sourceScheme, referenceStack.concat(String(scheme.id)), cache, fxRates);
       const sourceFieldKey = String(field.source_field_key || '').trim();
       const sourceField = sourceData.fields.find(item => item.field_key === sourceFieldKey);
       if (!sourceField) { referenceValuesByField.set(field.field_key, new Map()); return; }
@@ -965,6 +1172,7 @@ function registerPriceSystemRoutes(app, deps) {
       const resolved = {};
       const resolving = new Set();
       const errors = {};
+      const formulaExchangeRates = {};
 
       function resolveField(key) {
         if (Object.prototype.hasOwnProperty.call(resolved, key)) return resolved[key];
@@ -998,11 +1206,22 @@ function registerPriceSystemRoutes(app, deps) {
           return 0;
         }
         resolving.add(key);
+        let expression = '';
+        let usesLiveExchangeRate = false;
         try {
           const vars = Object.assign({}, base, resolved);
-          const expression = normalizeFormulaExpression(categoryFormula || field.formula, fields);
+          expression = normalizeFormulaExpression(categoryFormula || field.formula, fields);
+          const expressionVariables = getFormulaVariables(expression);
+          usesLiveExchangeRate = expressionVariables.includes('exchange_rate');
+          if (usesLiveExchangeRate) {
+            const exchangeRateMeta = resolveFormulaExchangeRate(expression, {
+              scheme, sku, fieldMap, storedCurrencyBySku, referenceCurrenciesByField, landingCost, fxRates
+            });
+            formulaExchangeRates[key] = exchangeRateMeta;
+            vars.exchange_rate = exchangeRateMeta.rate;
+          }
           const missingDependencies = [];
-          getFormulaVariables(expression).forEach(dep => {
+          expressionVariables.forEach(dep => {
             if (fieldMap.has(dep)) {
               vars[dep] = resolveField(dep);
               const dependencyField = fieldMap.get(dep);
@@ -1015,7 +1234,7 @@ function registerPriceSystemRoutes(app, deps) {
           if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingDependencies.join('、');
         } catch (e) {
           errors[key] = e.message;
-          resolved[key] = 0;
+          resolved[key] = usesLiveExchangeRate ? null : 0;
         }
         resolving.delete(key);
         return resolved[key];
@@ -1047,11 +1266,22 @@ function registerPriceSystemRoutes(app, deps) {
         last_inbound_date: inboundDate,
         purchase_currency: sku.purchase_currency || '',
         landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
-        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1 || field.reference_sync_quotation === true).map(field => [field.field_key, field.reference_sync_quotation === true ? ((referenceCurrenciesByField.get(field.field_key) || new Map()).get(String(sku.sku_code || '').trim()) || '') : ((storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || '')])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
+        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1 || field.reference_sync_quotation === true).map(field => [field.field_key, field.reference_sync_quotation === true ? ((referenceCurrenciesByField.get(field.field_key) || new Map()).get(String(sku.sku_code || '').trim()) || '') : ((storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || '')])), formula_context: Object.assign({}, base, values), formula_exchange_rates: formulaExchangeRates, srp, srp_source:srpSource, formula_errors:errors
       };
     });
 
-    const result = { scheme, fields, rows, forecast_stats_days: forecastStatsDays };
+    const formulaFx = {};
+    fields.forEach(field => {
+      const metas = rows.map(row => row.formula_exchange_rates && row.formula_exchange_rates[field.field_key]).filter(Boolean);
+      if (!metas.length) return;
+      const pairs = new Set(metas.map(meta => String(meta.from_currency || '') + '/' + String(meta.to_currency || '')));
+      const values = metas.map(meta => Number(meta.rate)).filter(Number.isFinite);
+      const sameRate = values.length === metas.length && values.every(value => Math.abs(value - values[0]) < 1e-7);
+      formulaFx[field.field_key] = pairs.size === 1 && sameRate
+        ? metas[0]
+        : { mixed: true, from_currency: '', to_currency: '', rate: null, used_fallback: metas.some(meta => meta.used_fallback) };
+    });
+    const result = { scheme, fields, rows, forecast_stats_days: forecastStatsDays, formula_fx: formulaFx };
     cache.set(String(scheme.id), result);
     return result;
   }
@@ -1183,8 +1413,8 @@ function registerPriceSystemRoutes(app, deps) {
     res.json({ scheme, fields });
   }));
 
-  app.get('/api/price-system/schemes/:id/data', canRead, asyncHandler((req, res) => {
-    try { getSchemeData(req, res, getSchemeOrNull(req.params.id)); }
+  app.get('/api/price-system/schemes/:id/data', canRead, asyncHandler(async (req, res) => {
+    try { await getSchemeData(req, res, getSchemeOrNull(req.params.id)); }
     catch (e) { res.status(500).json({ error: e.message || '读取价格数据失败' }); }
   }));
 
@@ -1277,7 +1507,7 @@ function registerPriceSystemRoutes(app, deps) {
     res.json(getSchemeOrNull(scheme.id));
   }));
 
-  app.post('/api/price-system/schemes/:id/formula/preview', canRead, asyncHandler((req, res) => {
+  app.post('/api/price-system/schemes/:id/formula/preview', canRead, asyncHandler(async (req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
     const body = req.body || {};
@@ -1293,7 +1523,33 @@ function registerPriceSystemRoutes(app, deps) {
       const supplied = body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables) ? body.variables : {};
       const variables = {};
       const previewFieldMap = new Map(fields.map(field => [field.field_key, field]));
+      let exchangeRateMeta = null;
+      if (validation.variables.includes('exchange_rate')) {
+        const skuCode = String(body.sku_code || '').trim();
+        if (!skuCode) throw new Error('实时汇率预览需要选择一个 SKU');
+        const sku = queryOne(
+          'SELECT sku_code, brand, category, purchase_currency FROM skus WHERE brand = ? AND sku_code = ?',
+          [scheme.brand, skuCode]
+        );
+        if (!sku) throw new Error('找不到用于汇率预览的 SKU：' + skuCode);
+        const storedCurrencyBySku = storedCurrencyMapForSku(scheme.id, skuCode, body.value_currencies);
+        const referenceCurrenciesByField = referenceCurrencyMapForSku(skuCode, body.value_currencies);
+        const landingCostRow = queryOne(
+          'SELECT currency FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code = ?',
+          [scheme.id, skuCode]
+        );
+        const fxRates = await resolveSchemeInventoryRates(scheme, fields);
+        exchangeRateMeta = resolveFormulaExchangeRate(normalizedFormula, {
+          scheme, sku, fieldMap: previewFieldMap, storedCurrencyBySku, referenceCurrenciesByField,
+          landingCost: landingCostRow || null, fxRates
+        });
+      }
       validation.variables.forEach(key => {
+        if (key === 'exchange_rate') {
+          if (!exchangeRateMeta) throw new Error('实时汇率暂不可用，请检查库存总表汇率');
+          variables[key] = exchangeRateMeta.rate;
+          return;
+        }
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
         const sourceField = previewFieldMap.get(key);
         if (sourceField && Number(sourceField.sync_quotation || 0) === 1 && (raw == null || raw === '')) throw new Error('当前 SKU 没有匹配到有效报价：' + (sourceField.field_name || key));
@@ -1303,20 +1559,20 @@ function registerPriceSystemRoutes(app, deps) {
         variables[key] = value;
       });
       const result = evaluateFormula(normalizedFormula, variables, formulaOptions);
-      res.json({ valid: true, variables: validation.variables, result });
+      res.json({ valid: true, variables: validation.variables, result, exchange_rate_meta: exchangeRateMeta });
     } catch (e) {
       res.status(400).json({ valid: false, error: e.message });
     }
   }));
 
-  app.post('/api/price-system/schemes/:id/formula/recalculate-preview', canRead, asyncHandler((req, res) => {
+  app.post('/api/price-system/schemes/:id/formula/recalculate-preview', canRead, asyncHandler(async (req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
     const body = req.body || {};
     const skuCode = String(body.sku_code || '').trim();
     if (!skuCode) return res.status(400).json({ error: 'SKU 编码不能为空' });
     const sku = queryOne(
-      'SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?',
+      'SELECT sku_code, brand, category, purchase_currency FROM skus WHERE brand = ? AND sku_code = ?',
       [scheme.brand, skuCode]
     );
     if (!sku) return res.status(404).json({ error: 'SKU 不存在或不属于当前品牌' });
@@ -1326,9 +1582,7 @@ function registerPriceSystemRoutes(app, deps) {
       'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
       [scheme.id]
     ).rows.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).slice();
-    if (!fields.some(field => field.field_key === 'srp')) {
-      fields.push(buildBuiltinSrpField(scheme));
-    }
+    if (!fields.some(field => field.field_key === 'srp')) fields.push(buildBuiltinSrpField(scheme));
     const fieldMap = new Map(fields.map(field => [field.field_key, field]));
     const formulaOptions = formulaEvaluationOptions(fields);
     const supplied = body.context && typeof body.context === 'object' && !Array.isArray(body.context)
@@ -1344,6 +1598,16 @@ function registerPriceSystemRoutes(app, deps) {
         if (value !== null && !Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         context[key] = value;
       });
+      const storedCurrencyBySku = storedCurrencyMapForSku(scheme.id, skuCode, body.value_currencies);
+      const referenceCurrenciesByField = referenceCurrencyMapForSku(skuCode, body.value_currencies);
+      const landingCostRow = queryOne(
+        'SELECT currency FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code = ?',
+        [scheme.id, skuCode]
+      );
+      const landingCost = landingCostRow || null;
+      const fxRates = schemeRequiresLiveExchangeRate(scheme, fields)
+        ? await resolveSchemeInventoryRates(scheme, fields)
+        : null;
       let manualSrp = null;
       if (body.manual_srp !== null && body.manual_srp !== undefined && body.manual_srp !== '') {
         manualSrp = Number(body.manual_srp);
@@ -1352,6 +1616,7 @@ function registerPriceSystemRoutes(app, deps) {
       const resolved = {};
       const resolving = new Set();
       const errors = {};
+      const formulaExchangeRates = {};
       function resolveField(key) {
         if (key === 'srp' && manualSrp !== null) {
           resolved[key] = manualSrp;
@@ -1379,11 +1644,22 @@ function registerPriceSystemRoutes(app, deps) {
           return 0;
         }
         resolving.add(key);
+        let expression = '';
+        let usesLiveExchangeRate = false;
         try {
-          const expression = normalizeFormulaExpression(categoryFormula, fields);
+          expression = normalizeFormulaExpression(categoryFormula, fields);
+          const expressionVariables = getFormulaVariables(expression);
+          usesLiveExchangeRate = expressionVariables.includes('exchange_rate');
           const variables = Object.assign({}, context, resolved);
+          if (usesLiveExchangeRate) {
+            const exchangeRateMeta = resolveFormulaExchangeRate(expression, {
+              scheme, sku, fieldMap, storedCurrencyBySku, referenceCurrenciesByField, landingCost, fxRates
+            });
+            formulaExchangeRates[key] = exchangeRateMeta;
+            variables.exchange_rate = exchangeRateMeta.rate;
+          }
           const missingComputedDependencies = [];
-          getFormulaVariables(expression).forEach(dependency => {
+          expressionVariables.forEach(dependency => {
             if (fieldMap.has(dependency)) {
               variables[dependency] = resolveField(dependency);
               const dependencyField = fieldMap.get(dependency);
@@ -1396,7 +1672,7 @@ function registerPriceSystemRoutes(app, deps) {
           if (missingComputedDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingComputedDependencies.join('、');
         } catch (error) {
           errors[key] = error.message;
-          resolved[key] = 0;
+          resolved[key] = usesLiveExchangeRate ? null : 0;
         }
         resolving.delete(key);
         return resolved[key];
@@ -1421,14 +1697,18 @@ function registerPriceSystemRoutes(app, deps) {
         srp,
         srp_source: manualSrp !== null ? 'manual' : (fieldMap.get('srp') && fieldMap.get('srp').field_type === 'reference' ? 'reference' : (formulaForCategory(fieldMap.get('srp'), category) ? 'formula' : '')),
         formula_context: formulaContext,
-        formula_errors: errors
+        formula_errors: errors,
+        formula_exchange_rates: formulaExchangeRates,
+        formula_fx: formulaExchangeRates
       });
     } catch (error) {
       res.status(400).json({ error: error.message || '公式重算失败' });
     }
   }));
 
-  app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
+
+
+    app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
     const body = req.body || {};
@@ -1864,4 +2144,4 @@ function registerPriceSystemRoutes(app, deps) {
   }));
 }
 
-module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, buildPriceSystemReferenceLookup, deletePriceSystemSchemeRecords, buildForecastMetricMap, buildPriceSystemVersionDiff };
+module.exports = { registerPriceSystemRoutes, createPriceSystemWacSync, parseCategories, isCategoryApplicable, primaryCategoryMapForSkus, remapFieldCategorySettings, buildCopiedFieldRows, buildPriceSystemReferenceLookup, deletePriceSystemSchemeRecords, buildForecastMetricMap, buildPriceSystemVersionDiff, calculateLiveExchangeRate };
