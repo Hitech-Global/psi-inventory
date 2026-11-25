@@ -152,7 +152,7 @@ const state={countries:[],skus:[],brands:[],schemes:[],schemeId:'',scheme:null,f
    if(path.indexOf('/formula/preview')>=0||path.indexOf('/formula/recalculate-preview')>=0)return false;
    return true;
   }
-  return ['/api/inventory','/api/inventory-imports','/api/replenishment-suggestions','/api/sales','/api/quotations','/api/wac-history','/api/skus','/api/sku-master']
+  return ['/api/inventory','/api/inventory-imports','/api/replenishment-suggestions','/api/sales','/api/quotations','/api/quotation-management','/api/wac','/api/wac-history','/api/skus','/api/sku-master']
    .some(prefix=>path===prefix||path.indexOf(prefix+'/')===0);
  }
  function psInstallApiMutationInvalidation(){
