@@ -26,6 +26,7 @@ on:
       - 'test/ci-historical-clearance-hotfix.test.cjs'
       - 'test/ci-historical-full-edit.test.cjs'
       - 'test/ci-unified-table.test.cjs'
+      - 'test/ci-void-pi-guard.test.cjs'
       - 'test/ci-attachment-online-preview.test.cjs'
       - 'app.js'
       - 'test/ci-inline-clearance-hotfix.test.cjs'
@@ -330,6 +331,8 @@ jobs:
         run: node test/ci-attachment-actions.test.cjs
       - name: Test unified CI management table
         run: node test/ci-unified-table.test.cjs
+      - name: Test CI void hard-delete and PI/PO guard
+        run: node test/ci-void-pi-guard.test.cjs
       - name: Test complete CI/PL translations
         run: node test/ci-list-i18n-hotfix.test.cjs
       - name: Test unified CI data binding and logistics expand control
