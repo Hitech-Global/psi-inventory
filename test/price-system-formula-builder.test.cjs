@@ -50,11 +50,11 @@ test('formula rules support multiple formulas with multi-category selection and 
 });
 
 test('formula evaluation can combine WAC, percentage fees and other calculated fields', () => {
-  const result = evaluateFormula('landing_cost * (1 + platform_commission / 100) + customs_duty', {
+  const result = evaluateFormula('landing_cost * (1 + platform_commission) + customs_duty', {
     landing_cost: 100,
     platform_commission: 8,
     customs_duty: 5
-  });
+  }, { percentVariables: ['platform_commission'] });
   assert.equal(result, 113);
   assert.ok(Math.abs(evaluateFormula('7.2% * srp', { srp: 1000 }) - 72) < 1e-9);
   assert.equal(BUILTIN_PRICE_VARIABLES.includes('srp'), true);
