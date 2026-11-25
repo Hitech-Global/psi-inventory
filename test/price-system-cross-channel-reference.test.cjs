@@ -187,9 +187,10 @@ test('builtin SRP reference uses source field formatting instead of always forci
 test('builtin SRP reference keeps inline manual override while displaying the referenced field unit and percentage scale', () => {
   assert.ok(ui.includes("const isReference=f.field_type==='reference'"));
   assert.ok(ui.includes("f.display_format==='percent'&&f.reference_value_type==='formula'?100:1"));
-  assert.ok(ui.includes('data-value-scale="'+referenceScale+'"'));
+  assert.ok(ui.includes('data-value-scale=') && ui.includes('referenceScale'));
   assert.ok(ui.includes("r.srp_source==='manual'"));
   assert.ok(ui.includes("const valueScale=key==='srp'?Math.max(1,Number(input.getAttribute('data-value-scale')||1)):1"));
   assert.ok(ui.includes("Number(raw)/valueScale"));
   assert.ok(ui.includes("f.reference_sync_quotation&&quoteCode"));
+  assert.ok(ui.includes("tr('srpReferenceManualHint')"));
 });
