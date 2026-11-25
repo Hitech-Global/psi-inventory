@@ -13,8 +13,8 @@ test('price table columns size to their content without forced wide columns', ()
   assert.match(source, /#ps-root td\{[^}]*white-space:nowrap/);
   assert.match(source, /#ps-root th\.ps-frozen-cell\{position:sticky;top:0;background:#f7f7f9;z-index:6\}/);
   assert.match(source, /#ps-root td\.ps-frozen-cell\{position:sticky;background:#fff;z-index:4\}/);
-  assert.match(source, /#ps-root th:nth-child\(1\),#ps-root td:nth-child\(1\)\{left:0;width:120px/);
-  assert.match(source, /#ps-root th:nth-child\(2\),#ps-root td:nth-child\(2\)\{left:120px;width:170px/);
+  assert.match(source, /#ps-root th:nth-child\(1\),#ps-root td:nth-child\(1\)\{width:120px;min-width:120px;max-width:120px\}/);
+  assert.match(source, /#ps-root th:nth-child\(2\),#ps-root td:nth-child\(2\)\{width:170px;min-width:170px;max-width:170px\}/);
   assert.match(source, /#ps-root tbody tr:hover td\.ps-frozen-cell\{background:#fafafa\}/);
   assert.doesNotMatch(source, /width:100%;min-width:950px/);
   assert.doesNotMatch(source, /\.ps-category\{color:#666;min-width:100px\}/);
