@@ -1108,6 +1108,10 @@ function registerPriceSystemRoutes(app, deps) {
         is_builtin_srp: true
       });
     }
+    if (!canViewQuotation && fieldRequiresQuotationPermission(scheme.id, 'srp')) {
+      const srpIndex = fields.findIndex(field => field.field_key === 'srp');
+      if (srpIndex >= 0) fields.splice(srpIndex, 1);
+    }
     res.json({ scheme, fields });
   }));
 
