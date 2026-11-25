@@ -12,8 +12,9 @@ function createHarness(extraFields = [], sourceFields = {}, schemeOverrides = {}
     currency: 'IDR', status: 'active', srp_formula: 'landing_cost * 1.1'
   }, schemeOverrides);
   const sku = { sku_code: 'SKU-1', brand: 'Netac', category: 'Accessories' };
+  // SRP is stored at scheme level, not in price_system_fields. The route
+  // synthesizes its built-in SRP field according to the configured source mode.
   const fields = [
-    { id: 'srp', scheme_id: 'scheme-1', field_key: 'srp', field_name: 'SRP', field_type: 'formula', formula: 'landing_cost * 1.1', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'shipping', scheme_id: 'scheme-1', field_key: 'shipping', field_name: 'Shipping', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'payment', scheme_id: 'scheme-1', field_key: 'payment_fee', field_name: 'Payment Fee', field_type: 'formula', formula: 'srp * 2%', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'profit', scheme_id: 'scheme-1', field_key: 'profit', field_name: 'Profit', field_type: 'formula', formula: 'srp - payment_fee - shipping', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
