@@ -12,6 +12,7 @@ function ensurePriceSystemSchema(run, isPg) {
     currency TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'active',
     srp_formula TEXT NOT NULL DEFAULT '',
+    srp_formula_rules TEXT NOT NULL DEFAULT '{}',
     srp_source_scheme_id TEXT NOT NULL DEFAULT '',
     srp_source_field_key TEXT NOT NULL DEFAULT '',
     srp_sort_order INTEGER NOT NULL DEFAULT 999999,
@@ -76,6 +77,7 @@ function ensurePriceSystemSchema(run, isPg) {
   try { run('ALTER TABLE price_system_fields ADD COLUMN decimal_places INTEGER NOT NULL DEFAULT 2'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_fields ADD COLUMN source_scheme_id TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_fields ADD COLUMN source_field_key TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
+  try { run("ALTER TABLE price_system_schemes ADD COLUMN srp_formula_rules TEXT NOT NULL DEFAULT '{}'"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_schemes ADD COLUMN srp_source_scheme_id TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run("ALTER TABLE price_system_schemes ADD COLUMN srp_source_field_key TEXT NOT NULL DEFAULT ''"); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
   try { run('ALTER TABLE price_system_schemes ADD COLUMN srp_sort_order INTEGER NOT NULL DEFAULT 999999'); } catch (e) { if (!/duplicate column|already exists/i.test(String(e && e.message || e))) throw e; }
