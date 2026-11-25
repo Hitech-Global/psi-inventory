@@ -728,58 +728,6 @@ function registerPriceSystemRoutes(app, deps) {
     return Array.from(allowed);
   }
 
-  // Keep the built-in SRP field definition identical in initial data loading
-  // and live formula previews. SRP is stored on the scheme record rather than
-  // price_system_fields, so duplicating this definition caused the two paths
-  // to disagree about whether SRP was a local formula or a channel reference.
-  function buildBuiltinSrpField(scheme) {
-    const sourceSchemeId = String(scheme && scheme.srp_source_scheme_id || '').trim();
-    const sourceFieldKey = String(scheme && scheme.srp_source_field_key || '').trim();
-    const isReference = !!(sourceSchemeId && sourceFieldKey);
-    return {
-      id: 'builtin-srp',
-      scheme_id: scheme.id,
-      field_key: 'srp',
-      field_name: 'SRP',
-      field_type: isReference ? 'reference' : 'formula',
-      unit: scheme.currency || '',
-      display_format: 'amount',
-      decimal_places: 2,
-      applicable_categories: [],
-      formula: String(scheme.srp_formula || ''),
-      formula_rules: String(scheme.srp_formula_rules || '{}'),
-      source_scheme_id: isReference ? sourceSchemeId : '',
-      source_field_key: isReference ? sourceFieldKey : '',
-      sync_wac: false,
-      sync_quotation: false,
-      is_builtin_srp: true,
-      sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999
-    };
-  }
-
-  // Resolve the type of any referenced field from the same source of truth,
-  // including scheme-level SRP. This is recursive so multi-hop references keep
-  // their amount/percent semantics instead of silently losing type metadata.
-  function getFormulaFieldDefinition(schemeId, fieldKey) {
-    const schemeKey = String(schemeId || '').trim();
-    const key = String(fieldKey || '').trim();
-    if (!schemeKey || !key) return null;
-    const field = queryOne(
-      'SELECT field_type, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1',
-      [schemeKey, key]
-    );
-    if (field) return field;
-    if (key !== 'srp') return null;
-    const scheme = getSchemeOrNull(schemeKey);
-    if (!scheme) return null;
-    const sourceSchemeId = String(scheme.srp_source_scheme_id || '').trim();
-    const sourceFieldKey = String(scheme.srp_source_field_key || '').trim();
-    if (sourceSchemeId && sourceFieldKey) {
-      return { field_type: 'reference', source_scheme_id: sourceSchemeId, source_field_key: sourceFieldKey };
-    }
-    return { field_type: 'formula', source_scheme_id: '', source_field_key: '' };
-  }
-
   function formulaEvaluationOptions(fields) {
     const sourceTypeCache = new Map();
 
@@ -794,6 +742,8 @@ function registerPriceSystemRoutes(app, deps) {
       const sourceSchemeId = String(field.source_scheme_id || '').trim();
       const sourceFieldKey = String(field.source_field_key || '').trim();
       if (!sourceSchemeId || !sourceFieldKey) return '';
+      if (sourceFieldKey === 'srp') return 'formula';
+
       const cacheKey = sourceSchemeId + '|' + sourceFieldKey;
       if (sourceTypeCache.has(cacheKey)) return sourceTypeCache.get(cacheKey);
       const seen = visited || new Set();
@@ -801,7 +751,10 @@ function registerPriceSystemRoutes(app, deps) {
       const nextSeen = new Set(seen);
       nextSeen.add(cacheKey);
 
-      const sourceField = getFormulaFieldDefinition(sourceSchemeId, sourceFieldKey);
+      const sourceField = queryOne(
+        'SELECT field_type, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1',
+        [sourceSchemeId, sourceFieldKey]
+      );
       const result = effectiveFieldType(sourceField, nextSeen);
       sourceTypeCache.set(cacheKey, result);
       return result;
@@ -899,9 +852,476 @@ function registerPriceSystemRoutes(app, deps) {
       });
     });
     if (!fields.some(field => field.field_key === 'srp')) {
-      fields.push(buildBuiltinSrpField(scheme));
+      const srpIsReference = !!(String(scheme.srp_source_scheme_id || '').trim() && String(scheme.srp_source_field_key || '').trim());
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
+        display_format: 'amount', decimal_places: 2, applicable_categories: [],
+        formula: String(scheme.srp_formula || ''),
+        formula_rules: String(scheme.srp_formula_rules || '{}'),
+        source_scheme_id: String(scheme.srp_source_scheme_id || ''),
+        source_field_key: String(scheme.srp_source_field_key || ''),
+        sync_wac: false, sync_quotation: false, is_builtin_srp: true,
+        sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999
+      });
     }
+    fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
+    const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
+    const storedRows = query(
+      'SELECT sku_code, field_key, value, currency FROM price_system_values WHERE scheme_id = ?',
+      [scheme.id]
+    ).rows;
+    const landingCostRows = query('SELECT * FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]).rows;
+    const landingCostBySku = new Map(landingCostRows.map(row => [row.sku_code, row]));
+    const srpRows = query('SELECT sku_code, value FROM price_system_srp_values WHERE scheme_id = ?', [scheme.id]).rows;
+    const manualSrpBySku = new Map(srpRows.map(row => [row.sku_code, Number(row.value)]));
+    const storedBySku = new Map();
+    const storedCurrencyBySku = new Map();
+    storedRows.forEach(v => {
+      if (!storedBySku.has(v.sku_code)) storedBySku.set(v.sku_code, {});
+      if (!storedCurrencyBySku.has(v.sku_code)) storedCurrencyBySku.set(v.sku_code, {});
+      storedBySku.get(v.sku_code)[v.field_key] = v.value == null ? null : Number(v.value);
+      storedCurrencyBySku.get(v.sku_code)[v.field_key] = String(v.currency || '').trim().toUpperCase();
+    });
+    const fieldMap = new Map(fields.map(f => [f.field_key, f]));
+    const referenceValuesByField = new Map();
+    const referenceCurrenciesByField = new Map();
+    fields.filter(field => field.field_type === 'reference').forEach(field => {
+      const sourceScheme = getSchemeOrNull(field.source_scheme_id);
+      if (!sourceScheme) { referenceValuesByField.set(field.field_key, new Map()); return; }
+      if (String(sourceScheme.country || '') !== String(scheme.country || '') || String(sourceScheme.brand || '') !== String(scheme.brand || '')) throw new Error('引用来源必须与当前方案属于同一国家和品牌：' + field.field_name);
+      if (!schemeAccess(req, res, sourceScheme)) throw new Error('没有权限读取引用来源价格方案：' + sourceScheme.id);
+      const sourceData = buildSchemeData(req, res, sourceScheme, referenceStack.concat(String(scheme.id)), cache);
+      const sourceFieldKey = String(field.source_field_key || '').trim();
+      const sourceField = sourceData.fields.find(item => item.field_key === sourceFieldKey);
+      if (!sourceField) { referenceValuesByField.set(field.field_key, new Map()); return; }
+      const sourceValueType = sourceField.reference_value_type || sourceField.field_type;
+      field.reference_value_type = sourceValueType;
+      field.reference_sync_quotation = Number(sourceField.sync_quotation || 0) === 1 || sourceField.reference_sync_quotation === true;
+      field.display_format = sourceField.display_format || 'auto';
+      field.unit = String(sourceField.unit || ((sourceValueType === 'amount' || sourceField.display_format === 'amount') ? (sourceScheme.currency || '') : ''));
+      field.decimal_places = sourceField.decimal_places == null ? 2 : sourceField.decimal_places;
+      const referenceLookup = buildPriceSystemReferenceLookup(sourceData.rows, sourceFieldKey, sourceScheme.currency, field.reference_sync_quotation);
+      referenceValuesByField.set(field.field_key, referenceLookup.valuesBySku);
+      referenceCurrenciesByField.set(field.field_key, referenceLookup.currenciesBySku);
+    });
 
+    const formulaOptions = formulaEvaluationOptions(fields);
+    const today = new Date();
+    const rows = skuRows.map(sku => {
+      const skuCategory = categoryBySku.get(String(sku.sku_code || '').trim()) || '未分类';
+      const forecastMetric = forecastMetricBySku.get(sku.sku_code) || null;
+      const inboundDate = String(sku.last_inbound_date || '').trim();
+      let daysSinceLastInbound = null;
+      if (inboundDate) {
+        const parsedInboundDate = new Date(inboundDate);
+        if (!Number.isNaN(parsedInboundDate.getTime())) daysSinceLastInbound = Math.floor((today - parsedInboundDate) / 86400000);
+      }
+      const stored = storedBySku.get(sku.sku_code) || {};
+      const landingCost = landingCostBySku.get(sku.sku_code) || null;
+      const base = {
+        purchase_price_rmb: Number(sku.purchase_price_rmb || 0),
+        purchase_price_usd: Number(sku.purchase_price_usd || 0),
+        standard_purchase_price: Number(sku.standard_purchase_price || 0),
+        reference_customs_rate: Number(sku.reference_customs_rate || 0),
+        landing_cost: Number(landingCost && landingCost.value || 0),
+        stock_qty: Number(sku.stock_qty || 0),
+        inventory_qty: Number(sku.stock_qty || 0)
+      };
+      const resolved = {};
+      const resolving = new Set();
+      const errors = {};
+
+      function resolveField(key) {
+        if (Object.prototype.hasOwnProperty.call(resolved, key)) return resolved[key];
+        const field = fieldMap.get(key);
+        if (!field) return Object.prototype.hasOwnProperty.call(base, key) ? base[key] : 0;
+        const categoryFormula = field.field_type === 'formula' ? formulaForCategory(field, skuCategory) : null;
+        if (field.field_type === 'formula' && Object.keys(parseFormulaRules(field.formula_rules)).length && !categoryFormula) { resolved[key] = null; return null; }
+        if (!isCategoryApplicable(field, skuCategory)) { resolved[key] = 0; return 0; }
+        if (field.field_type === 'reference') {
+          const sourceValues = referenceValuesByField.get(field.field_key);
+          const raw = sourceValues && sourceValues.has(String(sku.sku_code || '').trim()) ? sourceValues.get(String(sku.sku_code || '').trim()) : null;
+          resolved[key] = raw == null || !Number.isFinite(Number(raw)) ? null : Number(raw);
+          if (resolved[key] == null) errors[key] = '来源方案中未找到该 SKU 的对应字段值';
+          return resolved[key];
+        }
+        if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
+        if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
+        if (Number(field.sync_quotation || 0) === 1) {
+          const raw = stored[key];
+          resolved[key] = raw == null || raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
+          if (resolved[key] == null) errors[key] = '该 SKU 没有匹配到有效报价';
+          return resolved[key];
+        }
+        if (field.field_type !== 'formula') {
+          const raw = stored[key];
+          resolved[key] = raw == null ? 0 : Number(raw);
+          return resolved[key];
+        }
+        if (resolving.has(key)) {
+          errors[key] = '公式存在循环引用';
+          return 0;
+        }
+        resolving.add(key);
+        try {
+          const vars = Object.assign({}, base, resolved);
+          const expression = normalizeFormulaExpression(categoryFormula || field.formula, fields);
+          const missingDependencies = [];
+          getFormulaVariables(expression).forEach(dep => {
+            if (fieldMap.has(dep)) {
+              vars[dep] = resolveField(dep);
+              const dependencyField = fieldMap.get(dep);
+              if (vars[dep] == null && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+                missingDependencies.push(dependencyField.field_name || dep);
+              }
+            }
+          });
+          resolved[key] = missingDependencies.length ? null : (expression ? evaluateFormula(expression, vars, formulaOptions) : 0);
+          if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingDependencies.join('、');
+        } catch (e) {
+          errors[key] = e.message;
+          resolved[key] = 0;
+        }
+        resolving.delete(key);
+        return resolved[key];
+      }
+
+      const values = {};
+      fields.forEach(field => {
+        if (!isCategoryApplicable(field, skuCategory)) values[field.field_key] = null;
+        else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
+        else if (field.field_type === 'formula' || field.field_type === 'reference') values[field.field_key] = resolveField(field.field_key);
+        else values[field.field_key] = stored[field.field_key] == null ? null : Number(stored[field.field_key]);
+      });
+
+      let srp = null;
+      let srpSource = '';
+      if (manualSrpBySku.has(sku.sku_code)) { srp = manualSrpBySku.get(sku.sku_code); srpSource = 'manual'; }
+      else if (fieldMap.has('srp') && fieldMap.get('srp').field_type === 'reference') {
+        srp = resolveField('srp'); srpSource = 'reference';
+      } else if (fieldMap.has('srp') && String(fieldMap.get('srp').formula || '').trim()) {
+        srp = resolveField('srp'); srpSource = 'formula';
+      }
+      values.srp = srp;
+      return {
+        sku_code: sku.sku_code, brand: sku.brand || '', category: skuCategory, model: sku.model || '',
+        stock_qty: Number(sku.stock_qty || 0),
+        forecast_avg_sales: forecastMetric ? Number(forecastMetric.avg_sales_period || 0) : null,
+        available_turnover: forecastMetric ? forecastMetric.available_turnover : null,
+        days_since_last_inbound: daysSinceLastInbound,
+        last_inbound_date: inboundDate,
+        purchase_currency: sku.purchase_currency || '',
+        landing_cost: landingCost ? { wac_history_id:landingCost.wac_history_id, value:Number(landingCost.value), currency:landingCost.currency||scheme.currency||'', warehouse:landingCost.warehouse||'', ci_no:landingCost.ci_no||'', version_no:Number(landingCost.version_no||0), confirmed_at:landingCost.confirmed_at||'', last_inbound_date:landingCost.last_inbound_date||'' } : null,
+        values, value_currencies: Object.fromEntries(fields.filter(field => Number(field.sync_quotation || 0) === 1 || field.reference_sync_quotation === true).map(field => [field.field_key, field.reference_sync_quotation === true ? ((referenceCurrenciesByField.get(field.field_key) || new Map()).get(String(sku.sku_code || '').trim()) || '') : ((storedCurrencyBySku.get(sku.sku_code) || {})[field.field_key] || '')])), formula_context: Object.assign({}, base, values), srp, srp_source:srpSource, formula_errors:errors
+      };
+    });
+
+    const result = { scheme, fields, rows, forecast_stats_days: forecastStatsDays };
+    cache.set(String(scheme.id), result);
+    return result;
+  }
+
+  app.get('/api/price-system/schemes', canRead, asyncHandler((req, res) => {
+    res.json(listSchemesForUser(req));
+  }));
+
+  app.post('/api/price-system/schemes', canWrite, asyncHandler((req, res) => {
+    try {
+      const country = String(req.body.country || '').trim();
+      const brand = String(req.body.brand || '').trim();
+      const platform = String(req.body.sales_channel || req.body.platform || '').trim();
+      const shopName = String(req.body.shop_name || '').trim();
+      if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和销售渠道不能为空' });
+      const countryRow = queryOne('SELECT id, default_currency FROM countries WHERE name = ? AND status = ?', [country, 'active']);
+      if (!countryRow) return res.status(400).json({ error: '请选择有效国家' });
+      if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
+        const scope = req.currentUserDataScope || {};
+        if (isCountryRestricted(req) && !scopedCountryIds(req).includes(countryRow.id)) {
+          return res.status(403).json({ error: '没有在该国家创建价格方案的权限' });
+        }
+        if (Array.isArray(scope.brands) && scope.brands.length && !scope.brands.includes(brand)) {
+          return res.status(403).json({ error: '没有在该品牌创建价格方案的权限' });
+        }
+      }
+      const brandRow = queryOne('SELECT COUNT(*) AS count FROM skus WHERE brand = ?', [brand]);
+      if (!brandRow || Number(brandRow.count || 0) === 0) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
+      const duplicate = queryOne(
+        'SELECT id FROM price_system_schemes WHERE country = ? AND brand = ? AND platform = ? AND shop_name = ?',
+        [country, brand, platform, shopName]
+      );
+      if (duplicate) return res.status(409).json({ error: '该国家、品牌、销售渠道和店铺已存在价格方案' });
+      const id = genId('ps');
+      run(
+        'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(req.body.notes || ''), req.currentUserId || '']
+      );
+      createVersion(id, userStamp(req), '创建价格方案');
+      const schemeSkuKeys = query('SELECT sku_code, brand FROM skus WHERE brand = ?', [brand]).rows.map(row => ({ sku_code: row.sku_code, brand: row.brand || brand, country }));
+      syncPriceSystemLandingCostsForWacKeys(schemeSkuKeys, userStamp(req), 'New price scheme initial WAC sync');
+      res.json(getSchemeOrNull(id));
+    } catch (e) {
+      res.status(500).json({ error: e.message || '创建价格方案失败' });
+    }
+  }));
+
+  app.post('/api/price-system/schemes/:id/copy', canWrite, asyncHandler((req, res) => {
+    try {
+      const source = getSchemeOrNull(req.params.id);
+      if (!schemeAccess(req, res, source)) return;
+      if (String(source.status || '').toLowerCase() !== 'active') return res.status(400).json({ error: '只能复制启用中的价格方案' });
+
+      const country = String(req.body.country || '').trim();
+      const brand = String(req.body.brand || '').trim();
+      const platform = String(req.body.sales_channel || req.body.platform || '').trim();
+      const shopName = String(req.body.shop_name || '').trim();
+      if (!country || !brand || !platform) return res.status(400).json({ error: '国家、品牌和销售渠道不能为空' });
+
+      const countryRow = queryOne('SELECT id, default_currency FROM countries WHERE name = ? AND status = ?', [country, 'active']);
+      if (!countryRow) return res.status(400).json({ error: '请选择有效国家' });
+      if (typeof needsDataScopeFilter === 'function' && needsDataScopeFilter(req)) {
+        const scope = req.currentUserDataScope || {};
+        if (isCountryRestricted(req) && !scopedCountryIds(req).includes(countryRow.id)) {
+          return res.status(403).json({ error: '没有在该国家创建价格方案的权限' });
+        }
+        if (Array.isArray(scope.brands) && scope.brands.length && !scope.brands.includes(brand)) {
+          return res.status(403).json({ error: '没有在该品牌创建价格方案的权限' });
+        }
+      }
+      const targetSkuRows = query('SELECT sku_code, brand, category FROM skus WHERE brand = ?', [brand]).rows;
+      if (!targetSkuRows.length) return res.status(400).json({ error: '品牌下没有 SKU 主数据' });
+      const targetCategories = Array.from(new Set(primaryCategoryMapForSkus(targetSkuRows).values())).sort((a, b) => a.localeCompare(b));
+      const duplicate = queryOne(
+        'SELECT id FROM price_system_schemes WHERE country = ? AND brand = ? AND platform = ? AND shop_name = ?',
+        [country, brand, platform, shopName]
+      );
+      if (duplicate) return res.status(409).json({ error: '该国家、品牌、销售渠道和店铺已存在价格方案' });
+
+      const id = genId('ps');
+      const sourceFields = query(
+        'SELECT * FROM price_system_fields WHERE scheme_id = ? ORDER BY sort_order, field_name, id',
+        [source.id]
+      ).rows;
+      if (sourceFields.some(field => Number(field.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '复制包含自动同步报价字段的方案需要报价管理查看权限' });
+      const sourceHasSrpReference = !!(String(source.srp_source_scheme_id || '').trim() && String(source.srp_source_field_key || '').trim());
+      if ((sourceHasSrpReference || sourceFields.some(field => field.field_type === 'reference')) && (String(source.country || '') !== country || String(source.brand || '') !== brand)) return res.status(400).json({ error: '方案包含跨渠道引用字段，复制时必须保持相同国家和品牌；如需跨品牌复制，请先解除引用' });
+      const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
+      transaction(() => {
+        run(
+          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_formula_rules, srp_source_scheme_id, srp_source_field_key, srp_sort_order, freeze_field_key, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), String(source.srp_formula_rules || '{}'), String(source.srp_source_scheme_id || ''), String(source.srp_source_field_key || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(source.freeze_field_key || '__sku'), String(req.body.notes || ''), req.currentUserId || '']
+        );
+        copiedFields.forEach(field => {
+          run(
+            'INSERT INTO price_system_fields (id, scheme_id, field_key, field_name, field_type, unit, applicable_categories, formula, formula_rules, display_format, decimal_places, sync_wac, sync_quotation, source_scheme_id, source_field_key, sort_order, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            [field.id, field.scheme_id, field.field_key, field.field_name, field.field_type, field.unit, field.applicable_categories, field.formula, field.formula_rules, field.display_format, field.decimal_places, field.sync_wac, field.sync_quotation, field.source_scheme_id, field.source_field_key, field.sort_order, field.is_active]
+          );
+        });
+        createVersion(id, userStamp(req), '从价格方案复制配置：' + String(source.country || '') + ' / ' + String(source.brand || '') + ' / ' + String(source.platform || ''));
+      });
+
+      // Copy only reusable configuration. SKU-specific fees, manual SRP overrides and old WAC links
+      // remain independent; the new scheme gets a fresh WAC sync for its destination country.
+      const schemeSkuKeys = targetSkuRows
+        .map(row => ({ sku_code: row.sku_code, brand: row.brand || brand, country }));
+      syncPriceSystemLandingCostsForWacKeys(schemeSkuKeys, userStamp(req), 'Copied price scheme initial WAC sync');
+      syncPriceSystemQuotationForKeys(schemeSkuKeys, userStamp(req), 'Copied price scheme initial quotation sync');
+      res.status(201).json(getSchemeOrNull(id));
+    } catch (e) {
+      res.status(500).json({ error: e.message || '复制价格方案失败' });
+    }
+  }));
+
+  app.get('/api/price-system/schemes/:id/fields', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const fields = query('SELECT id, scheme_id, field_key, field_name, field_type, unit, display_format, decimal_places, sync_wac, sync_quotation, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name', [scheme.id]).rows
+      .filter(field => canViewQuotation || !fieldRequiresQuotationPermission(scheme.id, field.field_key))
+      .map(field => Object.assign({}, field, { sync_wac: Number(field.sync_wac || 0) === 1, sync_quotation: Number(field.sync_quotation || 0) === 1 }));
+    if (!fields.some(field => field.field_key === 'srp')) {
+      const srpIsReference = !!(String(scheme.srp_source_scheme_id || '').trim() && String(scheme.srp_source_field_key || '').trim());
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
+        display_format: 'amount', decimal_places: 2, formula: String(scheme.srp_formula || ''),
+        formula_rules: String(scheme.srp_formula_rules || '{}'), sync_wac: false, sync_quotation: false,
+        source_scheme_id: String(scheme.srp_source_scheme_id || ''),
+        source_field_key: String(scheme.srp_source_field_key || ''),
+        is_builtin_srp: true
+      });
+    }
+    if (!canViewQuotation && fieldRequiresQuotationPermission(scheme.id, 'srp')) {
+      const srpIndex = fields.findIndex(field => field.field_key === 'srp');
+      if (srpIndex >= 0) fields.splice(srpIndex, 1);
+    }
+    res.json({ scheme, fields });
+  }));
+
+  app.get('/api/price-system/schemes/:id/data', canRead, asyncHandler((req, res) => {
+    try { getSchemeData(req, res, getSchemeOrNull(req.params.id)); }
+    catch (e) { res.status(500).json({ error: e.message || '读取价格数据失败' }); }
+  }));
+
+  app.post('/api/price-system/schemes/:id/landing-cost/sync-wac', canWrite, canViewWac, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const skuCodes = query('SELECT sku_code FROM skus WHERE brand = ? ORDER BY sku_code', [scheme.brand]).rows
+      .map(row => String(row.sku_code || '').trim()).filter(Boolean);
+    if (!skuCodes.length) return res.json({ success: true, matched_count: 0, unmatched_count: 0, changed_count: 0, unchanged_count: 0, unmatched_skus: [], version_no: null });
+    const latest = latestWacRowsForSkus(req, scheme, skuCodes);
+    const existingRows = query('SELECT sku_code, wac_history_id FROM price_system_landing_costs WHERE scheme_id = ?', [scheme.id]).rows;
+    const existingBySku = new Map(existingRows.map(row => [row.sku_code, row.wac_history_id]));
+    const matched = skuCodes.filter(code => latest.has(code));
+    const unmatched = skuCodes.filter(code => !latest.has(code));
+    const changed = matched.filter(code => existingBySku.get(code) !== latest.get(code).wac_history_id);
+    const summary = { matched_count: matched.length, unmatched_count: unmatched.length, changed_count: changed.length, unchanged_count: matched.length - changed.length, unmatched_skus: unmatched.slice(0, 20) };
+    if (req.body && req.body.preview) return res.json(Object.assign({ success: true, preview: true }, summary));
+    if (changed.length) {
+      transaction(() => changed.forEach(skuCode => {
+        const wac = latest.get(skuCode);
+        run("INSERT INTO price_system_landing_costs (id, scheme_id, sku_code, wac_history_id, value, currency, warehouse, ci_no, version_no, confirmed_at, last_inbound_date, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(scheme_id, sku_code) DO UPDATE SET wac_history_id = excluded.wac_history_id, value = excluded.value, currency = excluded.currency, warehouse = excluded.warehouse, ci_no = excluded.ci_no, version_no = excluded.version_no, confirmed_at = excluded.confirmed_at, last_inbound_date = excluded.last_inbound_date, updated_by = excluded.updated_by, updated_at = datetime('now')", [genId('pslc'), scheme.id, skuCode, wac.wac_history_id, wac.value, wac.currency, wac.warehouse, wac.ci_no, wac.version_no, wac.confirmed_at, wac.last_inbound_date, req.currentUserId || '']);
+      }));
+    }
+    const versionNo = changed.length ? createVersion(scheme.id, userStamp(req), 'Batch sync Landing Cost from latest WAC') : null;
+    res.json(Object.assign({ success: true, preview: false, version_no: versionNo }, summary));
+  }));
+
+  app.get('/api/price-system/schemes/:id/skus/:skuCode/wac-history', canRead, canViewWac, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const skuCode = String(req.params.skuCode || '').trim();
+    if (!queryOne('SELECT sku_code FROM skus WHERE sku_code = ? AND brand = ?', [skuCode, scheme.brand])) return res.status(404).json({ error: 'SKU \u4e0d\u5b58\u5728\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u54c1\u724c' });
+    const countryAliases = wacCountryAliases(scheme);
+    let sql = "SELECT wh.id, wh.sku_code, wh.brand, wh.country, wh.warehouse, wh.new_avg_cost, wh.local_currency, wh.ci_no, wh.version_no, wh.confirmed_at, wh.last_inbound_date FROM wac_history wh WHERE wh.sku_code = ? AND LOWER(wh.country) IN (" + countryAliases.map(() => '?').join(',') + ") AND (COALESCE(wh.brand, '') = '' OR LOWER(wh.brand) = LOWER(?)) AND COALESCE(wh.is_locked, 0) = 1 AND LOWER(COALESCE(wh.confirmation_status, 'confirmed')) NOT IN ('reversed', 'void', 'cancelled') AND wh.confirmed_at IS NOT NULL AND wh.confirmed_at <> ''";
+    const params = [skuCode].concat(countryAliases, [scheme.brand]);
+    const warehouses = scopedWarehouseNames(req);
+    if (warehouses) { if (!warehouses.length) sql += ' AND 1 = 0'; else { sql += ' AND wh.warehouse IN (' + warehouses.map(() => '?').join(',') + ')'; params.push(...warehouses); } }
+    sql += " ORDER BY COALESCE(NULLIF(wh.confirmed_at, ''), NULLIF(wh.last_inbound_date, ''), wh.created_at) DESC, wh.version_no DESC, wh.created_at DESC LIMIT 200";
+    const rows = query(sql, params).rows.filter(row => row.new_avg_cost != null && String(row.new_avg_cost).trim() !== '').map(row => { const raw=String(row.local_currency || scheme.currency || '').trim().toUpperCase(); return Object.assign({}, row, { new_avg_cost:Number(row.new_avg_cost), local_currency:raw==='CNY'?'RMB':raw, last_inbound_date:String(row.last_inbound_date || '').slice(0,10) }); });
+    res.json({ rows });
+  }));
+
+  app.post('/api/price-system/schemes/:id/landing-cost', canWrite, canViewWac, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const skuCode = String(req.body && req.body.sku_code || '').trim();
+    const historyId = String(req.body && req.body.wac_history_id || '').trim();
+    if (!skuCode) return res.status(400).json({ error: '\u8bf7\u586b\u5199 SKU \u7f16\u7801' });
+    if (!queryOne('SELECT sku_code FROM skus WHERE sku_code = ? AND brand = ?', [skuCode, scheme.brand])) return res.status(404).json({ error: 'SKU \u4e0d\u5b58\u5728\u6216\u4e0d\u5c5e\u4e8e\u5f53\u524d\u54c1\u724c' });
+    if (!historyId) {
+      run('DELETE FROM price_system_landing_costs WHERE scheme_id = ? AND sku_code = ?', [scheme.id, skuCode]);
+      const versionNo = createVersion(scheme.id, userStamp(req), 'Clear Landing Cost: ' + skuCode);
+      return res.json({ success: true, landing_cost: null, version_no: versionNo });
+    }
+    const countryAliases = wacCountryAliases(scheme);
+    let sql = "SELECT wh.id, wh.sku_code, wh.brand, wh.country, wh.warehouse, wh.new_avg_cost, wh.local_currency, wh.ci_no, wh.version_no, wh.confirmed_at, wh.last_inbound_date FROM wac_history wh WHERE wh.id = ? AND wh.sku_code = ? AND LOWER(wh.country) IN (" + countryAliases.map(() => '?').join(',') + ") AND (COALESCE(wh.brand, '') = '' OR LOWER(wh.brand) = LOWER(?)) AND COALESCE(wh.is_locked, 0) = 1 AND LOWER(COALESCE(wh.confirmation_status, 'confirmed')) NOT IN ('reversed', 'void', 'cancelled') AND wh.confirmed_at IS NOT NULL AND wh.confirmed_at <> ''"
+    const params = [historyId, skuCode].concat(countryAliases, [scheme.brand]);
+    const warehouses = scopedWarehouseNames(req);
+    if (warehouses) { if (!warehouses.length) sql += ' AND 1 = 0'; else { sql += ' AND wh.warehouse IN (' + warehouses.map(() => '?').join(',') + ')'; params.push(...warehouses); } }
+    const wac = queryOne(sql, params);
+    if (!wac) return res.status(400).json({ error: '\u6240\u9009 WAC \u5386\u53f2\u8bb0\u5f55\u65e0\u6548\u3001\u5df2\u51b2\u9500\u6216\u4e0e\u5f53\u524d SKU \u4e0d\u5339\u914d' });
+    if (wac.new_avg_cost == null || String(wac.new_avg_cost).trim() === '') return res.status(400).json({ error: 'WAC cost is missing' });
+    const value = Number(wac.new_avg_cost);
+    if (!Number.isFinite(value) || value < 0) return res.status(400).json({ error: 'WAC \u6210\u672c\u4e0d\u662f\u6709\u6548\u7684\u975e\u8d1f\u6570' });
+    const rawCurrency = String(wac.local_currency || scheme.currency || '').trim().toUpperCase();
+    const landingCost = { wac_history_id:wac.id, value, currency:rawCurrency==='CNY'?'RMB':rawCurrency, warehouse:wac.warehouse||'', ci_no:wac.ci_no||'', version_no:Number(wac.version_no||0), confirmed_at:wac.confirmed_at||'', last_inbound_date:String(wac.last_inbound_date||'').slice(0,10) };
+    run("INSERT INTO price_system_landing_costs (id, scheme_id, sku_code, wac_history_id, value, currency, warehouse, ci_no, version_no, confirmed_at, last_inbound_date, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now')) ON CONFLICT(scheme_id, sku_code) DO UPDATE SET wac_history_id = excluded.wac_history_id, value = excluded.value, currency = excluded.currency, warehouse = excluded.warehouse, ci_no = excluded.ci_no, version_no = excluded.version_no, confirmed_at = excluded.confirmed_at, last_inbound_date = excluded.last_inbound_date, updated_by = excluded.updated_by, updated_at = datetime('now')", [genId('pslc'), scheme.id, skuCode, landingCost.wac_history_id, landingCost.value, landingCost.currency, landingCost.warehouse, landingCost.ci_no, landingCost.version_no, landingCost.confirmed_at, landingCost.last_inbound_date, req.currentUserId || '']);
+    const versionNo = createVersion(scheme.id, userStamp(req), 'Update Landing Cost: ' + skuCode);
+    res.json({ success: true, landing_cost: landingCost, version_no: versionNo });
+  }));
+
+  app.put('/api/price-system/schemes/:id', canWrite, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const body = req.body || {};
+    const currency = String(body.currency || scheme.currency || '').trim().toUpperCase();
+    const notes = body.notes == null ? scheme.notes : String(body.notes);
+    const schemeDetailsChanged = currency !== String(scheme.currency || '').trim().toUpperCase() || notes !== String(scheme.notes || '');
+    let freezeFieldKey = String(scheme.freeze_field_key || '__sku').trim() || '__sku';
+    if (Object.prototype.hasOwnProperty.call(body, 'freeze_field_key')) {
+      freezeFieldKey = String(body.freeze_field_key == null ? '' : body.freeze_field_key).trim();
+      const builtInKeys = new Set(['none', '__category', '__sku', '__forecast_avg_sales', '__stock_qty', '__available_turnover']);
+      if (!builtInKeys.has(freezeFieldKey)) {
+        const field = queryOne('SELECT id FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [scheme.id, freezeFieldKey]);
+        if (!field) return res.status(400).json({ error: '冻结列字段不存在或已停用' });
+      }
+    }
+    run('UPDATE price_system_schemes SET currency = ?, notes = ?, freeze_field_key = ?, updated_at = datetime(\'now\') WHERE id = ?', [currency, notes, freezeFieldKey, scheme.id]);
+    if (schemeDetailsChanged) createVersion(scheme.id, userStamp(req), '更新价格方案信息');
+    res.json(getSchemeOrNull(scheme.id));
+  }));
+
+  app.post('/api/price-system/schemes/:id/formula/preview', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const body = req.body || {};
+    const formula = String(body.formula || '').trim();
+    const excludeKey = String(body.exclude_key || '').trim();
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows
+      .filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1);
+    const formulaOptions = formulaEvaluationOptions(fields);
+    const normalizedFormula = normalizeFormulaExpression(formula, fields);
+    try {
+      const validation = validateFormula(normalizedFormula, allowedFormulaVariables(fields, excludeKey), formulaOptions);
+      const supplied = body.variables && typeof body.variables === 'object' && !Array.isArray(body.variables) ? body.variables : {};
+      const variables = {};
+      const previewFieldMap = new Map(fields.map(field => [field.field_key, field]));
+      validation.variables.forEach(key => {
+        const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
+        const sourceField = previewFieldMap.get(key);
+        if (sourceField && Number(sourceField.sync_quotation || 0) === 1 && (raw == null || raw === '')) throw new Error('当前 SKU 没有匹配到有效报价：' + (sourceField.field_name || key));
+        if ((sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula')) && (raw == null || raw === '')) throw new Error('当前 SKU 缺少引用字段数值：' + key);
+        const value = raw == null || raw === '' ? 0 : Number(raw);
+        if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
+        variables[key] = value;
+      });
+      const result = evaluateFormula(normalizedFormula, variables, formulaOptions);
+      res.json({ valid: true, variables: validation.variables, result });
+    } catch (e) {
+      res.status(400).json({ valid: false, error: e.message });
+    }
+  }));
+
+  app.post('/api/price-system/schemes/:id/formula/recalculate-preview', canRead, asyncHandler((req, res) => {
+    const scheme = getSchemeOrNull(req.params.id);
+    if (!schemeAccess(req, res, scheme)) return;
+    const body = req.body || {};
+    const skuCode = String(body.sku_code || '').trim();
+    if (!skuCode) return res.status(400).json({ error: 'SKU 编码不能为空' });
+    const sku = queryOne(
+      'SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?',
+      [scheme.brand, skuCode]
+    );
+    if (!sku) return res.status(404).json({ error: 'SKU 不存在或不属于当前品牌' });
+    const category = primaryCategoryMapForSkus([sku]).get(skuCode) || '未分类';
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const fields = query(
+      'SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1',
+      [scheme.id]
+    ).rows.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).slice();
+    if (!fields.some(field => field.field_key === 'srp')) {
+      // A scheme-level SRP can be calculated locally or referenced from another
+      // sales channel. The live preview must preserve that mode: when SRP is a
+      // reference, its already-resolved per-SKU value arrives in body.context.
+      // Treating it as an empty formula makes SRP null and breaks every formula
+      // that depends on it after the user edits any field.
+      const srpIsReference = !!(
+        String(scheme.srp_source_scheme_id || '').trim() &&
+        String(scheme.srp_source_field_key || '').trim()
+      );
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: srpIsReference ? 'reference' : 'formula',
+        unit: scheme.currency || '', applicable_categories: [],
+        formula: String(scheme.srp_formula || ''), formula_rules: '{}',
+        source_scheme_id: srpIsReference ? String(scheme.srp_source_scheme_id) : '',
+        source_field_key: srpIsReference ? String(scheme.srp_source_field_key) : '',
+        display_format: 'amount', decimal_places: 2,
+        sync_wac: 0, sync_quotation: 0, is_builtin_srp: true
+      });
+    }
     const fieldMap = new Map(fields.map(field => [field.field_key, field]));
     const formulaOptions = formulaEvaluationOptions(fields);
     const supplied = body.context && typeof body.context === 'object' && !Array.isArray(body.context)
