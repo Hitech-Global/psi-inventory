@@ -11839,55 +11839,216 @@ app.delete('/api/commercial-invoices/:id/shipping-attachments/:fileId', requireA
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// CI 软作废（置 cancelled + 必填原因 + 回写在途）
+// CI 作废：原子回退 PI 发货事实、释放未付款尾款，并彻底删除 CI 及明细，释放 CI 编号。
 app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
   try {
-    const { void_reason } = req.body;
-    if (!void_reason) return res.status(400).json({ error: '作废原因不能为空' });
-    const ci = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [req.params.id]);
-    if (!ci) return res.status(404).json({ error: 'CI不存在' });
-    if (ci.ci_status === 'cancelled') return res.status(400).json({ error: '该 CI 已作废，不能重复作废' });
-    if (ci.ci_status === 'completed' || ci.ci_status === 'partial_inbound') return res.status(400).json({ error: '已发货/入库的 CI 不允许作废' });
-    const ts = new Date().toISOString().slice(0, 19).replace('T', ' ');
-    const newRemark = (ci.remark ? ci.remark + '\n' : '') + `[作废 ${ts} by ${req.currentUserName || ''}] 原因: ${void_reason}`;
-    run("UPDATE commercial_invoices SET ci_status = 'cancelled', remark = ?, updated_at = datetime('now') WHERE id = ?", [newRemark, ci.id]);
-    // 回滚 PI 的 shipped（仅发货量/发货货值，不触碰定金/付款/WAC/库存；reverse 已入库情形不受影响）。
-    // 幂等保护：上方已拦截 ci_status==='cancelled'（重复作废直接 400），不会二次回滚。
-    const voidCiItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows;
-    const voidPiIds = [...new Set(voidCiItems.map(i => i.pi_id).filter(Boolean))];
-    // 回退 PI items shipped_qty / unshipped_qty（按本 CI 已贡献部分）
-    for (const citem of voidCiItems) {
-      const piItem = queryOne('SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?', [citem.pi_id, citem.sku_code]);
-      if (piItem) {
-        const newShipped = Math.max(0, (piItem.shipped_qty || 0) - (citem.shipped_qty || 0));
-        run('UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
-          [newShipped, Math.max(0, (piItem.pi_confirmed_qty || 0) - newShipped), piItem.id]);
+    const reason = String((req.body || {}).void_reason || '').trim();
+    if (!reason) return res.status(400).json({ error: '作废原因不能为空' });
+
+    const ciId = req.params.id;
+    const isPg = (process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg';
+    const outcome = transaction(() => {
+      // CI 行锁：防止同一张 CI 并发作废导致 PI 发货数量被重复回退。
+      const ci = queryOne(
+        'SELECT * FROM commercial_invoices WHERE id = ?' + (isPg ? ' FOR UPDATE' : ''),
+        [ciId]
+      );
+      if (!ci) return { status: 404, error: 'CI不存在' };
+      if (ci.ci_status === 'reversed') return { status: 400, error: '已冲销的 CI 不允许作废' };
+      if (['completed', 'partial_inbound', 'inbound_complete'].includes(String(ci.ci_status || ''))) {
+        return { status: 400, error: '已入库的 CI 不允许作废，请使用冲销功能' };
       }
-    }
-    // 回退 PI headers shipped_amount / unshipped_amount / pi_status（不含定金/付款）
-    for (const piId of voidPiIds) {
-      const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [piId]);
-      if (!pi) continue;
-      const piCiAmount = voidCiItems.filter(i => i.pi_id === piId).reduce((s, i) => s + (i.ci_amount || 0), 0);
-      const newShippedAmount = Math.max(0, (pi.shipped_amount || 0) - piCiAmount);
-      const newUnshippedAmount = Math.max(0, (pi.total_amount || 0) - newShippedAmount);
-      run('UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?', [newShippedAmount, newUnshippedAmount, piId]);
-      // 重算 PI 发货状态（cancelled 跳过）
-      if (pi.pi_status === 'cancelled') continue;
-      const piItems2 = query('SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [piId]).rows;
-      const allShipped = piItems2.length > 0 && piItems2.every(i => i.shipped_qty >= i.pi_confirmed_qty);
-      const anyShipped = piItems2.some(i => i.shipped_qty > 0);
-      if (allShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
-      else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
-      else run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
-    }
-    // Wave 0B: COMMIT 后原生 async 刷新（CI 作废回写 PI 发货状态后重算在途），不阻塞响应
+
+      // 兼容旧版本已经软作废的 CI：其 PI 发货数量此前已回退，本次只清理残留记录，不重复扣减。
+      const alreadyCancelled = ci.ci_status === 'cancelled';
+      const ciItems = query('SELECT * FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]).rows || [];
+      const piIds = [...new Set(ciItems.map(item => item.pi_id).filter(Boolean))].sort();
+
+      // 固定锁序：先 CI，再按 ID 顺序锁定 PI header 与 PI items。
+      if (isPg && piIds.length) {
+        const piMarks = piIds.map(() => '?').join(', ');
+        query(
+          'SELECT id FROM proforma_invoices WHERE id IN (' + piMarks + ') ORDER BY id FOR UPDATE',
+          piIds
+        );
+        query(
+          'SELECT id FROM proforma_invoice_items WHERE pi_id IN (' + piMarks + ') ORDER BY id FOR UPDATE',
+          piIds
+        );
+      }
+
+      // 已形成的物流、入库、WAC、成本或审批事实不能随 CI 一起删除，必须先处理下游单据。
+      const blockers = [
+        {
+          sql: 'SELECT id FROM packing_lists WHERE related_ci_id = ? OR related_ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已关联 PL，请先处理关联 PL 后再作废'
+        },
+        {
+          sql: 'SELECT id FROM logistics_batches WHERE related_ci_id = ? OR related_ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已关联物流批次，请先处理物流批次后再作废'
+        },
+        {
+          sql: 'SELECT id FROM inbound_records WHERE source_ci_id = ? OR source_ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已有入库记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM wac_history WHERE ci_id = ? OR ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已产生 WAC 记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM original_inventory_imports WHERE ci_id = ? OR ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已关联原库存导入记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM ci_cost_items WHERE ci_id = ? OR ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已产生费用记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM cost_allocation_details WHERE ci_id = ? OR ci_no = ? LIMIT 1',
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已产生费用分摊记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM cost_allocations WHERE ci_id = ? LIMIT 1',
+          params: [ci.id],
+          error: '该 CI 已产生成本分摊记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM cost_update_logs WHERE related_ci_no = ? LIMIT 1',
+          params: [ci.ci_no],
+          error: '该 CI 已产生库存成本更新记录，不能直接删除'
+        },
+        {
+          sql: 'SELECT id FROM shared_logistics_fees WHERE ci_id = ? LIMIT 1',
+          params: [ci.id],
+          error: '该 CI 已关联合并物流费用，不能直接删除'
+        },
+        {
+          sql: "SELECT id FROM payment_requests WHERE (source_type IN ('ci','commercial_invoice') AND source_id = ?) OR related_ci_id = ? OR related_ci_no = ? LIMIT 1",
+          params: [ci.id, ci.id, ci.ci_no],
+          error: '该 CI 已关联付款申请，请先撤回或取消付款申请后再作废'
+        },
+        {
+          sql: "SELECT id FROM approval_records WHERE business_type IN ('ci','commercial_invoice') AND (business_id = ? OR business_code = ?) LIMIT 1",
+          params: [ci.id, ci.ci_no],
+          error: '该 CI 已关联审批记录，不能直接删除'
+        }
+      ];
+      for (const blocker of blockers) {
+        if (queryOne(blocker.sql, blocker.params)) {
+          return { status: 409, error: blocker.error };
+        }
+      }
+
+      // CI 尾款 payable item 保留财务审计轨迹，但必须释放；已有付款申请/结算的记录禁止删除 CI。
+      const balancePayables = query(
+        "SELECT id, lifecycle_status FROM payable_items WHERE fee_type = 'balance' AND (source_ci_id = ? OR (source_type = 'ci' AND source_id = ?))",
+        [ci.id, ci.id]
+      ).rows || [];
+      const payableIds = balancePayables.map(item => item.id);
+      if (balancePayables.some(item => !['active', 'released', 'cancelled'].includes(String(item.lifecycle_status || '')))) {
+        return { status: 409, error: '该 CI 尾款已进入付款或结算流程，不能直接作废，请先处理付款记录' };
+      }
+      if (payableIds.length) {
+        const payableMarks = payableIds.map(() => '?').join(', ');
+        const linkedRequestItem = queryOne(
+          'SELECT id FROM payment_request_items WHERE payable_item_id IN (' + payableMarks + ') LIMIT 1',
+          payableIds
+        );
+        if (linkedRequestItem) {
+          return { status: 409, error: '该 CI 尾款已关联付款申请，请先撤回或取消付款申请后再作废' };
+        }
+      }
+
+      if (!alreadyCancelled) {
+        // 回退 PI items shipped_qty / unshipped_qty（按本 CI 实际贡献数量）。
+        for (const citem of ciItems) {
+          if (!citem.pi_id) continue;
+          const piItem = queryOne(
+            'SELECT id, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ? AND sku_code = ?',
+            [citem.pi_id, citem.sku_code]
+          );
+          if (piItem) {
+            const newShipped = Math.max(0, (piItem.shipped_qty || 0) - (citem.shipped_qty || 0));
+            run(
+              'UPDATE proforma_invoice_items SET shipped_qty = ?, unshipped_qty = ? WHERE id = ?',
+              [newShipped, Math.max(0, (piItem.pi_confirmed_qty || 0) - newShipped), piItem.id]
+            );
+          }
+        }
+
+        // 回退 PI headers shipped_amount / unshipped_amount / pi_status（不触碰定金与付款）。
+        for (const piId of piIds) {
+          const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [piId]);
+          if (!pi) continue;
+          const piCiAmount = ciItems
+            .filter(item => item.pi_id === piId)
+            .reduce((sum, item) => sum + (Number(item.ci_amount) || 0), 0);
+          const newShippedAmount = Math.max(0, (Number(pi.shipped_amount) || 0) - piCiAmount);
+          const newUnshippedAmount = Math.max(0, (Number(pi.total_amount) || 0) - newShippedAmount);
+          run(
+            'UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
+            [newShippedAmount, newUnshippedAmount, piId]
+          );
+
+          if (pi.pi_status === 'cancelled') continue;
+          const piItems = query(
+            'SELECT pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?',
+            [piId]
+          ).rows || [];
+          const allShipped = piItems.length > 0 && piItems.every(item => item.shipped_qty >= item.pi_confirmed_qty);
+          const anyShipped = piItems.some(item => item.shipped_qty > 0);
+          if (allShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['shipped_complete', piId]);
+          else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
+          else run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
+        }
+      }
+
+      run(
+        "UPDATE payable_items SET lifecycle_status = 'released' WHERE fee_type = 'balance' AND (source_ci_id = ? OR (source_type = 'ci' AND source_id = ?)) AND lifecycle_status = 'active'",
+        [ci.id, ci.id]
+      );
+      run('DELETE FROM commercial_invoice_items WHERE ci_id = ?', [ci.id]);
+      run('DELETE FROM commercial_invoices WHERE id = ?', [ci.id]);
+
+      return {
+        status: 200,
+        id: ci.id,
+        ci_no: ci.ci_no,
+        oldCiStatus: ci.ci_status,
+        alreadyCancelled
+      };
+    });
+
+    if (outcome.status !== 200) return res.status(outcome.status).json({ error: outcome.error });
+
+    // 删除后重算在途数据；CI 与明细已在同一事务内删除。
     updateInventoryTransitDataAsync().catch((err) => {
       console.warn('[CI-VOID] updateInventoryTransitDataAsync failed (best-effort, ignored):', err && err.message);
     });
-    logOperation({ operator_id: req.currentUserId, operator_name: req.currentUserName, page: 'commercial_invoice', operation_type: 'void', target_ids: [ci.id], affected_count: 1, old_values: { ci_status: ci.ci_status }, new_values: { ci_status: 'cancelled', void_reason }, reason: void_reason, triggered_recalc: 0, is_rollbackable: 0 });
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    logOperation({
+      operator_id: req.currentUserId,
+      operator_name: req.currentUserName,
+      page: 'commercial_invoice',
+      operation_type: 'void',
+      target_ids: [outcome.id],
+      affected_count: 1,
+      old_values: { ci_status: outcome.oldCiStatus },
+      new_values: { ci_status: 'deleted', ci_no: outcome.ci_no },
+      reason,
+      triggered_recalc: 0,
+      is_rollbackable: 0
+    });
+    res.json({ success: true, deleted: true, id: outcome.id, ci_no: outcome.ci_no });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 }));
 
 // ==================== WAVE1-CI-REVERSE-01：PG 原生 async 事务分支 ====================
