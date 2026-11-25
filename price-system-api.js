@@ -600,7 +600,9 @@ function registerPriceSystemRoutes(app, deps) {
     const seen = visited || new Set();
     if (seen.has(start)) return false;
     seen.add(start);
-    const dependencies = query("SELECT DISTINCT source_scheme_id FROM price_system_fields WHERE scheme_id = ? AND field_type = 'reference' AND is_active = 1 AND COALESCE(source_scheme_id, '') <> ''", [start]).rows;
+    const fieldDependencies = query("SELECT DISTINCT source_scheme_id FROM price_system_fields WHERE scheme_id = ? AND field_type = 'reference' AND is_active = 1 AND COALESCE(source_scheme_id, '') <> ''", [start]).rows;
+    const schemeDependency = query("SELECT srp_source_scheme_id AS source_scheme_id FROM price_system_schemes WHERE id = ? AND COALESCE(srp_source_scheme_id, '') <> ''", [start]).rows;
+    const dependencies = fieldDependencies.concat(schemeDependency);
     return dependencies.some(row => referenceChainReachesScheme(row.source_scheme_id, target, seen));
   }
 
@@ -791,7 +793,19 @@ function registerPriceSystemRoutes(app, deps) {
         sync_quotation: Number(field.sync_quotation || 0) === 1
       });
     });
-    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula: String(scheme.srp_formula || ''), sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
+    if (!fields.some(field => field.field_key === 'srp')) {
+      const srpIsReference = !!(String(scheme.srp_source_scheme_id || '').trim() && String(scheme.srp_source_field_key || '').trim());
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
+        display_format: 'amount', decimal_places: 2, applicable_categories: [],
+        formula: srpIsReference ? '' : String(scheme.srp_formula || ''),
+        source_scheme_id: String(scheme.srp_source_scheme_id || ''),
+        source_field_key: String(scheme.srp_source_field_key || ''),
+        sync_wac: false, sync_quotation: false, is_builtin_srp: true,
+        sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999
+      });
+    }
     fields.sort((a, b) => Number(a.sort_order || 0) - Number(b.sort_order || 0) || String(a.field_name || '').localeCompare(String(b.field_name || '')));
     const categoryBySku = primaryCategoryMapForSkus(skuRows, scheme.brand);
     const storedRows = query(
@@ -917,7 +931,9 @@ function registerPriceSystemRoutes(app, deps) {
       let srp = null;
       let srpSource = '';
       if (manualSrpBySku.has(sku.sku_code)) { srp = manualSrpBySku.get(sku.sku_code); srpSource = 'manual'; }
-      else if (fieldMap.has('srp') && String(fieldMap.get('srp').formula || '').trim()) {
+      else if (fieldMap.has('srp') && fieldMap.get('srp').field_type === 'reference') {
+        srp = resolveField('srp'); srpSource = 'reference';
+      } else if (fieldMap.has('srp') && String(fieldMap.get('srp').formula || '').trim()) {
         srp = resolveField('srp'); srpSource = 'formula';
       }
       values.srp = srp;
@@ -1055,7 +1071,17 @@ function registerPriceSystemRoutes(app, deps) {
     const fields = query('SELECT id, scheme_id, field_key, field_name, field_type, unit, display_format, decimal_places, sync_wac, sync_quotation, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name', [scheme.id]).rows
       .filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1)
       .map(field => Object.assign({}, field, { sync_wac: Number(field.sync_wac || 0) === 1, sync_quotation: Number(field.sync_quotation || 0) === 1 }));
-    if (!fields.some(field => field.field_key === 'srp')) fields.push({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', display_format: 'amount', decimal_places: 2, sync_wac: false, sync_quotation: false, is_builtin_srp: true });
+    if (!fields.some(field => field.field_key === 'srp')) {
+      const srpIsReference = !!(String(scheme.srp_source_scheme_id || '').trim() && String(scheme.srp_source_field_key || '').trim());
+      fields.push({
+        id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
+        field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
+        display_format: 'amount', decimal_places: 2, sync_wac: false, sync_quotation: false,
+        source_scheme_id: String(scheme.srp_source_scheme_id || ''),
+        source_field_key: String(scheme.srp_source_field_key || ''),
+        is_builtin_srp: true
+      });
+    }
     res.json({ scheme, fields });
   }));
 
@@ -1293,7 +1319,7 @@ function registerPriceSystemRoutes(app, deps) {
         category,
         values,
         srp,
-        srp_source: manualSrp !== null ? 'manual' : (formulaForCategory(fieldMap.get('srp'), category) ? 'formula' : ''),
+        srp_source: manualSrp !== null ? 'manual' : (fieldMap.get('srp') && fieldMap.get('srp').field_type === 'reference' ? 'reference' : (formulaForCategory(fieldMap.get('srp'), category) ? 'formula' : '')),
         formula_context: formulaContext,
         formula_errors: errors
       });
@@ -1305,14 +1331,36 @@ function registerPriceSystemRoutes(app, deps) {
   app.put('/api/price-system/schemes/:id/formula', canWrite, asyncHandler((req, res) => {
     const scheme = getSchemeOrNull(req.params.id);
     if (!schemeAccess(req, res, scheme)) return;
-    const formula = String(req.body.srp_formula || '').trim();
+    const body = req.body || {};
+    const fieldType = String(body.field_type || 'formula');
+    if (fieldType === 'reference') {
+      const sourceSchemeId = String(body.source_scheme_id || '').trim();
+      const sourceFieldKey = String(body.source_field_key || '').trim();
+      if (!sourceSchemeId || !sourceFieldKey) return res.status(400).json({ error: '请选择引用来源方案和字段' });
+      if (sourceSchemeId === String(scheme.id)) return res.status(400).json({ error: '不能引用当前价格方案自身' });
+      const sourceScheme = getSchemeOrNull(sourceSchemeId);
+      if (!sourceScheme || String(sourceScheme.status || '').toLowerCase() !== 'active') return res.status(400).json({ error: '引用来源方案不存在或已停用' });
+      if (String(sourceScheme.country || '') !== String(scheme.country || '') || String(sourceScheme.brand || '') !== String(scheme.brand || '')) return res.status(400).json({ error: '只能引用同一国家、同一品牌下其他销售渠道方案的字段' });
+      if (!schemeAccess(req, res, sourceScheme)) return;
+      const sourceField = sourceFieldKey === 'srp'
+        ? { field_key: 'srp', field_name: 'SRP', field_type: 'formula', sync_quotation: 0 }
+        : queryOne('SELECT field_key, field_name, field_type, sync_quotation FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [sourceScheme.id, sourceFieldKey]);
+      if (!sourceField) return res.status(400).json({ error: '引用来源字段不存在或已停用' });
+      if (Number(sourceField.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
+      if (referenceChainReachesScheme(sourceScheme.id, scheme.id)) return res.status(400).json({ error: '引用会形成循环依赖，请选择其他来源方案' });
+      run("UPDATE price_system_schemes SET srp_formula = '', srp_source_scheme_id = ?, srp_source_field_key = ?, updated_at = datetime('now') WHERE id = ?", [sourceScheme.id, sourceFieldKey, scheme.id]);
+      createVersion(scheme.id, userStamp(req), '设置 SRP 引用来源');
+      return res.json({ success: true, field_type: 'reference', source_scheme_id: sourceScheme.id, source_field_key: sourceFieldKey });
+    }
+    if (fieldType !== 'formula') return res.status(400).json({ error: 'SRP 只支持公式计算或引用其他方案字段' });
+    const formula = String(body.srp_formula || '').trim();
     const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
     const normalizedFormula = normalizeFormulaExpression(formula, fields);
     try { if (formula) validateFormula(normalizedFormula, allowedFormulaVariables(fields, 'srp')); }
     catch (e) { return res.status(400).json({ error: e.message }); }
-    run('UPDATE price_system_schemes SET srp_formula = ?, updated_at = datetime(\'now\') WHERE id = ?', [formula, scheme.id]);
+    run("UPDATE price_system_schemes SET srp_formula = ?, srp_source_scheme_id = '', srp_source_field_key = '', updated_at = datetime('now') WHERE id = ?", [formula, scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新 SRP 公式');
-    res.json({ success: true, srp_formula: formula });
+    res.json({ success: true, field_type: 'formula', srp_formula: formula });
   }));
 
   app.put('/api/price-system/schemes/:id/fields/order', canWrite, asyncHandler((req, res) => {
@@ -1630,8 +1678,10 @@ function registerPriceSystemRoutes(app, deps) {
     const snapshotLandingCosts = Array.isArray(snapshot.landingCosts) ? snapshot.landingCosts : [];
     const snapshotSrpValues = Array.isArray(snapshot.srpValues) ? snapshot.srpValues : [];
     transaction(() => {
-      run('UPDATE price_system_schemes SET srp_formula = ?, currency = ?, srp_sort_order = ?, updated_at = datetime(\'now\') WHERE id = ?', [
+      run("UPDATE price_system_schemes SET srp_formula = ?, srp_source_scheme_id = ?, srp_source_field_key = ?, currency = ?, srp_sort_order = ?, updated_at = datetime('now') WHERE id = ?", [
         snapshot.scheme && snapshot.scheme.srp_formula || '',
+        snapshot.scheme && snapshot.scheme.srp_source_scheme_id || '',
+        snapshot.scheme && snapshot.scheme.srp_source_field_key || '',
         snapshot.scheme && snapshot.scheme.currency || scheme.currency,
         Number(snapshot.scheme && snapshot.scheme.srp_sort_order != null ? snapshot.scheme.srp_sort_order : 999999),
         scheme.id
