@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { registerPriceSystemRoutes } = require('../price-system-api');
 
-function createHarness(extraFields = []) {
+function createHarness(extraFields = [], sourceFields = {}) {
   const routes = new Map();
   const scheme = {
     id: 'scheme-1', country: 'Indonesia', brand: 'Netac', platform: 'Shopee',
@@ -35,6 +35,9 @@ function createHarness(extraFields = []) {
     if (sql.includes('SELECT * FROM price_system_schemes WHERE id = ?')) return scheme;
     if (sql.includes('SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?')) {
       return params[0] === sku.brand && params[1] === sku.sku_code ? sku : null;
+    }
+    if (sql.includes('SELECT field_type, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1')) {
+      return sourceFields[`${params[0]}|${params[1]}`] || null;
     }
     return null;
   };
@@ -157,4 +160,30 @@ test('price system recalculates on input and updates formula cells without repla
   assert.match(ui, /cell\.setAttribute\('data-sort-value',value==null\?'':String\(value\)\)/);
   assert.match(ui, /cancelPendingPriceSystemFormulaPreviews\(\)/);
   assert.match(ui, /dirty&&state\.dirty\[r\.sku_code\]\.srp!=null\?state\.dirty\[r\.sku_code\]\.srp:r\.srp/);
+});
+
+test('live preview automatically converts percentage-typed fields when formulas reference them', async () => {
+  const harness = createHarness([
+    { id: 'dealer-rate', scheme_id: 'scheme-1', field_key: 'dealer_rate', field_name: 'Dealer Profit Rate', field_type: 'percent', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'dealer-price', scheme_id: 'scheme-1', field_key: 'dealer_price', field_name: 'Dealer Price', field_type: 'formula', formula: 'srp * (1 - dealer_rate)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ]);
+  const response = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, dealer_rate: 18 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.values.dealer_price, 820);
+});
+
+test('live preview automatically converts a cross-channel reference to a percentage field', async () => {
+  const harness = createHarness([
+    { id: 'dealer-rate-ref', scheme_id: 'scheme-1', field_key: 'dealer_rate_ref', field_name: 'Referenced Dealer Profit Rate', field_type: 'reference', source_scheme_id: 'source-scheme', source_field_key: 'dealer_rate', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'dealer-price-ref', scheme_id: 'scheme-1', field_key: 'dealer_price_ref', field_name: 'Dealer Price from Reference', field_type: 'formula', formula: 'srp * (1 - dealer_rate_ref)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ], { 'source-scheme|dealer_rate': { field_type: 'percent' } });
+  const response = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, dealer_rate_ref: 18 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.values.dealer_price_ref, 820);
 });
