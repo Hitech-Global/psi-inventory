@@ -70,6 +70,7 @@ const state={countries:[],skus:[],brands:[],schemes:[],schemeId:'',scheme:null,f
   promise=api('/api/price-system/schemes/'+encodeURIComponent(key)+'/data')
    .then(data=>{
     if(!data||data.error)throw new Error(data&&data.error||tr('saveFailed'));
+    if(generation!==cache.generation)return psFetchSchemeData(key,true);
     psSetSchemeData(key,data,generation);
     return data;
    })
