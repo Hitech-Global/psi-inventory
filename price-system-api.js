@@ -1037,12 +1037,13 @@ function registerPriceSystemRoutes(app, deps) {
         [source.id]
       ).rows;
       if (sourceFields.some(field => Number(field.sync_quotation || 0) === 1) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '复制包含自动同步报价字段的方案需要报价管理查看权限' });
-      if (sourceFields.some(field => field.field_type === 'reference') && (String(source.country || '') !== country || String(source.brand || '') !== brand)) return res.status(400).json({ error: '方案包含跨渠道引用字段，复制时必须保持相同国家和品牌；如需跨品牌复制，请先解除引用' });
+      const sourceHasSrpReference = !!(String(source.srp_source_scheme_id || '').trim() && String(source.srp_source_field_key || '').trim());
+      if ((sourceHasSrpReference || sourceFields.some(field => field.field_type === 'reference')) && (String(source.country || '') !== country || String(source.brand || '') !== brand)) return res.status(400).json({ error: '方案包含跨渠道引用字段，复制时必须保持相同国家和品牌；如需跨品牌复制，请先解除引用' });
       const copiedFields = buildCopiedFieldRows(sourceFields, id, genId, targetCategories);
       transaction(() => {
         run(
-          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_sort_order, freeze_field_key, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(source.freeze_field_key || '__sku'), String(req.body.notes || ''), req.currentUserId || '']
+          'INSERT INTO price_system_schemes (id, country, brand, platform, shop_name, currency, status, srp_formula, srp_formula_rules, srp_source_scheme_id, srp_source_field_key, srp_sort_order, freeze_field_key, notes, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [id, country, brand, platform, shopName, String(req.body.currency || countryRow.default_currency || '').trim().toUpperCase(), 'active', String(source.srp_formula || ''), String(source.srp_formula_rules || '{}'), String(source.srp_source_scheme_id || ''), String(source.srp_source_field_key || ''), Number(source.srp_sort_order == null ? 999999 : source.srp_sort_order), String(source.freeze_field_key || '__sku'), String(req.body.notes || ''), req.currentUserId || '']
         );
         copiedFields.forEach(field => {
           run(
