@@ -1302,10 +1302,23 @@ function registerPriceSystemRoutes(app, deps) {
       [scheme.id]
     ).rows.filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1).slice();
     if (!fields.some(field => field.field_key === 'srp')) {
+      // A scheme-level SRP can be calculated locally or referenced from another
+      // sales channel. The live preview must preserve that mode: when SRP is a
+      // reference, its already-resolved per-SKU value arrives in body.context.
+      // Treating it as an empty formula makes SRP null and breaks every formula
+      // that depends on it after the user edits any field.
+      const srpIsReference = !!(
+        String(scheme.srp_source_scheme_id || '').trim() &&
+        String(scheme.srp_source_field_key || '').trim()
+      );
       fields.push({
         id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
-        field_type: 'formula', unit: '', applicable_categories: [],
+        field_type: srpIsReference ? 'reference' : 'formula',
+        unit: scheme.currency || '', applicable_categories: [],
         formula: String(scheme.srp_formula || ''), formula_rules: '{}',
+        source_scheme_id: srpIsReference ? String(scheme.srp_source_scheme_id) : '',
+        source_field_key: srpIsReference ? String(scheme.srp_source_field_key) : '',
+        display_format: 'amount', decimal_places: 2,
         sync_wac: 0, sync_quotation: 0, is_builtin_srp: true
       });
     }

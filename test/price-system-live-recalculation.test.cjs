@@ -5,15 +5,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { registerPriceSystemRoutes } = require('../price-system-api');
 
-function createHarness(extraFields = [], sourceFields = {}) {
+function createHarness(extraFields = [], sourceFields = {}, schemeOverrides = {}) {
   const routes = new Map();
-  const scheme = {
+  const scheme = Object.assign({
     id: 'scheme-1', country: 'Indonesia', brand: 'Netac', platform: 'Shopee',
     currency: 'IDR', status: 'active', srp_formula: 'landing_cost * 1.1'
-  };
+  }, schemeOverrides);
   const sku = { sku_code: 'SKU-1', brand: 'Netac', category: 'Accessories' };
+  // SRP is stored at scheme level, not in price_system_fields. The route
+  // synthesizes its built-in SRP field according to the configured source mode.
   const fields = [
-    { id: 'srp', scheme_id: 'scheme-1', field_key: 'srp', field_name: 'SRP', field_type: 'formula', formula: 'landing_cost * 1.1', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'shipping', scheme_id: 'scheme-1', field_key: 'shipping', field_name: 'Shipping', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'payment', scheme_id: 'scheme-1', field_key: 'payment_fee', field_name: 'Payment Fee', field_type: 'formula', formula: 'srp * 2%', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
     { id: 'profit', scheme_id: 'scheme-1', field_key: 'profit', field_name: 'Profit', field_type: 'formula', formula: 'srp - payment_fee - shipping', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
@@ -133,6 +134,55 @@ test('live preview uses a referenced source-field value in a dependent formula',
   assert.equal(response.statusCode, 200);
   assert.equal(response.body.values.source_fob, 250);
   assert.equal(response.body.values.source_plus_shipping, 260);
+});
+
+test('live preview preserves a scheme-level SRP reference and recalculates all dependent channel prices', async () => {
+  const harness = createHarness([
+    { id: 'dealer-rate', scheme_id: 'scheme-1', field_key: 'dealer_rate', field_name: 'Dealer Profit Rate', field_type: 'percent', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'dealer-price', scheme_id: 'scheme-1', field_key: 'dealer_price', field_name: 'Dealer Price', field_type: 'formula', formula: 'srp * (1 - dealer_rate)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'hitech-profit-rate', scheme_id: 'scheme-1', field_key: 'hitech_profit_rate', field_name: 'Hitech Profit Rate', field_type: 'formula', formula: '1 - landing_cost / dealer_price', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'md-rate', scheme_id: 'scheme-1', field_key: 'md_rate', field_name: 'MD Profit Rate', field_type: 'percent', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'md-price', scheme_id: 'scheme-1', field_key: 'md_price', field_name: 'MD Price', field_type: 'formula', formula: 'srp * (1 - md_rate)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'md-hitech-profit-rate', scheme_id: 'scheme-1', field_key: 'md_hitech_profit_rate', field_name: '(MD) Hitech Profit Rate', field_type: 'formula', formula: '1 - landing_cost / md_price', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ], {}, {
+    srp_formula: '',
+    srp_source_scheme_id: 'source-scheme',
+    srp_source_field_key: 'srp'
+  });
+  const response = await harness.invoke({
+    sku_code: 'SKU-1',
+    context: { srp: 1279000, landing_cost: 790190, dealer_rate: 28, md_rate: 20 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.srp, 1279000);
+  assert.equal(response.body.srp_source, 'reference');
+  assert.equal(response.body.values.dealer_price, 920880);
+  assert.ok(Math.abs(response.body.values.hitech_profit_rate - (1 - 790190 / 920880)) < 1e-9);
+  assert.equal(response.body.values.md_price, 1023200);
+  assert.ok(Math.abs(response.body.values.md_hitech_profit_rate - (1 - 790190 / 1023200)) < 1e-9);
+  assert.deepEqual(response.body.formula_errors, {});
+});
+
+test('live preview keeps dependent formulas blank when a referenced scheme-level SRP is unavailable', async () => {
+  const harness = createHarness([
+    { id: 'dealer-rate', scheme_id: 'scheme-1', field_key: 'dealer_rate', field_name: 'Dealer Profit Rate', field_type: 'percent', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'dealer-price', scheme_id: 'scheme-1', field_key: 'dealer_price', field_name: 'Dealer Price', field_type: 'formula', formula: 'srp * (1 - dealer_rate)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'hitech-profit-rate', scheme_id: 'scheme-1', field_key: 'hitech_profit_rate', field_name: 'Hitech Profit Rate', field_type: 'formula', formula: '1 - landing_cost / dealer_price', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ], {}, {
+    srp_formula: '',
+    srp_source_scheme_id: 'source-scheme',
+    srp_source_field_key: 'srp'
+  });
+  const response = await harness.invoke({
+    sku_code: 'SKU-1',
+    context: { srp: null, landing_cost: 790190, dealer_rate: 28 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.srp, null);
+  assert.equal(response.body.values.dealer_price, null);
+  assert.equal(response.body.values.hitech_profit_rate, null);
+  assert.match(response.body.formula_errors.dealer_price, /SRP/);
+  assert.match(response.body.formula_errors.hitech_profit_rate, /Dealer Price/);
 });
 
 test('a missing referenced SKU value stays blank in dependent formula previews', async () => {
