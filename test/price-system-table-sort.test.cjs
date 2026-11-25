@@ -20,7 +20,7 @@ test('price system sorting is client-side, stable, and can restore the original 
   assert.match(ui, /tbody\.querySelectorAll\(':scope > tr'\)/);
   assert.match(ui, /row\.dataset\.psOriginalOrder==null/);
   assert.match(ui, /if\(dir==='none'\)return Number\(a\.dataset\.psOriginalOrder\)-Number\(b\.dataset\.psOriginalOrder\)/);
-  assert.match(ui, /initPriceSystemTableSort\(el\)/);
+  assert.match(ui, /initPriceSystemTableSort\(viewNode\)/);
   const sortBody = ui.slice(ui.indexOf('function psApplyTableSort'), ui.indexOf('function initPriceSystemTableSort'));
   assert.doesNotMatch(sortBody, /\bapi\s*\(/);
 });
