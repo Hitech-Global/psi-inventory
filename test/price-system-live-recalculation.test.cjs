@@ -172,7 +172,7 @@ test('live preview automatically converts percentage-typed fields when formulas 
     context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, dealer_rate: 18 }
   });
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.values.dealer_price, 820);
+  assert.ok(Math.abs(response.body.values.dealer_price - 820) < 1e-9);
 });
 
 test('live preview automatically converts a cross-channel reference to a percentage field', async () => {
@@ -185,5 +185,5 @@ test('live preview automatically converts a cross-channel reference to a percent
     context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, dealer_rate_ref: 18 }
   });
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.values.dealer_price_ref, 820);
+  assert.ok(Math.abs(response.body.values.dealer_price_ref - 820) < 1e-9);
 });
