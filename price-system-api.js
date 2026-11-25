@@ -799,7 +799,8 @@ function registerPriceSystemRoutes(app, deps) {
         id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
         field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
         display_format: 'amount', decimal_places: 2, applicable_categories: [],
-        formula: srpIsReference ? '' : String(scheme.srp_formula || ''),
+        formula: String(scheme.srp_formula || ''),
+        formula_rules: String(scheme.srp_formula_rules || '{}'),
         source_scheme_id: String(scheme.srp_source_scheme_id || ''),
         source_field_key: String(scheme.srp_source_field_key || ''),
         sync_wac: false, sync_quotation: false, is_builtin_srp: true,
@@ -1076,7 +1077,8 @@ function registerPriceSystemRoutes(app, deps) {
       fields.push({
         id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP',
         field_type: srpIsReference ? 'reference' : 'formula', unit: scheme.currency || '',
-        display_format: 'amount', decimal_places: 2, sync_wac: false, sync_quotation: false,
+        display_format: 'amount', decimal_places: 2, formula: String(scheme.srp_formula || ''),
+        formula_rules: String(scheme.srp_formula_rules || '{}'), sync_wac: false, sync_quotation: false,
         source_scheme_id: String(scheme.srp_source_scheme_id || ''),
         source_field_key: String(scheme.srp_source_field_key || ''),
         is_builtin_srp: true
@@ -1354,13 +1356,24 @@ function registerPriceSystemRoutes(app, deps) {
     }
     if (fieldType !== 'formula') return res.status(400).json({ error: 'SRP 只支持公式计算或引用其他方案字段' });
     const formula = String(body.srp_formula || '').trim();
+    const formulaRules = parseFormulaRules(body.srp_formula_rules);
     const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
-    const normalizedFormula = normalizeFormulaExpression(formula, fields);
-    try { if (formula) validateFormula(normalizedFormula, allowedFormulaVariables(fields, 'srp')); }
-    catch (e) { return res.status(400).json({ error: e.message }); }
-    run("UPDATE price_system_schemes SET srp_formula = ?, srp_source_scheme_id = '', srp_source_field_key = '', updated_at = datetime('now') WHERE id = ?", [formula, scheme.id]);
+    const allowedVariables = allowedFormulaVariables(fields, 'srp');
+    const normalizedRules = {};
+    try {
+      if (formula) validateFormula(normalizeFormulaExpression(formula, fields), allowedVariables);
+      Object.entries(formulaRules).forEach(([category, expression]) => {
+        const normalized = normalizeFormulaExpression(String(expression || '').trim(), fields);
+        if (!normalized) return;
+        validateFormula(normalized, allowedVariables);
+        normalizedRules[String(category || '').trim()] = normalized;
+      });
+    } catch (e) { return res.status(400).json({ error: e.message }); }
+    const uniqueRuleFormulas = Array.from(new Set(Object.values(normalizedRules)));
+    const legacyFormula = formula || (uniqueRuleFormulas.length === 1 ? uniqueRuleFormulas[0] : '');
+    run("UPDATE price_system_schemes SET srp_formula = ?, srp_formula_rules = ?, srp_source_scheme_id = '', srp_source_field_key = '', updated_at = datetime('now') WHERE id = ?", [legacyFormula, JSON.stringify(normalizedRules), scheme.id]);
     createVersion(scheme.id, userStamp(req), '更新 SRP 公式');
-    res.json({ success: true, field_type: 'formula', srp_formula: formula });
+    res.json({ success: true, field_type: 'formula', srp_formula: legacyFormula, srp_formula_rules: normalizedRules });
   }));
 
   app.put('/api/price-system/schemes/:id/fields/order', canWrite, asyncHandler((req, res) => {
@@ -1678,8 +1691,9 @@ function registerPriceSystemRoutes(app, deps) {
     const snapshotLandingCosts = Array.isArray(snapshot.landingCosts) ? snapshot.landingCosts : [];
     const snapshotSrpValues = Array.isArray(snapshot.srpValues) ? snapshot.srpValues : [];
     transaction(() => {
-      run("UPDATE price_system_schemes SET srp_formula = ?, srp_source_scheme_id = ?, srp_source_field_key = ?, currency = ?, srp_sort_order = ?, updated_at = datetime('now') WHERE id = ?", [
+      run("UPDATE price_system_schemes SET srp_formula = ?, srp_formula_rules = ?, srp_source_scheme_id = ?, srp_source_field_key = ?, currency = ?, srp_sort_order = ?, updated_at = datetime('now') WHERE id = ?", [
         snapshot.scheme && snapshot.scheme.srp_formula || '',
+        snapshot.scheme && snapshot.scheme.srp_formula_rules || '{}',
         snapshot.scheme && snapshot.scheme.srp_source_scheme_id || '',
         snapshot.scheme && snapshot.scheme.srp_source_field_key || '',
         snapshot.scheme && snapshot.scheme.currency || scheme.currency,
