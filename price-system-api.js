@@ -137,13 +137,12 @@ function formulaForCategory(field, category) {
 }
 
 const BUILTIN_FORMULA_LABELS = Object.freeze({
-  purchase_price_rmb: ['采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'],
-  purchase_price_usd: ['采购价 USD', 'Purchase Price USD', 'Harga Beli USD'],
+  purchase_price_rmb: ['SKU主数据采购价 RMB', 'SKU Master Purchase Price RMB', 'Harga Beli Master SKU RMB', '采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'],
+  purchase_price_usd: ['SKU主数据采购价 USD', 'SKU Master Purchase Price USD', 'Harga Beli Master SKU USD', '采购价 USD', 'Purchase Price USD', 'Harga Beli USD'],
   standard_purchase_price: ['标准采购价', 'Standard Purchase Price', 'Harga Beli Standar'],
-  weighted_avg_cost: ['SKU 加权平均成本', 'SKU Weighted Average Cost', 'Biaya Rata-rata Tertimbang SKU'],
-  inventory_wac: ['库存 WAC', 'Inventory WAC', 'WAC Persediaan'],
+  weighted_avg_cost: ['SKU主数据加权平均成本', 'SKU Master Weighted Average Cost', 'Biaya Rata-rata Tertimbang SKU', 'SKU 加权平均成本', 'SKU Weighted Average Cost'],
   reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
-  landing_cost: ['系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
+  landing_cost: ['最新确认 WAC', 'Latest Confirmed WAC', 'WAC Terkonfirmasi Terbaru', '系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
   stock_qty: ['库存数量', 'Stock Qty', 'Jumlah Stok'],
   srp: ['SRP']
 });
@@ -725,7 +724,7 @@ function registerPriceSystemRoutes(app, deps) {
   function allowedFormulaVariables(fields, excludeKey) {
     const allowed = new Set(BUILTIN_PRICE_VARIABLES.filter(key => key !== excludeKey));
     (fields || []).forEach(field => {
-      if (field && field.field_key && field.field_key !== excludeKey && Number(field.sync_quotation || 0) !== 1) allowed.add(field.field_key);
+      if (field && field.field_key && field.field_key !== excludeKey) allowed.add(field.field_key);
     });
     return Array.from(allowed);
   }
@@ -807,11 +806,9 @@ function registerPriceSystemRoutes(app, deps) {
     const skuRows = query(
       'SELECT s.sku_code, s.brand, s.category, s.model, s.purchase_currency, ' +
       's.standard_purchase_price, s.purchase_price_rmb, s.purchase_price_usd, s.weighted_avg_cost, s.reference_customs_rate, ' +
-      'COALESCE(i.stock_qty, 0) AS stock_qty, COALESCE(i.inventory_wac, 0) AS inventory_wac, i.last_inbound_date AS last_inbound_date ' +
+      'COALESCE(i.stock_qty, 0) AS stock_qty, i.last_inbound_date AS last_inbound_date ' +
       'FROM skus s LEFT JOIN (' +
-      'SELECT sku_code, SUM(COALESCE(available_qty, 0)) AS stock_qty, MAX(last_inbound_date) AS last_inbound_date, ' +
-      'CASE WHEN SUM(COALESCE(available_qty, 0)) > 0 ' +
-      'THEN SUM(COALESCE(weighted_avg_cost, 0) * COALESCE(available_qty, 0)) / SUM(COALESCE(available_qty, 0)) ELSE 0 END AS inventory_wac ' +
+      'SELECT sku_code, SUM(COALESCE(available_qty, 0)) AS stock_qty, MAX(last_inbound_date) AS last_inbound_date ' +
       'FROM inventory WHERE country = ?' + warehouseFilter + ' GROUP BY sku_code' +
       ') i ON i.sku_code = s.sku_code WHERE s.brand = ? ' +
       'ORDER BY CASE WHEN COALESCE(s.category, \'\') = \'\' THEN 1 ELSE 0 END, s.category, s.sku_code',
@@ -928,7 +925,6 @@ function registerPriceSystemRoutes(app, deps) {
         purchase_price_usd: Number(sku.purchase_price_usd || 0),
         standard_purchase_price: Number(sku.standard_purchase_price || 0),
         weighted_avg_cost: Number(sku.weighted_avg_cost || 0),
-        inventory_wac: Number(sku.inventory_wac || 0),
         reference_customs_rate: Number(sku.reference_customs_rate || 0),
         landing_cost: Number(landingCost && landingCost.value || 0),
         stock_qty: Number(sku.stock_qty || 0),
@@ -954,6 +950,12 @@ function registerPriceSystemRoutes(app, deps) {
         }
         if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
         if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
+        if (Number(field.sync_quotation || 0) === 1) {
+          const raw = stored[key];
+          resolved[key] = raw == null || raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
+          if (resolved[key] == null) errors[key] = '该 SKU 没有匹配到有效报价';
+          return resolved[key];
+        }
         if (field.field_type !== 'formula') {
           const raw = stored[key];
           resolved[key] = raw == null ? 0 : Number(raw);
@@ -967,15 +969,18 @@ function registerPriceSystemRoutes(app, deps) {
         try {
           const vars = Object.assign({}, base, resolved);
           const expression = normalizeFormulaExpression(categoryFormula || field.formula, fields);
-          let hasMissingReference = false;
+          const missingDependencies = [];
           getFormulaVariables(expression).forEach(dep => {
             if (fieldMap.has(dep)) {
               vars[dep] = resolveField(dep);
-              if (vars[dep] == null) hasMissingReference = true;
+              const dependencyField = fieldMap.get(dep);
+              if (vars[dep] == null && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+                missingDependencies.push(dependencyField.field_name || dep);
+              }
             }
           });
-          resolved[key] = hasMissingReference ? null : (expression ? evaluateFormula(expression, vars, formulaOptions) : 0);
-          if (hasMissingReference) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值';
+          resolved[key] = missingDependencies.length ? null : (expression ? evaluateFormula(expression, vars, formulaOptions) : 0);
+          if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingDependencies.join('、');
         } catch (e) {
           errors[key] = e.message;
           resolved[key] = 0;
@@ -1255,7 +1260,9 @@ function registerPriceSystemRoutes(app, deps) {
     const body = req.body || {};
     const formula = String(body.formula || '').trim();
     const excludeKey = String(body.exclude_key || '').trim();
-    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const fields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows
+      .filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1);
     const formulaOptions = formulaEvaluationOptions(fields);
     const normalizedFormula = normalizeFormulaExpression(formula, fields);
     try {
@@ -1266,6 +1273,7 @@ function registerPriceSystemRoutes(app, deps) {
       validation.variables.forEach(key => {
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
         const sourceField = previewFieldMap.get(key);
+        if (sourceField && Number(sourceField.sync_quotation || 0) === 1 && (raw == null || raw === '')) throw new Error('当前 SKU 没有匹配到有效报价：' + (sourceField.field_name || key));
         if ((sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula')) && (raw == null || raw === '')) throw new Error('当前 SKU 缺少引用字段数值：' + key);
         const value = raw == null || raw === '' ? 0 : Number(raw);
         if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
@@ -1314,7 +1322,7 @@ function registerPriceSystemRoutes(app, deps) {
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : null;
         const sourceField = fieldMap.get(key);
         const missingComputedValue = raw == null || raw === '';
-        const value = missingComputedValue ? (sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula') ? null : 0) : Number(raw);
+        const value = missingComputedValue ? (sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula' || Number(sourceField.sync_quotation || 0) === 1) ? null : 0) : Number(raw);
         if (value !== null && !Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         context[key] = value;
       });
@@ -1356,16 +1364,18 @@ function registerPriceSystemRoutes(app, deps) {
         try {
           const expression = normalizeFormulaExpression(categoryFormula, fields);
           const variables = Object.assign({}, context, resolved);
-          let hasMissingComputedValue = false;
+          const missingComputedDependencies = [];
           getFormulaVariables(expression).forEach(dependency => {
             if (fieldMap.has(dependency)) {
               variables[dependency] = resolveField(dependency);
               const dependencyField = fieldMap.get(dependency);
-              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula')) hasMissingComputedValue = true;
+              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+                missingComputedDependencies.push(dependencyField.field_name || dependency);
+              }
             }
           });
-          resolved[key] = hasMissingComputedValue ? null : evaluateFormula(expression, variables, formulaOptions);
-          if (hasMissingComputedValue) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值';
+          resolved[key] = missingComputedDependencies.length ? null : evaluateFormula(expression, variables, formulaOptions);
+          if (missingComputedDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingComputedDependencies.join('、');
         } catch (error) {
           errors[key] = error.message;
           resolved[key] = 0;
@@ -1530,7 +1540,9 @@ function registerPriceSystemRoutes(app, deps) {
       return res.json({ id: 'builtin-srp', scheme_id: scheme.id, field_key: 'srp', field_name: 'SRP', field_type: 'formula', unit: '', applicable_categories: [], formula, sync_wac: false, is_builtin_srp: true, sort_order: Number.isFinite(Number(scheme.srp_sort_order)) ? Number(scheme.srp_sort_order) : 999999 });
     }
 
-    const existingFields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows;
+    const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
+    const existingFields = query('SELECT * FROM price_system_fields WHERE scheme_id = ? AND is_active = 1', [scheme.id]).rows
+      .filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1);
     const formulaOptions = formulaEvaluationOptions(existingFields);
     const existing = d.id ? queryOne('SELECT * FROM price_system_fields WHERE id = ? AND scheme_id = ?', [d.id, scheme.id]) : null;
     if (d.id && !existing) return res.status(404).json({ error: '\u8d39\u7528\u5b57\u6bb5\u4e0d\u5b58\u5728' });

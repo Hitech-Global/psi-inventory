@@ -21,8 +21,9 @@ test('rejects unsupported characters, malformed syntax and division by zero', ()
   assert.throws(() => evaluateFormula('10 / 0', {}), /除以 0/);
 });
 
-test('Landing Cost is available as a built-in SRP formula variable', () => {
+test('latest confirmed WAC is the only built-in WAC formula source', () => {
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('landing_cost'));
+  assert.equal(BUILTIN_PRICE_VARIABLES.includes('inventory_wac'), false);
   assert.ok(Math.abs(evaluateFormula('landing_cost * 1.1', { landing_cost: 100 }) - 110) < 1e-9);
   assert.equal(validateFormula('landing_cost + platform_fee', ['landing_cost', 'platform_fee']).valid, true);
 });
