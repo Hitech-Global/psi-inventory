@@ -68,8 +68,13 @@ function getFormulaVariables(expression) {
   return Array.from(seen);
 }
 
-function evaluateFormula(expression, variables) {
+function evaluateFormula(expression, variables, options) {
   const tokens = tokenize(expression);
+  const percentVariables = new Set(
+    options && Array.isArray(options.percentVariables)
+      ? options.percentVariables.map(name => String(name || '').trim()).filter(Boolean)
+      : []
+  );
   if (!tokens.length) throw new Error('公式不能为空');
   let cursor = 0;
   const values = variables || {};
@@ -109,8 +114,9 @@ function evaluateFormula(expression, variables) {
       if (!Object.prototype.hasOwnProperty.call(values, name)) {
         throw new Error('公式引用了未知字段：' + name);
       }
-      const value = Number(values[name] == null ? 0 : values[name]);
+      let value = Number(values[name] == null ? 0 : values[name]);
       if (!Number.isFinite(value)) throw new Error('字段不是有效数字：' + name);
+      if (percentVariables.has(name)) value /= 100;
       return value;
     }
     if (peek('(')) {
@@ -158,14 +164,14 @@ function evaluateFormula(expression, variables) {
   return result;
 }
 
-function validateFormula(expression, allowedVariables) {
+function validateFormula(expression, allowedVariables, options) {
   const variables = getFormulaVariables(expression);
   const allowed = new Set(allowedVariables || []);
   const unknown = variables.filter(name => !allowed.has(name));
   if (unknown.length) throw new Error('公式引用了未知字段：' + unknown.join(', '));
   const sample = {};
   variables.forEach(name => { sample[name] = 1; });
-  evaluateFormula(expression, sample);
+  evaluateFormula(expression, sample, options);
   return { valid: true, variables };
 }
 

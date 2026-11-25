@@ -11,10 +11,11 @@ test('price table columns size to their content without forced wide columns', ()
   assert.match(source, /#ps-root \.ps-landing\{min-width:0;display:flex;align-items:center;justify-content:center;gap:8px;text-align:center\}/);
   assert.match(source, /#ps-root \.ps-table-wrap\{overflow:auto/);
   assert.match(source, /#ps-root td\{[^}]*white-space:nowrap/);
-  assert.match(source, /#ps-root th:nth-child\(-n\+2\),#ps-root td:nth-child\(-n\+2\)\{position:sticky;background:#fff\}/);
-  assert.match(source, /#ps-root th:nth-child\(1\),#ps-root td:nth-child\(1\)\{left:0;width:120px/);
-  assert.match(source, /#ps-root th:nth-child\(2\),#ps-root td:nth-child\(2\)\{left:120px;width:170px/);
-  assert.match(source, /#ps-root tbody tr:hover td:nth-child\(-n\+2\)\{background:#fafafa\}/);
+  assert.match(source, /#ps-root th\.ps-frozen-cell\{position:sticky;top:0;background:#f7f7f9;z-index:6\}/);
+  assert.match(source, /#ps-root td\.ps-frozen-cell\{position:sticky;background:#fff;z-index:4\}/);
+  assert.match(source, /#ps-root th:nth-child\(1\),#ps-root td:nth-child\(1\)\{width:120px;min-width:120px;max-width:120px\}/);
+  assert.match(source, /#ps-root th:nth-child\(2\),#ps-root td:nth-child\(2\)\{width:170px;min-width:170px;max-width:170px\}/);
+  assert.match(source, /#ps-root tbody tr:hover td\.ps-frozen-cell\{background:#fafafa\}/);
   assert.doesNotMatch(source, /width:100%;min-width:950px/);
   assert.doesNotMatch(source, /\.ps-category\{color:#666;min-width:100px\}/);
   assert.doesNotMatch(source, /\.ps-landing\{min-width:190px/);
@@ -31,7 +32,7 @@ test('create pricing scheme modal uses a compact responsive form layout', () => 
   assert.match(source, /class="ps-scheme-section-title"/);
   assert.match(source, /id="ps-country"/);
   assert.match(source, /id="ps-brand"/);
-  assert.match(source, /id="ps-platform"/);
+  assert.match(source, /id="ps-channel"/);
   assert.match(source, /id="ps-shop"/);
   assert.match(source, /id="ps-currency"/);
 });
