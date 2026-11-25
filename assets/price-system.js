@@ -1005,7 +1005,7 @@ window.psOpenFieldEditor=function(id,percentDefault){
  if(!formulaRules||typeof formulaRules!=='object'||Array.isArray(formulaRules))formulaRules={};
  const isSrp=!!(f&&f.is_builtin_srp),type=f?f.field_type:'amount',isWac=!!(f&&Number(f.sync_wac||0)===1),isQuote=!!(f&&Number(f.sync_quotation||0)===1);const referenceSchemes=state.schemes.filter(item=>String(item.id)!==String(state.schemeId)&&String(item.country||'')===String(state.scheme&&state.scheme.country||'')&&String(item.brand||'')===String(state.scheme&&state.scheme.brand||''));const referenceSchemeId=f&&f.source_scheme_id||((referenceSchemes[0]||{}).id||'');window.__psReferenceFieldDraft=f&&f.source_field_key||'';
  window.__psFormulaCategoryList=categoryList;
- window.__psFormulaRulesDraft=type==='formula'?formulaRuleDraftsFromMap(formulaRules,f&&f.formula,Array.from(selected),categoryList).map(rule=>({formula:formulaDisplayExpression(rule.formula),categories:rule.categories.slice()})):[];
+ window.__psFormulaRulesDraft=formulaRuleDraftsFromMap(formulaRules,f&&f.formula,Array.from(selected),categoryList).map(rule=>({formula:formulaDisplayExpression(rule.formula),categories:rule.categories.slice()}));
  const allScope=categoryList.length>0&&selected.size===categoryList.length;
  const checks=categoryList.map(category=>'<label class="ps-category-chip"><input type="checkbox" class="ps-cat-check" value="'+esc(category)+'" '+((allScope||selected.has(category))?'checked':'')+' onchange="psUpdateCategorySelectAll()"> <span>'+esc(category)+'</span></label>').join('')||'<span class="ps-editor-help">—</span>';
  const formulaSection='<section class="ps-editor-section" id="ps-formula-wrap" style="'+(isWac||isQuote||type==='percent'||type==='reference'?'display:none':'')+'"><div class="ps-editor-section-title ps-formula-rules-title"><strong>'+tr('formulaRulesTitle')+'</strong><button type="button" class="ps-btn primary" onclick="psAddFormulaRule()">＋ '+tr('addFormulaRule')+'</button></div>'+formulaBuilderHtml(f)+'<div class="ps-formula-rules-list" id="ps-formula-rules-list"></div><div class="ps-editor-formula-help">'+tr('formulaBuilderHint')+' '+tr('formulaHelp')+'</div></section>';
@@ -1098,7 +1098,7 @@ window.psReferenceFieldChanged=async function(){
 window.psSaveField=async function(id){
  try{
   const data=collectFieldEditorValues();
-  if(id==='builtin-srp')await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula','PUT',data.field_type==='reference'?{field_type:'reference',source_scheme_id:data.source_scheme_id,source_field_key:data.source_field_key}:{field_type:'formula',srp_formula:data.formula});
+  if(id==='builtin-srp')await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/formula','PUT',data.field_type==='reference'?{field_type:'reference',source_scheme_id:data.source_scheme_id,source_field_key:data.source_field_key}:{field_type:'formula',srp_formula:data.formula,srp_formula_rules:data.formula_rules});
   else await api('/api/price-system/schemes/'+encodeURIComponent(state.schemeId)+'/fields','POST',Object.assign({id:id||undefined},data));
   await loadData(state.schemeId);window.psOpenFieldsModal();if(typeof showToast==='function')showToast(tr('fieldSaved'),'success');
  }catch(e){err(e);}
@@ -1163,7 +1163,7 @@ function psVersionActionText(action){
  return action==='added'?tr('added'):(action==='removed'?tr('removed'):tr('updated'));
 }
 function psVersionPropertyLabel(item){
- const labels={currency:'currency',srp_formula:'formula',srp_sort_order:'fieldOrderTitle',status:'status',shop_name:'shop',platform:'platform',field_name:'fieldName',field_type:'fieldType',unit:'unit',applicable_categories:'categoryScope',formula:'formulaText',formula_rules:'formulaRulesTitle',display_format:'displayFormat',decimal_places:'decimalPlaces',sync_wac:'syncWacField',sync_quotation:'syncQuotationField',sort_order:'fieldOrderTitle',is_active:'status'};
+ const labels={currency:'currency',srp_formula:'formula',srp_formula_rules:'formulaRulesTitle',srp_source_scheme_id:'referenceSourceScheme',srp_source_field_key:'referenceSourceField',srp_sort_order:'fieldOrderTitle',status:'status',shop_name:'shop',platform:'platform',field_name:'fieldName',field_type:'fieldType',unit:'unit',applicable_categories:'categoryScope',formula:'formulaText',formula_rules:'formulaRulesTitle',display_format:'displayFormat',decimal_places:'decimalPlaces',sync_wac:'syncWacField',sync_quotation:'syncQuotationField',sort_order:'fieldOrderTitle',is_active:'status'};
  return tr(labels[item.property_key]||item.property_key||'');
 }
 function psRenderVersionDiffTable(rows,includeSku){
