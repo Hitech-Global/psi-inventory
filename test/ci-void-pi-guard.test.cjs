@@ -30,4 +30,20 @@ assert.ok(app.includes("mode==='all'&&ciStatus==='cancelled'"), 'voided-only fil
 assert.ok(app.includes("t('ci.048','已作废')"), 'voided CI row must be labelled');
 assert.ok(i18n.includes('I18N.dict.zh["ci.046"]="CI状态";'), 'CI status filter label must be translated');
 assert.ok(i18n.includes('I18N.dict.en["ci.049"]="All statuses";'), 'CI status filter options must be translated');
+
+const ciVoidStart = server.indexOf("app.post('/api/commercial-invoices/:id/void'");
+const ciVoidEnd = server.indexOf('// ==================== WAVE1-CI-REVERSE-01', ciVoidStart);
+assert.ok(ciVoidStart >= 0 && ciVoidEnd > ciVoidStart, 'CI void route must exist');
+const ciVoidRoute = server.slice(ciVoidStart, ciVoidEnd);
+assert.ok(ciVoidRoute.includes('transaction(() =>'), 'CI void must be atomic');
+assert.ok(ciVoidRoute.includes('FOR UPDATE'), 'PG CI void must lock the CI row and related PI rows');
+assert.ok(ciVoidRoute.includes("const alreadyCancelled = ci.ci_status === 'cancelled'"), 'legacy cancelled CI cleanup must not roll PI shipped quantities back twice');
+assert.ok(ciVoidRoute.includes('DELETE FROM commercial_invoice_items WHERE ci_id = ?'), 'CI void must delete its detail rows');
+assert.ok(ciVoidRoute.includes('DELETE FROM commercial_invoices WHERE id = ?'), 'CI void must hard-delete the CI header and release its unique CI number');
+assert.ok(ciVoidRoute.includes("UPDATE payable_items SET lifecycle_status = 'released'"), 'unpaid CI balance payable items must be released');
+assert.ok(ciVoidRoute.includes('payment_request_items'), 'CI void must guard payable items already linked to payment requests');
+assert.ok(ciVoidRoute.includes('packing_lists') && ciVoidRoute.includes('logistics_batches'), 'CI void must protect downstream logistics references');
+assert.ok(ciVoidRoute.includes('wac_history') && ciVoidRoute.includes('inbound_records'), 'CI void must protect WAC and inbound history');
+assert.ok(!ciVoidRoute.includes("SET ci_status = 'cancelled'"), 'new CI voids must not leave a cancelled CI row occupying the number');
+
 console.log('CI voided-history / multi-PO PI void regression checks passed.');
