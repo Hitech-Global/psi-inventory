@@ -502,7 +502,8 @@ window.psHasUnsavedChanges=function(){return psDirtyCount()>0;};
 window.psHandleLanguageChange=function(){
  const root=document.getElementById('ps-root');
  if(!root)return false;
- const modalOpen=typeof isModalOpen==='function'?isModalOpen():!!document.querySelector('#modal-content');
+ const modalOverlay=document.getElementById('modal-overlay');
+ const modalOpen=typeof isModalOpen==='function'?isModalOpen():!!(modalOverlay&&modalOverlay.classList.contains('show'));
  const modal=document.getElementById('modal-content');
  const values=modalOpen?psCaptureModalValues(modal):[];
  main();
