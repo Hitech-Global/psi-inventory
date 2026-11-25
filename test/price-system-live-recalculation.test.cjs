@@ -47,11 +47,11 @@ function createHarness(extraFields = [], sourceFields = {}) {
     asyncHandler: fn => fn,
     needsDataScopeFilter: () => false
   });
-  async function invoke(body) {
-    const handlers = routes.get('POST /api/price-system/schemes/:id/formula/recalculate-preview');
-    assert.ok(handlers, 'live formula recalculation preview route is registered');
+  async function invokeRoute(routePath, body, permissions = ['*']) {
+    const handlers = routes.get('POST ' + routePath);
+    assert.ok(handlers, 'requested price-system formula route is registered');
     const req = {
-      params: { id: 'scheme-1' }, body, currentUserPermissions: ['*'],
+      params: { id: 'scheme-1' }, body, currentUserPermissions: permissions,
       currentUserId: 'tester', currentUserName: 'Tester'
     };
     const res = {
@@ -67,7 +67,13 @@ function createHarness(extraFields = [], sourceFields = {}) {
     await handlers[handlers.length - 1](req, res, () => {});
     return res;
   }
-  return { invoke };
+  async function invoke(body) {
+    return invokeRoute('/api/price-system/schemes/:id/formula/recalculate-preview', body);
+  }
+  async function invokeFormulaPreview(body, permissions = ['*']) {
+    return invokeRoute('/api/price-system/schemes/:id/formula/preview', body, permissions);
+  }
+  return { invoke, invokeFormulaPreview };
 }
 
 test('live preview recalculates dependent formula fields in dependency order after a manual SRP edit', async () => {
@@ -186,4 +192,43 @@ test('live preview automatically converts a cross-channel reference to a percent
   });
   assert.equal(response.statusCode, 200);
   assert.ok(Math.abs(response.body.values.dealer_price_ref - 820) < 1e-9);
+});
+
+
+test('formula preview can use an auto-synced FOB quotation field', async () => {
+  const harness = createHarness([
+    { id: 'fob', scheme_id: 'scheme-1', field_key: 'fob', field_name: 'FOB', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 1 }
+  ]);
+  const response = await harness.invokeFormulaPreview({ formula: 'FOB * 18200', variables: { fob: 26.11 } });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.result, 475202);
+});
+
+test('formula preview reports a missing auto-synced quotation instead of silently calculating zero', async () => {
+  const harness = createHarness([
+    { id: 'fob', scheme_id: 'scheme-1', field_key: 'fob', field_name: 'FOB', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 1 }
+  ]);
+  const response = await harness.invokeFormulaPreview({ formula: 'FOB * 18200', variables: { fob: null } });
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body.error, /没有匹配到有效报价：FOB/);
+});
+
+test('live formula recalculation can use an auto-synced FOB field and keeps missing quotes blank', async () => {
+  const harness = createHarness([
+    { id: 'fob', scheme_id: 'scheme-1', field_key: 'fob', field_name: 'FOB', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 1 },
+    { id: 'fob_idr', scheme_id: 'scheme-1', field_key: 'fob_idr', field_name: 'FOB-IDR', field_type: 'formula', formula: 'fob * 18200', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ]);
+  const calculated = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, fob: 26.11, fob_idr: 0 }
+  });
+  assert.equal(calculated.statusCode, 200);
+  assert.equal(calculated.body.values.fob_idr, 475202);
+  const missing = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, fob: null, fob_idr: 0 }
+  });
+  assert.equal(missing.statusCode, 200);
+  assert.equal(missing.body.values.fob_idr, null);
+  assert.match(missing.body.formula_errors.fob_idr, /FOB/);
 });
