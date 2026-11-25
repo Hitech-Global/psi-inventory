@@ -11,10 +11,13 @@ const api = fs.readFileSync(path.join(root, 'price-system-api.js'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'migrations', 'price-system.js'), 'utf8');
 
 test('formula editor groups base data, fee fields and SRP separately without duplicate aliases', () => {
-  for (const key of ['purchase_price_rmb','purchase_price_usd','standard_purchase_price','weighted_avg_cost','reference_customs_rate','landing_cost','stock_qty']) {
+  for (const key of ['purchase_price_rmb','purchase_price_usd','standard_purchase_price','reference_customs_rate','landing_cost','stock_qty']) {
     assert.ok(ui.includes(`{key:'${key}'`), `missing base variable button: ${key}`);
   }
   assert.ok(!ui.includes("{key:'inventory_wac'"), 'inventory WAC must not be offered as a second WAC source');
+  assert.ok(!ui.includes("{key:'weighted_avg_cost'"), 'SKU master weighted average cost must not duplicate latest confirmed WAC');
+  assert.ok(!ui.includes('weightedAvgCost'), 'duplicate SKU master WAC label must be removed from all formula editor languages');
+  assert.doesNotMatch(api, /weighted_avg_cost/, 'SKU master weighted average cost must not enter formula context');
   assert.ok(!ui.includes("{key:'inventory_qty'"), 'inventory_qty should not duplicate stock_qty');
   assert.match(ui, /x\.field_key!=='srp'/, 'SRP must not be mixed into fee fields');
   assert.match(ui, /x\.field_key!=='inventory_qty'/, 'inventory_qty alias must be hidden');
