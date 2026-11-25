@@ -611,6 +611,29 @@ function registerPriceSystemRoutes(app, deps) {
     return row ? Object.assign({}, row, { sales_channel: String(row.platform || '') }) : null;
   }
 
+  function fieldRequiresQuotationPermission(schemeId, fieldKey, visited) {
+    const schemeKey = String(schemeId || '').trim();
+    const key = String(fieldKey || '').trim();
+    if (!schemeKey || !key) return false;
+    const seen = visited || new Set();
+    const visitKey = schemeKey + '|' + key;
+    if (seen.has(visitKey)) return false;
+    seen.add(visitKey);
+    if (key === 'srp') {
+      const scheme = getSchemeOrNull(schemeKey);
+      return !!(scheme && scheme.srp_source_scheme_id && scheme.srp_source_field_key &&
+        fieldRequiresQuotationPermission(scheme.srp_source_scheme_id, scheme.srp_source_field_key, seen));
+    }
+    const field = queryOne(
+      'SELECT field_type, sync_quotation, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1',
+      [schemeKey, key]
+    );
+    if (!field) return false;
+    if (Number(field.sync_quotation || 0) === 1) return true;
+    return field.field_type === 'reference' && !!field.source_scheme_id && !!field.source_field_key &&
+      fieldRequiresQuotationPermission(field.source_scheme_id, field.source_field_key, seen);
+  }
+
   function scopedCountryIds(req) {
     const scope = req.currentUserDataScope || {};
     const ids = Array.isArray(scope.countries) ? scope.countries.slice() : [];
@@ -1071,7 +1094,7 @@ function registerPriceSystemRoutes(app, deps) {
     if (!schemeAccess(req, res, scheme)) return;
     const canViewQuotation = (req.currentUserPermissions || []).includes('*') || (req.currentUserPermissions || []).includes('quotation_view');
     const fields = query('SELECT id, scheme_id, field_key, field_name, field_type, unit, display_format, decimal_places, sync_wac, sync_quotation, source_scheme_id, source_field_key FROM price_system_fields WHERE scheme_id = ? AND is_active = 1 ORDER BY sort_order, field_name', [scheme.id]).rows
-      .filter(field => canViewQuotation || Number(field.sync_quotation || 0) !== 1)
+      .filter(field => canViewQuotation || !fieldRequiresQuotationPermission(scheme.id, field.field_key))
       .map(field => Object.assign({}, field, { sync_wac: Number(field.sync_wac || 0) === 1, sync_quotation: Number(field.sync_quotation || 0) === 1 }));
     if (!fields.some(field => field.field_key === 'srp')) {
       const srpIsReference = !!(String(scheme.srp_source_scheme_id || '').trim() && String(scheme.srp_source_field_key || '').trim());
@@ -1349,7 +1372,7 @@ function registerPriceSystemRoutes(app, deps) {
         ? { field_key: 'srp', field_name: 'SRP', field_type: 'formula', sync_quotation: 0 }
         : queryOne('SELECT field_key, field_name, field_type, sync_quotation FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [sourceScheme.id, sourceFieldKey]);
       if (!sourceField) return res.status(400).json({ error: '引用来源字段不存在或已停用' });
-      if (Number(sourceField.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
+      if (fieldRequiresQuotationPermission(sourceScheme.id, sourceFieldKey) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
       if (referenceChainReachesScheme(sourceScheme.id, scheme.id)) return res.status(400).json({ error: '引用会形成循环依赖，请选择其他来源方案' });
       run("UPDATE price_system_schemes SET srp_formula = '', srp_source_scheme_id = ?, srp_source_field_key = ?, updated_at = datetime('now') WHERE id = ?", [sourceScheme.id, sourceFieldKey, scheme.id]);
       createVersion(scheme.id, userStamp(req), '设置 SRP 引用来源');
@@ -1436,7 +1459,7 @@ function registerPriceSystemRoutes(app, deps) {
         ? { field_key: 'srp', field_name: 'SRP', field_type: 'formula', sync_quotation: 0 }
         : queryOne('SELECT field_key, field_name, field_type, sync_quotation FROM price_system_fields WHERE scheme_id = ? AND field_key = ? AND is_active = 1', [sourceScheme.id, sourceFieldKey]);
       if (!sourceField) return res.status(400).json({ error: '引用来源字段不存在或已停用' });
-      if (Number(sourceField.sync_quotation || 0) === 1 && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
+      if (fieldRequiresQuotationPermission(sourceScheme.id, sourceFieldKey) && !(req.currentUserPermissions || []).includes('*') && !(req.currentUserPermissions || []).includes('quotation_view')) return res.status(403).json({ error: '引用自动同步报价字段需要报价管理查看权限' });
       if (referenceChainReachesScheme(sourceScheme.id, scheme.id)) return res.status(400).json({ error: '引用会形成循环依赖，请选择其他来源方案' });
     }
 
