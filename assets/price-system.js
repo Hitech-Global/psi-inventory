@@ -637,9 +637,8 @@ function updatePriceSystemFormulaPreview(skuCode,preview){
   const srpCell=srpInput.closest('td');
   if(srpCell)srpCell.setAttribute('data-sort-value',row.srp==null?'':String(row.srp));
  }
- const table=tableRow.closest('table');
- const sortState=table&&_psTableSort.get(table);
- if(sortState&&sortState.dir!=='none')psApplyTableSort(table,sortState.col,sortState.dir);
+ // Formula previews update values only. Keep the current row order stable;
+ // re-sorting is reserved for an explicit click on a table header.
 }
 async function runPriceSystemFormulaPreview(skuCode,schemeId,sequence){
  if(state.schemeId!==schemeId||psFormulaPreviewSequences.get(skuCode)!==sequence)return;
