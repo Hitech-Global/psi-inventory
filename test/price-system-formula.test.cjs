@@ -59,6 +59,6 @@ test('automatically normalizes referenced percentage fields without changing for
   const options = { percentVariables: ['dealer_profit_rate', 'ads_budget'] };
   assert.ok(Math.abs(evaluateFormula('srp * (1 - dealer_profit_rate)', { srp: 120700, dealer_profit_rate: 18 }, options) - 98974) < 1e-9);
   assert.equal(evaluateFormula('srp * ads_budget', { srp: 1000, ads_budget: 8 }, options), 80);
-  assert.equal(evaluateFormula('srp * (1 - profit_rate)', { srp: 1000, profit_rate: 0.18 }, options), 820);
+  assert.ok(Math.abs(evaluateFormula('srp * (1 - profit_rate)', { srp: 1000, profit_rate: 0.18 }, options) - 820) < 1e-9);
   assert.equal(validateFormula('srp * (1 - dealer_profit_rate)', ['srp', 'dealer_profit_rate'], options).valid, true);
 });
