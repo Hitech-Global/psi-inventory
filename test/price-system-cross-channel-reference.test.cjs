@@ -144,8 +144,8 @@ test('scheme DOM cache keeps table scroll and only the six most recently used vi
 
 
 test('reference field dropdown shows readable field names while retaining internal keys as option values', () => {
-  assert.ok(ui.includes(\"fields.map(item=>'<option value=\\\"'+esc(item.field_key)+'\\\">'+esc(item.field_name)+'</option>')\"));
-  assert.equal(ui.includes(\"esc(item.field_name)+' ['+esc(item.field_key)+']\"), false);
+  assert.ok(ui.includes(`value="'+esc(item.field_key)+'">'+esc(item.field_name)+'</option>'`));
+  assert.equal(ui.includes(`esc(item.field_name)+' ['+esc(item.field_key)+']`), false);
 });
 
 test('builtin SRP editor allows direct formula or reference mode and submits the selected source field', () => {
