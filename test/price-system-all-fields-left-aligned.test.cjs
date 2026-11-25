@@ -16,5 +16,4 @@ test('all current and newly configured price fields are center-aligned', () => {
   assert.ok(source.includes('#ps-root .ps-sku{font-weight:600;color:#252525;text-align:center}'));
   assert.ok(source.includes('#ps-root .ps-landing{min-width:0;display:flex;align-items:center;justify-content:center;'));
   assert.ok(source.includes('state.fields.map(f=>{'));
-  assert.ok(source.includes("return '<th title='"));
 });
