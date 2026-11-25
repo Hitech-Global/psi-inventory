@@ -11,14 +11,19 @@ const api = fs.readFileSync(path.join(root, 'price-system-api.js'), 'utf8');
 const migration = fs.readFileSync(path.join(root, 'migrations', 'price-system.js'), 'utf8');
 
 test('formula editor groups base data, fee fields and SRP separately without duplicate aliases', () => {
-  for (const key of ['purchase_price_rmb','purchase_price_usd','standard_purchase_price','weighted_avg_cost','inventory_wac','reference_customs_rate','landing_cost','stock_qty']) {
+  for (const key of ['purchase_price_rmb','purchase_price_usd','standard_purchase_price','weighted_avg_cost','reference_customs_rate','landing_cost','stock_qty']) {
     assert.ok(ui.includes(`{key:'${key}'`), `missing base variable button: ${key}`);
   }
+  assert.ok(!ui.includes("{key:'inventory_wac'"), 'inventory WAC must not be offered as a second WAC source');
   assert.ok(!ui.includes("{key:'inventory_qty'"), 'inventory_qty should not duplicate stock_qty');
   assert.match(ui, /x\.field_key!=='srp'/, 'SRP must not be mixed into fee fields');
   assert.match(ui, /x\.field_key!=='inventory_qty'/, 'inventory_qty alias must be hidden');
-  assert.match(ui, /Number\(x\.sync_wac\|\|0\)!==1/, 'WAC-synced fee aliases should not duplicate system Landing Cost');
+  assert.match(ui, /Number\(x\.sync_wac\|\|0\)!==1/, 'WAC-synced fee aliases should not duplicate latest confirmed WAC');
+  assert.doesNotMatch(ui, /Number\(x\.sync_quotation\|\|0\)!==1/, 'quotation-synced fields must be available as formula dependencies');
   assert.ok(ui.includes('formulaBaseFields') && ui.includes('formulaFeeFields') && ui.includes('formulaPriceFields'));
+  assert.ok(ui.includes("label:'skuMasterPurchasePriceRmb'"));
+  assert.ok(ui.includes("label:'skuMasterPurchasePriceUsd'"));
+  assert.ok(ui.includes("label:'latestConfirmedWac'"));
   assert.ok(ui.includes("psInsertFormulaToken('srp')"), 'SRP should be available as a separate price variable');
   assert.ok(ui.includes("operators=['+','-','*','/','(',')','%']"), 'percent operator must be available');
   assert.match(ui, /window\.psInsertFormulaToken=function\(token\)/);
@@ -69,6 +74,7 @@ test('SRP can be edited inline and is saved through the dedicated SRP payload fi
 
 test('SRP is allowed as a dependency for fee formulas but cannot reference itself', () => {
   assert.match(api, /BUILTIN_PRICE_VARIABLES\.filter\(key => key !== excludeKey\)/);
+  assert.match(api, /field\.field_key !== excludeKey\) allowed\.add\(field\.field_key\)/);
   assert.match(api, /validateFormula\(normalizeFormulaExpression\(formula, existingFieldsForSrp\), allowedFormulaVariables\(existingFieldsForSrp, 'srp'\), formulaOptions\)/);
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('srp'));
 });
@@ -138,6 +144,8 @@ test('formula rules expose MIN/MAX and a server-validated preview for the select
   assert.match(ui, /formula\/preview','POST'/);
   assert.match(api, /app\.post\('\/api\/price-system\/schemes\/:id\/formula\/preview'/);
   assert.match(api, /formula_context: Object\.assign\(\{\}, base, values\)/);
+  assert.match(ui, /function formulaPreviewRow\(expression,excludeKey,category\)/);
+  assert.match(ui, /Number\(field\.sync_quotation\|\|0\)===1/);
 });
 
 test('all price-system table fields, including dynamically added fields, are center aligned', () => {
