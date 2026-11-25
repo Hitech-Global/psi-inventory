@@ -1528,7 +1528,7 @@ function registerPriceSystemRoutes(app, deps) {
         const skuCode = String(body.sku_code || '').trim();
         if (!skuCode) throw new Error('实时汇率预览需要选择一个 SKU');
         const sku = queryOne(
-          'SELECT sku_code, brand, category, purchase_currency FROM skus WHERE brand = ? AND sku_code = ?',
+          'SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?',
           [scheme.brand, skuCode]
         );
         if (!sku) throw new Error('找不到用于汇率预览的 SKU：' + skuCode);
@@ -1572,7 +1572,7 @@ function registerPriceSystemRoutes(app, deps) {
     const skuCode = String(body.sku_code || '').trim();
     if (!skuCode) return res.status(400).json({ error: 'SKU 编码不能为空' });
     const sku = queryOne(
-      'SELECT sku_code, brand, category, purchase_currency FROM skus WHERE brand = ? AND sku_code = ?',
+      'SELECT sku_code, brand, category FROM skus WHERE brand = ? AND sku_code = ?',
       [scheme.brand, skuCode]
     );
     if (!sku) return res.status(404).json({ error: 'SKU 不存在或不属于当前品牌' });
