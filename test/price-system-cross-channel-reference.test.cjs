@@ -147,7 +147,7 @@ test('builtin SRP editor allows direct formula or reference mode and submits the
   assert.ok(ui.includes('const fieldTypeOptions=isSrp'));
   assert.ok(ui.includes('id="ps-field-type" onchange="psToggleFormula()"'));
   assert.ok(ui.includes("data.field_type==='reference'?{field_type:'reference',source_scheme_id:data.source_scheme_id,source_field_key:data.source_field_key}"));
-  assert.ok(ui.includes("f.field_type==='reference'?(f.unit||scheme.currency||'')"));
+  assert.ok(ui.includes("f.field_key==='srp'&&f.field_type!=='reference'"));
 });
 
 test('builtin SRP references are stored at scheme level, included in source fields, and cycle-checked', () => {
@@ -162,7 +162,7 @@ test('builtin SRP references are stored at scheme level, included in source fiel
 
 test('builtin SRP formula rules and reference settings survive history restore and scheme copy', () => {
   assert.ok(migration.includes("srp_formula_rules TEXT NOT NULL DEFAULT '{}'"));
-  assert.ok(api.includes("srp_formula_rules: String(scheme.srp_formula_rules || '{}')"));
+  assert.ok(api.includes("formula_rules: String(scheme.srp_formula_rules || '{}')"));
   assert.ok(api.includes("srp_formula_rules = ?, srp_source_scheme_id = ?, srp_source_field_key = ?"));
   assert.ok(api.includes("snapshot.scheme && snapshot.scheme.srp_formula_rules || '{}'"));
   assert.ok(api.includes("sourceHasSrpReference"));
