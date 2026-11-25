@@ -4,7 +4,6 @@ const BUILTIN_PRICE_VARIABLES = Object.freeze([
   'purchase_price_rmb',
   'purchase_price_usd',
   'standard_purchase_price',
-  'weighted_avg_cost',
   'reference_customs_rate',
   'landing_cost',
   'srp',

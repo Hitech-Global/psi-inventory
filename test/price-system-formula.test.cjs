@@ -24,6 +24,8 @@ test('rejects unsupported characters, malformed syntax and division by zero', ()
 test('latest confirmed WAC is the only built-in WAC formula source', () => {
   assert.ok(BUILTIN_PRICE_VARIABLES.includes('landing_cost'));
   assert.equal(BUILTIN_PRICE_VARIABLES.includes('inventory_wac'), false);
+  assert.equal(BUILTIN_PRICE_VARIABLES.includes('weighted_avg_cost'), false);
+  assert.throws(() => validateFormula('weighted_avg_cost', BUILTIN_PRICE_VARIABLES), /未知字段/);
   assert.ok(Math.abs(evaluateFormula('landing_cost * 1.1', { landing_cost: 100 }) - 110) < 1e-9);
   assert.equal(validateFormula('landing_cost + platform_fee', ['landing_cost', 'platform_fee']).valid, true);
 });

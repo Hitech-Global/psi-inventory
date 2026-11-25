@@ -140,7 +140,6 @@ const BUILTIN_FORMULA_LABELS = Object.freeze({
   purchase_price_rmb: ['SKU主数据采购价 RMB', 'SKU Master Purchase Price RMB', 'Harga Beli Master SKU RMB', '采购价 RMB', 'Purchase Price RMB', 'Harga Beli RMB'],
   purchase_price_usd: ['SKU主数据采购价 USD', 'SKU Master Purchase Price USD', 'Harga Beli Master SKU USD', '采购价 USD', 'Purchase Price USD', 'Harga Beli USD'],
   standard_purchase_price: ['标准采购价', 'Standard Purchase Price', 'Harga Beli Standar'],
-  weighted_avg_cost: ['SKU主数据加权平均成本', 'SKU Master Weighted Average Cost', 'Biaya Rata-rata Tertimbang SKU', 'SKU 加权平均成本', 'SKU Weighted Average Cost'],
   reference_customs_rate: ['参考关税税率', 'Reference Customs Rate', 'Tarif Bea Cukai Referensi'],
   landing_cost: ['最新确认 WAC', 'Latest Confirmed WAC', 'WAC Terkonfirmasi Terbaru', '系统 Landing Cost', 'System Landing Cost', 'Landing Cost Sistem'],
   stock_qty: ['库存数量', 'Stock Qty', 'Jumlah Stok'],
@@ -805,7 +804,7 @@ function registerPriceSystemRoutes(app, deps) {
     }
     const skuRows = query(
       'SELECT s.sku_code, s.brand, s.category, s.model, s.purchase_currency, ' +
-      's.standard_purchase_price, s.purchase_price_rmb, s.purchase_price_usd, s.weighted_avg_cost, s.reference_customs_rate, ' +
+      's.standard_purchase_price, s.purchase_price_rmb, s.purchase_price_usd, s.reference_customs_rate, ' +
       'COALESCE(i.stock_qty, 0) AS stock_qty, i.last_inbound_date AS last_inbound_date ' +
       'FROM skus s LEFT JOIN (' +
       'SELECT sku_code, SUM(COALESCE(available_qty, 0)) AS stock_qty, MAX(last_inbound_date) AS last_inbound_date ' +
@@ -924,7 +923,6 @@ function registerPriceSystemRoutes(app, deps) {
         purchase_price_rmb: Number(sku.purchase_price_rmb || 0),
         purchase_price_usd: Number(sku.purchase_price_usd || 0),
         standard_purchase_price: Number(sku.standard_purchase_price || 0),
-        weighted_avg_cost: Number(sku.weighted_avg_cost || 0),
         reference_customs_rate: Number(sku.reference_customs_rate || 0),
         landing_cost: Number(landingCost && landingCost.value || 0),
         stock_qty: Number(sku.stock_qty || 0),
