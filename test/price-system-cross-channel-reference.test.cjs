@@ -141,3 +141,31 @@ test('scheme DOM cache keeps table scroll and only the six most recently used vi
   context.psSetSchemeData('scheme-1', { scheme: { id: 'scheme-1', revision: 2 }, fields: [], rows: [] }, context._psSchemeCache.generation);
   assert.equal(context.psGetSchemeView('scheme-1'), null, 'a refreshed data version must not reuse the old DOM');
 });
+
+
+test('builtin SRP editor allows direct formula or reference mode and submits the selected source field', () => {
+  assert.ok(ui.includes('const fieldTypeOptions=isSrp'));
+  assert.ok(ui.includes('id="ps-field-type" onchange="psToggleFormula()"'));
+  assert.ok(ui.includes("data.field_type==='reference'?{field_type:'reference',source_scheme_id:data.source_scheme_id,source_field_key:data.source_field_key}"));
+  assert.ok(ui.includes("f.field_type==='reference'?(f.unit||scheme.currency||'')"));
+});
+
+test('builtin SRP references are stored at scheme level, included in source fields, and cycle-checked', () => {
+  assert.ok(migration.includes("srp_source_scheme_id TEXT NOT NULL DEFAULT ''"));
+  assert.ok(migration.includes("srp_source_field_key TEXT NOT NULL DEFAULT ''"));
+  assert.ok(api.includes("srpIsReference ? 'reference' : 'formula'"));
+  assert.ok(api.includes("srp_source_scheme_id = ?, srp_source_field_key = ?"));
+  assert.ok(api.includes("srp_source_scheme_id AS source_scheme_id"));
+  assert.ok(api.includes("referenceChainReachesScheme(sourceScheme.id, scheme.id)"));
+  assert.ok(api.includes("srpSource = 'reference'"));
+});
+
+test('builtin SRP formula rules and reference settings survive history restore and scheme copy', () => {
+  assert.ok(migration.includes("srp_formula_rules TEXT NOT NULL DEFAULT '{}'"));
+  assert.ok(api.includes("srp_formula_rules: String(scheme.srp_formula_rules || '{}')"));
+  assert.ok(api.includes("srp_formula_rules = ?, srp_source_scheme_id = ?, srp_source_field_key = ?"));
+  assert.ok(api.includes("snapshot.scheme && snapshot.scheme.srp_formula_rules || '{}'"));
+  assert.ok(api.includes("sourceHasSrpReference"));
+  assert.ok(api.includes("String(source.srp_source_scheme_id || '')"));
+  assert.ok(ui.includes("srp_formula_rules:data.formula_rules"));
+});
