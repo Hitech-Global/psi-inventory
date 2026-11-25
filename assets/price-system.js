@@ -1308,6 +1308,7 @@ window.psDeactivateScheme=async function(){if(!state.scheme||!allowDiscardDirty(
 window.psDeleteScheme=function(){
  if(!state.scheme||!allowDiscardDirty())return;
  const body='<div style="font-size:13px;line-height:1.65;color:#444"><p>'+tr('deleteSchemeConfirm')+'</p><div style="margin:10px 0;padding:10px 12px;border-radius:8px;background:#f5f5f7;color:#1d1d1f;font-weight:600">'+esc(schemeLabel(state.scheme))+'</div><p style="color:#b42318">'+tr('deleteSchemeWarning')+'</p></div>';
+ state.modalLanguageRenderer=function(){window.psDeleteScheme();};
  openModal(tr('deleteSchemeTitle'),body,'<button class="btn btn-secondary" onclick="closeModal()">'+tr('cancel')+'</button><button class="btn btn-primary" style="background:#d93025;border-color:#d93025" onclick="psConfirmDeleteScheme()">'+tr('deleteScheme')+'</button>','modal-md');
 };
 window.psConfirmDeleteScheme=async function(){
