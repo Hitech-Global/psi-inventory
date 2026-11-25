@@ -158,7 +158,8 @@ test('builtin SRP editor allows direct formula or reference mode and submits the
 test('builtin SRP references are stored at scheme level, included in source fields, and cycle-checked', () => {
   assert.ok(migration.includes("srp_source_scheme_id TEXT NOT NULL DEFAULT ''"));
   assert.ok(migration.includes("srp_source_field_key TEXT NOT NULL DEFAULT ''"));
-  assert.ok(api.includes("srpIsReference ? 'reference' : 'formula'"));
+  assert.ok(api.includes('function buildBuiltinSrpField(scheme)'));
+  assert.ok(api.includes("field_type: isReference ? 'reference' : 'formula'"));
   assert.ok(api.includes("srp_source_scheme_id = ?, srp_source_field_key = ?"));
   assert.ok(api.includes("srp_source_scheme_id AS source_scheme_id"));
   assert.ok(api.includes("referenceChainReachesScheme(sourceScheme.id, scheme.id)"));
