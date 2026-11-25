@@ -980,7 +980,7 @@ function registerPriceSystemRoutes(app, deps) {
             }
           });
           resolved[key] = missingDependencies.length ? null : (expression ? evaluateFormula(expression, vars, formulaOptions) : 0);
-          if (missingDependencies.length) errors[key] = '公式依赖字段缺少该 SKU 的有效数据：' + missingDependencies.join('、');
+          if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingDependencies.join('、');
         } catch (e) {
           errors[key] = e.message;
           resolved[key] = 0;
@@ -1364,16 +1364,18 @@ function registerPriceSystemRoutes(app, deps) {
         try {
           const expression = normalizeFormulaExpression(categoryFormula, fields);
           const variables = Object.assign({}, context, resolved);
-          let hasMissingComputedValue = false;
+          const missingComputedDependencies = [];
           getFormulaVariables(expression).forEach(dependency => {
             if (fieldMap.has(dependency)) {
               variables[dependency] = resolveField(dependency);
               const dependencyField = fieldMap.get(dependency);
-              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) hasMissingComputedValue = true;
+              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+                missingComputedDependencies.push(dependencyField.field_name || dependency);
+              }
             }
           });
-          resolved[key] = hasMissingComputedValue ? null : evaluateFormula(expression, variables, formulaOptions);
-          if (hasMissingComputedValue) errors[key] = '公式依赖字段缺少该 SKU 的有效数据（可能没有匹配到有效报价）';
+          resolved[key] = missingComputedDependencies.length ? null : evaluateFormula(expression, variables, formulaOptions);
+          if (missingComputedDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingComputedDependencies.join('、');
         } catch (error) {
           errors[key] = error.message;
           resolved[key] = 0;
