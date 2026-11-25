@@ -245,6 +245,43 @@ test('live preview automatically converts a cross-channel reference to a percent
 });
 
 
+test('live preview follows multi-level channel references when resolving percentage semantics', async () => {
+  const harness = createHarness([
+    { id: 'dealer-rate-ref', scheme_id: 'scheme-1', field_key: 'dealer_rate_ref', field_name: 'Referenced Dealer Profit Rate', field_type: 'reference', source_scheme_id: 'source-scheme', source_field_key: 'dealer_rate_mid', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'dealer-price-ref', scheme_id: 'scheme-1', field_key: 'dealer_price_ref', field_name: 'Dealer Price from Reference', field_type: 'formula', formula: 'srp * (1 - dealer_rate_ref)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ], {
+    'source-scheme|dealer_rate_mid': { field_type: 'reference', source_scheme_id: 'source-scheme-2', source_field_key: 'dealer_rate' },
+    'source-scheme-2|dealer_rate': { field_type: 'percent' }
+  });
+  const response = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 700, shipping: 10, payment_fee: 0, profit: 0, profit_rate: 0, dealer_rate_ref: 18 }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.ok(Math.abs(response.body.values.dealer_price_ref - 820) < 1e-9);
+});
+
+test('built-in SRP uses one shared field definition across scheme data and live preview', () => {
+  const api = fs.readFileSync(path.join(__dirname, '..', 'price-system-api.js'), 'utf8');
+  assert.match(api, /function buildBuiltinSrpField\(scheme\)/);
+  assert.equal((api.match(/fields\.push\(buildBuiltinSrpField\(scheme\)\)/g) || []).length, 3);
+  assert.match(api, /function getFormulaFieldDefinition\(schemeId, fieldKey\)/);
+  assert.doesNotMatch(api, /sourceFieldKey === 'srp'\) return 'formula'/);
+});
+
+test('live formula preview does not reorder rows; only explicit header clicks sort the table', () => {
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'assets', 'price-system.js'), 'utf8');
+  const start = ui.indexOf('function updatePriceSystemFormulaPreview');
+  const end = ui.indexOf('async function runPriceSystemFormulaPreview', start);
+  assert.ok(start >= 0 && end > start, 'formula preview update function exists');
+  const previewUpdate = ui.slice(start, end);
+  assert.doesNotMatch(previewUpdate, /psApplyTableSort\s*\(/);
+  const sortHandlerStart = ui.indexOf("th.addEventListener('click'");
+  const sortHandlerEnd = ui.indexOf('\n });', sortHandlerStart);
+  assert.ok(sortHandlerStart >= 0 && sortHandlerEnd > sortHandlerStart, 'table sort click handler exists');
+  assert.match(ui.slice(sortHandlerStart, sortHandlerEnd), /psApplyTableSort\(table,index,next\)/);
+});
+
 test('formula preview can use an auto-synced FOB quotation field', async () => {
   const harness = createHarness([
     { id: 'fob', scheme_id: 'scheme-1', field_key: 'fob', field_name: 'FOB', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 1 }
