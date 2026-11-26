@@ -190,7 +190,7 @@ test('creation is blocked if a quote or SKU-master price changes after preview',
   assert.equal(h.writes.length,0);
 });
 
-test('PO creation UI exposes original/final FOB columns and per-row single-PO export',()=>{
+test('PO creation UI exports one PO in the original factory Excel format',()=>{
   const ui=fs.readFileSync(path.join(root,'po-plan-ui.js'),'utf8');
   const boot=fs.readFileSync(path.join(root,'scripts/po-plan-bootstrap.cjs'),'utf8');
   assert.match(ui,/\/api\/po-plans\/price-preview/);
@@ -205,8 +205,19 @@ test('PO creation UI exposes original/final FOB columns and per-row single-PO ex
   const exportFn=ui.match(/async function exportPOPlan\(id,button\)\{[\s\S]*?\n\}/)?.[0]||'';
   assert.match(exportFn,/apiCall\('\/api\/po-plans\/'\+encodeURIComponent\(id\)\)/);
   assert.doesNotMatch(exportFn,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
-  assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(infoRows\),'PO采购计划'\)/);
-  assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(detailRows\),'SKU明细'\)/);
-  assert.match(ui,/XLSX\.writeFile\(wb,'PO_'\+safeNo\+'\.xlsx'\)/);
-  assert.match(boot,/ASSET_VERSION='20261126b'/);
+  assert.match(exportFn,/\{字段:'PO编号',内容:po\.po_no\|\|''\}/);
+  assert.match(exportFn,/\{字段:'PO日期',内容:po\.po_date\|\|''\}/);
+  assert.match(exportFn,/\{字段:'供应商',内容:po\.supplier_name\|\|''\}/);
+  assert.match(exportFn,/\{字段:'品牌',内容:po\.brand\|\|''\}/);
+  assert.match(exportFn,/\{字段:'国家',内容:po\.country\|\|''\}/);
+  assert.match(exportFn,/\{字段:'仓库',内容:po\.target_warehouse\|\|''\}/);
+  assert.match(exportFn,/\{字段:'币种',内容:po\.currency\|\|''\}/);
+  assert.match(exportFn,/items\.map\(item=>\(\{SKU:item\.sku_code\|\|''，数量:/);
+  assert.match(exportFn,/\{SKU:'合计 SKU 数量',数量:items\.length\}/);
+  assert.match(exportFn,/\{SKU:'合计采购数量',数量:totalQty\}/);
+  assert.match(exportFn,/json_to_sheet\(infoRows\),'PO信息'/);
+  assert.match(exportFn,/json_to_sheet\(detailRows\),'SKU明细'/);
+  assert.match(exportFn,/XLSX\.writeFile\(wb,'PO_'\+po\.po_no\+'\.xlsx'\)/);
+  assert.doesNotMatch(exportFn,/报价FOB|最终FOB|po_amount|换算汇率/);
+  assert.match(boot,/ASSET_VERSION='20261126c'/);
 });
