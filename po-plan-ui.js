@@ -109,44 +109,24 @@ async function exportPOPlan(id,button){
   try{
     const po=await apiCall('/api/po-plans/'+encodeURIComponent(id));
     if(!po||!po.id)throw new Error('没有获取到这张PO的完整资料');
-    const infoRows=[{
-      'PO号':po.po_no||'',
-      '供应商':po.supplier_name||'',
-      '品牌':po.brand||'',
-      '国家':po.country||'',
-      '仓库':po.target_warehouse||'',
-      'PO日期':po.po_date||'',
-      '预计交期':po.expected_delivery||'',
-      '最终币种':po.currency||'',
-      '报价原币种':po.po_quote_currency||'',
-      '换算汇率':po.po_quote_currency&&po.po_exchange_rate?('1 '+po.po_quote_currency+' = '+po.po_exchange_rate+' '+(po.currency||'')):'',
-      'SKU明细数':Array.isArray(po.items)?po.items.length:0,
-      '计划数量':qty(po.planned_qty),
-      '已转PI':qty(po.transferred_qty),
-      '剩余可转':qty(po.remaining_qty),
-      '状态':statusText(po.plan_status),
-      '备注':po.remark||''
-    }];
-    const detailRows=(Array.isArray(po.items)?po.items:[]).map(item=>({
-      'PO号':po.po_no||'',
-      'SKU':item.sku_code||'',
-      '计划数量':qty(item.planned_qty??item.po_qty),
-      '报价FOB':item.price_source==='quotation'?(Number(item.quote_unit_price)||0):'',
-      '报价币种':item.quote_currency||po.po_quote_currency||'',
-      '报价日期':item.quote_date||'',
-      '最终FOB':Number(item.unit_price)||0,
-      '最终币种':po.currency||'',
-      '金额':Number(item.po_amount)||0,
-      '已转PI':qty(item.transferred_qty??item.transferred_pi_qty),
-      '剩余可转':qty(item.remaining_qty),
-      '价格来源':item.price_source||'',
-      '备注':item.remark||''
-    }));
+    const items=Array.isArray(po.items)?po.items:[];
+    const totalQty=items.reduce((sum,item)=>sum+(Number(item.po_qty)||0),0);
+    const infoRows=[
+      {字段:'PO编号',内容:po.po_no||''},
+      {字段:'PO日期',内容:po.po_date||''},
+      {字段:'供应商',内容:po.supplier_name||''},
+      {字段:'品牌',内容:po.brand||''},
+      {字段:'国家',内容:po.country||''},
+      {字段:'仓库',内容:po.target_warehouse||''},
+      {字段:'币种',内容:po.currency||''}
+    ];
+    const detailRows=items.map(item=>({SKU:item.sku_code||'',数量:Number(item.po_qty)||0}));
+    detailRows.push({SKU:'合计 SKU 数量',数量:items.length});
+    detailRows.push({SKU:'合计采购数量',数量:totalQty});
     const wb=XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(infoRows),'PO采购计划');
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(infoRows),'PO信息');
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(detailRows),'SKU明细');
-    const safeNo=String(po.po_no||id).replace(/[\\/:*?"<>|]/g,'_');
-    XLSX.writeFile(wb,'PO_'+safeNo+'.xlsx');
+    XLSX.writeFile(wb,'PO_'+po.po_no+'.xlsx');
     global.showToast((po.po_no||'PO')+' 导出成功','success');
   }catch(error){
     global.showToast(error&&error.message?error.message:'PO导出失败','danger');
