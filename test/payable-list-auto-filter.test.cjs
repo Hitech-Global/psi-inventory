@@ -40,7 +40,8 @@ test('payable multi-select changes schedule one debounced automatic refresh',()=
   // 连续勾选时只保留最后一次定时刷新。
   ctx.paylMsChange('payl-ms-fb');
   assert.equal(timers.size,1);
-  const pending=[...timers.values()][0];
+  const [pendingId,pending]=[...timers.entries()][0];
+  timers.delete(pendingId); // fake timers remove the fired timer before running its callback
   pending.fn();
   assert.equal(loads,1);
   assert.equal(timers.size,0);
