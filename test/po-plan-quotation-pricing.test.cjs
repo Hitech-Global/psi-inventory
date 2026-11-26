@@ -190,7 +190,7 @@ test('creation is blocked if a quote or SKU-master price changes after preview',
   assert.equal(h.writes.length,0);
 });
 
-test('PO creation UI exposes original/final FOB columns and blocks mixed quote currencies',()=>{
+test('PO creation UI exposes original/final FOB columns and per-row single-PO export',()=>{
   const ui=fs.readFileSync(path.join(root,'po-plan-ui.js'),'utf8');
   const boot=fs.readFileSync(path.join(root,'scripts/po-plan-bootstrap.cjs'),'utf8');
   assert.match(ui,/\/api\/po-plans\/price-preview/);
@@ -198,12 +198,14 @@ test('PO creation UI exposes original/final FOB columns and blocks mixed quote c
   assert.match(ui,/同一张PO的最新报价币种不一致/);
   assert.match(ui,/button\.disabled=mismatch\|\|!rateValid\|\|!rowsValid/);
   assert.match(ui,/价格已更新\|报价币种已发生变化\|币种不一致/);
-  assert.match(ui,/id="po-plan-export"/);
-  assert.match(ui,/\$\('#po-plan-export'\)\.onclick=exportPOPlanList/);
-  assert.match(ui,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
-  assert.match(ui,/selectedPOFacets\('brand'\)/);
-  assert.match(ui,/selectedPOFacets\('country'\)/);
+  assert.doesNotMatch(ui,/id="po-plan-export"/);
+  assert.match(ui,/class="action-btn pp-export"/);
+  assert.match(ui,/title="导出这张PO的Excel"/);
+  assert.match(ui,/exportPOPlan\(id,e\.currentTarget\)/);
+  assert.match(ui,/apiCall\('\/api\/po-plans\/'\+encodeURIComponent\(id\)\)/);
+  assert.doesNotMatch(ui,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
   assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(infoRows\),'PO采购计划'\)/);
   assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(detailRows\),'SKU明细'\)/);
-  assert.match(boot,/ASSET_VERSION='20261126a'/);
+  assert.match(ui,/XLSX\.writeFile\(wb,'PO_'\+safeNo\+'\.xlsx'\)/);
+  assert.match(boot,/ASSET_VERSION='20261126b'/);
 });
