@@ -1165,7 +1165,7 @@ function registerPriceSystemRoutes(app, deps) {
         purchase_price_usd: Number(sku.purchase_price_usd || 0),
         standard_purchase_price: Number(sku.standard_purchase_price || 0),
         reference_customs_rate: Number(sku.reference_customs_rate || 0),
-        landing_cost: Number(landingCost && landingCost.value || 0),
+        landing_cost: landingCost && landingCost.value != null && Number.isFinite(Number(landingCost.value)) ? Number(landingCost.value) : null,
         stock_qty: Number(sku.stock_qty || 0),
         inventory_qty: Number(sku.stock_qty || 0)
       };
@@ -1189,7 +1189,12 @@ function registerPriceSystemRoutes(app, deps) {
           return resolved[key];
         }
         if (field.field_key === 'srp' && manualSrpBySku.has(sku.sku_code)) { resolved[key] = manualSrpBySku.get(sku.sku_code); return resolved[key]; }
-        if (Number(field.sync_wac || 0) === 1) { resolved[key] = landingCost && landingCost.value != null ? Number(landingCost.value) : 0; return resolved[key]; }
+        if (Number(field.sync_wac || 0) === 1) {
+          const rawWac = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
+          resolved[key] = rawWac !== null && Number.isFinite(rawWac) ? rawWac : null;
+          if (resolved[key] == null) errors[key] = '未找到有效的已确认 WAC，请先补齐成本';
+          return resolved[key];
+        }
         if (Number(field.sync_quotation || 0) === 1) {
           const raw = stored[key];
           resolved[key] = raw == null || raw === '' || !Number.isFinite(Number(raw)) ? null : Number(raw);
@@ -1225,13 +1230,15 @@ function registerPriceSystemRoutes(app, deps) {
             if (fieldMap.has(dep)) {
               vars[dep] = resolveField(dep);
               const dependencyField = fieldMap.get(dep);
-              if (vars[dep] == null && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+              if (vars[dep] == null && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1 || Number(dependencyField.sync_wac || 0) === 1)) {
                 missingDependencies.push(dependencyField.field_name || dep);
               }
+            } else if (dep === 'landing_cost' && vars[dep] == null) {
+              missingDependencies.push('最新确认 WAC');
             }
           });
           resolved[key] = missingDependencies.length ? null : (expression ? evaluateFormula(expression, vars, formulaOptions) : 0);
-          if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingDependencies.join('、');
+          if (missingDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值、自动同步报价或 WAC：' + missingDependencies.join('、');
         } catch (e) {
           errors[key] = e.message;
           resolved[key] = usesLiveExchangeRate ? null : 0;
@@ -1243,7 +1250,7 @@ function registerPriceSystemRoutes(app, deps) {
       const values = {};
       fields.forEach(field => {
         if (!isCategoryApplicable(field, skuCategory)) values[field.field_key] = null;
-        else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = landingCost && landingCost.value != null ? Number(landingCost.value) : null;
+        else if (Number(field.sync_wac || 0) === 1) values[field.field_key] = resolveField(field.field_key);
         else if (field.field_type === 'formula' || field.field_type === 'reference') values[field.field_key] = resolveField(field.field_key);
         else values[field.field_key] = stored[field.field_key] == null ? null : Number(stored[field.field_key]);
       });
@@ -1552,6 +1559,8 @@ function registerPriceSystemRoutes(app, deps) {
         }
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : 0;
         const sourceField = previewFieldMap.get(key);
+        if (body.sku_code && key === 'landing_cost' && (raw == null || raw === '')) throw new Error('当前 SKU 缺少有效的已确认 WAC，无法预览公式');
+        if (sourceField && Number(sourceField.sync_wac || 0) === 1 && (raw == null || raw === '')) throw new Error('当前 SKU 缺少有效的已确认 WAC：' + (sourceField.field_name || key));
         if (sourceField && Number(sourceField.sync_quotation || 0) === 1 && (raw == null || raw === '')) throw new Error('当前 SKU 没有匹配到有效报价：' + (sourceField.field_name || key));
         if ((sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula')) && (raw == null || raw === '')) throw new Error('当前 SKU 缺少引用字段数值：' + key);
         const value = raw == null || raw === '' ? 0 : Number(raw);
@@ -1594,7 +1603,7 @@ function registerPriceSystemRoutes(app, deps) {
         const raw = Object.prototype.hasOwnProperty.call(supplied, key) ? supplied[key] : null;
         const sourceField = fieldMap.get(key);
         const missingComputedValue = raw == null || raw === '';
-        const value = missingComputedValue ? (sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula' || Number(sourceField.sync_quotation || 0) === 1) ? null : 0) : Number(raw);
+        const value = missingComputedValue ? (key === 'landing_cost' || (sourceField && (sourceField.field_type === 'reference' || sourceField.field_type === 'formula' || Number(sourceField.sync_quotation || 0) === 1 || Number(sourceField.sync_wac || 0) === 1)) ? null : 0) : Number(raw);
         if (value !== null && !Number.isFinite(value)) throw new Error('字段不是有效数字：' + key);
         context[key] = value;
       });
@@ -1663,13 +1672,15 @@ function registerPriceSystemRoutes(app, deps) {
             if (fieldMap.has(dependency)) {
               variables[dependency] = resolveField(dependency);
               const dependencyField = fieldMap.get(dependency);
-              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1)) {
+              if (variables[dependency] == null && dependencyField && (dependencyField.field_type === 'reference' || dependencyField.field_type === 'formula' || Number(dependencyField.sync_quotation || 0) === 1 || Number(dependencyField.sync_wac || 0) === 1)) {
                 missingComputedDependencies.push(dependencyField.field_name || dependency);
               }
+            } else if (dependency === 'landing_cost' && variables[dependency] == null) {
+              missingComputedDependencies.push('最新确认 WAC');
             }
           });
           resolved[key] = missingComputedDependencies.length ? null : evaluateFormula(expression, variables, formulaOptions);
-          if (missingComputedDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值或自动同步报价：' + missingComputedDependencies.join('、');
+          if (missingComputedDependencies.length) errors[key] = '公式依赖的引用字段缺少对应 SKU 数值、自动同步报价或 WAC：' + missingComputedDependencies.join('、');
         } catch (error) {
           errors[key] = error.message;
           resolved[key] = usesLiveExchangeRate ? null : 0;
