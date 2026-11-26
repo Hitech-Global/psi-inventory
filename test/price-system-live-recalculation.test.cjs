@@ -319,3 +319,68 @@ test('live formula recalculation can use an auto-synced FOB field and keeps miss
   assert.equal(missing.body.values.fob_idr, null);
   assert.match(missing.body.formula_errors.fob_idr, /FOB/);
 });
+
+test('live preview blocks profit and ROAS formulas when an auto-synced WAC is missing, then recovers when WAC arrives', async () => {
+  const harness = createHarness([
+    { id: 'wac', scheme_id: 'scheme-1', field_key: 'wac_cost', field_name: '最新确认 WAC', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 1, sync_quotation: 0 },
+    { id: 'profit_wac', scheme_id: 'scheme-1', field_key: 'profit_wac', field_name: 'Profit with WAC', field_type: 'formula', formula: 'srp - wac_cost', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'profit_rate_wac', scheme_id: 'scheme-1', field_key: 'profit_rate_wac', field_name: 'Profit Rate with WAC', field_type: 'formula', formula: 'profit_wac / srp', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 },
+    { id: 'breakeven_roas', scheme_id: 'scheme-1', field_key: 'breakeven_roas', field_name: 'Breakeven ROAS', field_type: 'formula', formula: 'srp / (srp - wac_cost)', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 0, sync_quotation: 0 }
+  ]);
+  const missing = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: null, wac_cost: null, shipping: 10, payment_fee: 0 }
+  });
+  assert.equal(missing.statusCode, 200);
+  assert.equal(missing.body.values.profit_wac, null);
+  assert.equal(missing.body.values.profit_rate_wac, null);
+  assert.equal(missing.body.values.breakeven_roas, null);
+  assert.match(missing.body.formula_errors.profit_wac, /WAC/);
+  assert.match(missing.body.formula_errors.profit_rate_wac, /Profit with WAC/);
+  assert.match(missing.body.formula_errors.breakeven_roas, /WAC/);
+
+  const recovered = await harness.invoke({
+    sku_code: 'SKU-1', manual_srp: 1000,
+    context: { landing_cost: 600, wac_cost: 600, shipping: 10, payment_fee: 0 }
+  });
+  assert.equal(recovered.statusCode, 200);
+  assert.equal(recovered.body.values.profit_wac, 400);
+  assert.equal(recovered.body.values.profit_rate_wac, 0.4);
+  assert.equal(recovered.body.values.breakeven_roas, 2.5);
+});
+
+test('formula editor preview refuses to treat missing WAC as zero', async () => {
+  const harness = createHarness([
+    { id: 'wac', scheme_id: 'scheme-1', field_key: 'wac_cost', field_name: '最新确认 WAC', field_type: 'amount', formula: '', formula_rules: '{}', applicable_categories: '[]', is_active: 1, sync_wac: 1, sync_quotation: 0 }
+  ]);
+  const response = await harness.invokeFormulaPreview({
+    sku_code: 'SKU-1',
+    formula: 'srp - wac_cost',
+    variables: { srp: 1000, wac_cost: null }
+  });
+  assert.equal(response.statusCode, 400);
+  assert.match(response.body.error, /缺少有效的已确认 WAC/);
+});
+
+test('built-in latest confirmed WAC dependency stays blank when no WAC is available', async () => {
+  const harness = createHarness([], {}, { srp_formula: 'landing_cost * 1.1' });
+  const response = await harness.invoke({
+    sku_code: 'SKU-1',
+    context: { landing_cost: null, srp: null }
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body.srp, null);
+  assert.match(response.body.formula_errors.srp, /WAC/);
+});
+
+test('price system marks missing WAC clearly and keeps the base WAC null', () => {
+  const api = fs.readFileSync(path.join(__dirname, '..', 'price-system-api.js'), 'utf8');
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'assets', 'price-system.js'), 'utf8');
+  assert.match(api, /landing_cost: landingCost && landingCost\.value != null[^\n]+: null/);
+  assert.match(api, /Number\(dependencyField\.sync_wac \|\| 0\) === 1/);
+  assert.match(api, /values\[field\.field_key\] = resolveField\(field\.field_key\)/);
+  assert.match(ui, /missingWac=v==null/);
+  assert.match(ui, /wacMissingStatus:'待补成本'/);
+  assert.match(ui, /wacMissingStatus:'WAC missing'/);
+  assert.match(ui, /wacMissingStatus:'WAC belum tersedia'/);
+});

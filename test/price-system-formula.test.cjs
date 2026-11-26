@@ -73,3 +73,9 @@ test('supports live exchange-rate formula variable and fails closed when unavail
   assert.equal(validateFormula('fob * exchange_rate', ['fob', ...BUILTIN_PRICE_VARIABLES]).valid, true);
   assert.throws(() => evaluateFormula('fob * exchange_rate', { fob: 4.38 }), /实时汇率暂不可用/);
 });
+
+test('does not silently convert missing formula inputs to zero', () => {
+  assert.throws(() => evaluateFormula('wac_cost + 10', { wac_cost: null }), /缺少有效值/);
+  assert.throws(() => evaluateFormula('wac_cost + 10', { wac_cost: '' }), /缺少有效值/);
+  assert.throws(() => evaluateFormula('fob * exchange_rate', { fob: 4.38 }), /实时汇率暂不可用/);
+});
