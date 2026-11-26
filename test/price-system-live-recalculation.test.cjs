@@ -378,6 +378,8 @@ test('price system marks missing WAC clearly and keeps the base WAC null', () =>
   const ui = fs.readFileSync(path.join(__dirname, '..', 'assets', 'price-system.js'), 'utf8');
   assert.match(api, /landing_cost: landingCost && landingCost\.value != null[^\n]+: null/);
   assert.match(api, /Number\(dependencyField\.sync_wac \|\| 0\) === 1/);
+  assert.match(api, /values\\[field\\.field_key\\] = resolveField\\(field\\.field_key\\)/);
+  assert.match(ui, /missingWac=v==null/);
   assert.match(ui, /wacMissingStatus:'待补成本'/);
   assert.match(ui, /wacMissingStatus:'WAC missing'/);
   assert.match(ui, /wacMissingStatus:'WAC belum tersedia'/);
