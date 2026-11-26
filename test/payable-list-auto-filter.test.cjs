@@ -82,7 +82,8 @@ test('payable date and keyword controls auto-apply; quick month applies immediat
   assert.ok(list.includes('onchange="paylMsUpdateQuickActive();paylScheduleFilterLoad(0)"'));
   assert.ok(list.includes('oninput="paylScheduleFilterLoad(450)"'));
   assert.match(list,/onkeydown="if\(event\.key===\\'Enter\\'\)\{event\.preventDefault\(\);paylScheduleFilterLoad\(0\)\}"/);
-  assert.match(list,/function paylQuickMonth\(which\)[\s\S]*?loadPayableList\(\)/);
+  const quick=section('function paylQuickMonth(which){','// 当前日期区间正好等于完整本月/上月时对应按钮高亮');
+  assert.match(quick,/loadPayableList\(\)/);
 });
 
 test('latest payable filter request alone can update the list and its PR status map',()=>{
