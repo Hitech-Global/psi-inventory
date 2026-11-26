@@ -212,7 +212,7 @@ test('PO creation UI exports one PO in the original factory Excel format',()=>{
   assert.match(exportFn,/\{字段:'国家',内容:po\.country\|\|''\}/);
   assert.match(exportFn,/\{字段:'仓库',内容:po\.target_warehouse\|\|''\}/);
   assert.match(exportFn,/\{字段:'币种',内容:po\.currency\|\|''\}/);
-  assert.match(exportFn,/items\.map\(item=>\(\{SKU:item\.sku_code\|\|''，数量:/);
+  assert.match(exportFn,/items\.map\(item=>\(\{SKU:item\.sku_code\|\|'',数量:/);
   assert.match(exportFn,/\{SKU:'合计 SKU 数量',数量:items\.length\}/);
   assert.match(exportFn,/\{SKU:'合计采购数量',数量:totalQty\}/);
   assert.match(exportFn,/json_to_sheet\(infoRows\),'PO信息'/);
