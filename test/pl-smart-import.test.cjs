@@ -123,7 +123,7 @@ function loadPLCartonTotal(baseTotal,baseRows){
   const sandbox={window:{_plCartonTotalBase:baseTotal,_plCartonRowsBaseSum:baseRows},Number,Math};
   require('node:vm').runInNewContext(helperSource+'\nthis.__getTotal=getPLDraftTotalCartons;',sandbox);
   return sandbox.__getTotal;
-});
+}
 
 
 function makeRedragonWorkbook(){
