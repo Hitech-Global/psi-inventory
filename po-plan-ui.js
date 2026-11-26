@@ -62,7 +62,7 @@ function renderPOPlan(){
   ensureCss();
   bindPOFacetOutsideClose();
   const c=$('#content-inner');if(!c)return;
-  c.innerHTML=`<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="open">待采购</option><option value="partial">部分转PI</option><option value="completed">已全部转PI</option><option value="closed">已关闭</option></select></div>${poFacetHtml('brand','品牌')}${poFacetHtml('country','国家')}<div class="filter-group"><label>关键词</label><input id="po-fk" placeholder="PO号 / 供应商"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" id="po-plan-search">搜索</button>${global.hasPermission&&(global.hasPermission('po_export')||global.hasPermission('po_create'))?'<button class="btn btn-secondary btn-sm" id="po-plan-export">📥 导出Excel</button>':''}${global.hasPermission&&global.hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="po-plan-new">➕ 新建PO</button>':''}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO采购计划</div><div style="font-size:12px;color:#86868b">PO=动态采购计划 · PI=实际采购确认</div></div><div id="po-table"><div class="empty-state"><div class="empty-icon">⏳</div>加载中…</div></div></div>`;
+  c.innerHTML=`<div id="flash-container"></div><div class="filter-bar"><div class="filter-form"><div class="filter-group"><label>状态</label><select id="po-fs"><option value="">全部</option><option value="open">待采购</option><option value="partial">部分转PI</option><option value="completed">已全部转PI</option><option value="closed">已关闭</option></select></div>${poFacetHtml('brand','品牌')}${poFacetHtml('country','国家')}<div class="filter-group"><label>关键词</label><input id="po-fk" placeholder="PO号 / 供应商"></div><div class="filter-actions"><button class="btn btn-primary btn-sm" id="po-plan-search">搜索</button>${global.hasPermission&&global.hasPermission('po_create')?'<button class="btn btn-primary btn-sm" id="po-plan-new">➕ 新建PO</button>':''}</div></div></div><div class="table-section"><div class="table-section-title"><div class="table-section-title-left">🛒 PO采购计划</div><div style="font-size:12px;color:#86868b">PO=动态采购计划 · PI=实际采购确认</div></div><div id="po-table"><div class="empty-state"><div class="empty-icon">⏳</div>加载中…</div></div></div>`;
   for(const [kind,label] of [['brand','品牌'],['country','国家']]){
     const options=$('#po-'+kind+'-options');
     options.addEventListener('change',event=>{
@@ -72,7 +72,7 @@ function renderPOPlan(){
       }
     });
   }
-  $('#po-plan-search').onclick=()=>loadPOPlan(false);if($('#po-plan-export'))$('#po-plan-export').onclick=exportPOPlanList;$('#po-fk').onkeypress=e=>{if(e.key==='Enter')loadPOPlan(false)};if($('#po-plan-new'))$('#po-plan-new').onclick=createPOPlan;
+  $('#po-plan-search').onclick=()=>loadPOPlan(false);$('#po-fk').onkeypress=e=>{if(e.key==='Enter')loadPOPlan(false)};if($('#po-plan-new'))$('#po-plan-new').onclick=createPOPlan;
   loadPOPlan(true);
 }
 async function loadPOPlan(useCache){
@@ -95,7 +95,7 @@ async function fetchPOPlan(key,background){
     drawPOPlan(data);
   }catch(e){if(!background&&$('#po-table'))$('#po-table').innerHTML='<div class="empty-state">'+E(e.message)+'</div>';}
 }
-async function exportPOPlanList(){
+async function exportPOPlan(id,button){
   if(!global.hasPermission||(!global.hasPermission('po_export')&&!global.hasPermission('po_create'))){
     global.showToast('没有导出权限','danger');
     return;
@@ -105,38 +105,18 @@ async function exportPOPlanList(){
     global.showToast('Excel导出组件尚未加载，请刷新页面后重试','danger');
     return;
   }
-  const button=$('#po-plan-export');
-  if(button){button.disabled=true;button.textContent='⏳ 导出中…';}
+  if(button){button.disabled=true;button.title='导出中…';button.textContent='⏳';}
   try{
-    const q=new URLSearchParams();
-    const status=$('#po-fs')?.value||'';
-    const brands=selectedPOFacets('brand');
-    const countries=selectedPOFacets('country');
-    const keyword=$('#po-fk')?.value.trim()||'';
-    if(status)q.set('status',status);
-    brands.forEach(value=>q.append('brand',value));
-    countries.forEach(value=>q.append('country',value));
-    if(keyword)q.set('keyword',keyword);
-    const plans=await apiCall('/api/po-plans?'+q.toString());
-    if(!Array.isArray(plans)||!plans.length){
-      global.showToast('当前筛选条件下没有可导出的PO','warning');
-      return;
-    }
-    const fullPlans=[];
-    const batchSize=8;
-    for(let i=0;i<plans.length;i+=batchSize){
-      const batch=await Promise.all(plans.slice(i,i+batchSize).map(plan=>
-        apiCall('/api/po-plans/'+encodeURIComponent(plan.id))
-      ));
-      fullPlans.push(...batch);
-    }
-    const infoRows=fullPlans.map(po=>({
+    const po=await apiCall('/api/po-plans/'+encodeURIComponent(id));
+    if(!po||!po.id)throw new Error('没有获取到这张PO的完整资料');
+    const infoRows=[{
       'PO号':po.po_no||'',
       '供应商':po.supplier_name||'',
       '品牌':po.brand||'',
       '国家':po.country||'',
       '仓库':po.target_warehouse||'',
       'PO日期':po.po_date||'',
+      '预计交期':po.expected_delivery||'',
       '最终币种':po.currency||'',
       '报价原币种':po.po_quote_currency||'',
       '换算汇率':po.po_quote_currency&&po.po_exchange_rate?('1 '+po.po_quote_currency+' = '+po.po_exchange_rate+' '+(po.currency||'')):'',
@@ -144,45 +124,43 @@ async function exportPOPlanList(){
       '计划数量':qty(po.planned_qty),
       '已转PI':qty(po.transferred_qty),
       '剩余可转':qty(po.remaining_qty),
-      '状态':statusText(po.plan_status)
+      '状态':statusText(po.plan_status),
+      '备注':po.remark||''
+    }];
+    const detailRows=(Array.isArray(po.items)?po.items:[]).map(item=>({
+      'PO号':po.po_no||'',
+      'SKU':item.sku_code||'',
+      '计划数量':qty(item.planned_qty??item.po_qty),
+      '报价FOB':item.price_source==='quotation'?(Number(item.quote_unit_price)||0):'',
+      '报价币种':item.quote_currency||po.po_quote_currency||'',
+      '报价日期':item.quote_date||'',
+      '最终FOB':Number(item.unit_price)||0,
+      '最终币种':po.currency||'',
+      '金额':Number(item.po_amount)||0,
+      '已转PI':qty(item.transferred_qty??item.transferred_pi_qty),
+      '剩余可转':qty(item.remaining_qty),
+      '价格来源':item.price_source||'',
+      '备注':item.remark||''
     }));
-    const detailRows=[];
-    fullPlans.forEach(po=>{
-      (Array.isArray(po.items)?po.items:[]).forEach(item=>{
-        detailRows.push({
-          'PO号':po.po_no||'',
-          'SKU':item.sku_code||'',
-          '计划数量':qty(item.planned_qty??item.po_qty),
-          '报价FOB':item.price_source==='quotation'?(Number(item.quote_unit_price)||0):'',
-          '报价币种':po.po_quote_currency||'',
-          '最终FOB':Number(item.unit_price)||0,
-          '最终币种':po.currency||'',
-          '金额':Number(item.po_amount)||0,
-          '已转PI':qty(item.transferred_qty??item.transferred_pi_qty),
-          '剩余可转':qty(item.remaining_qty),
-          '价格来源':item.price_source||''
-        });
-      });
-    });
     const wb=XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(infoRows),'PO采购计划');
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(detailRows),'SKU明细');
-    const now=new Date();
-    const date=[now.getFullYear(),String(now.getMonth()+1).padStart(2,'0'),String(now.getDate()).padStart(2,'0')].join('-');
-    XLSX.writeFile(wb,'PO采购计划_'+date+'.xlsx');
-    global.showToast('PO采购计划导出成功','success');
+    const safeNo=String(po.po_no||id).replace(/[\\/:*?"<>|]/g,'_');
+    XLSX.writeFile(wb,'PO_'+safeNo+'.xlsx');
+    global.showToast((po.po_no||'PO')+' 导出成功','success');
   }catch(error){
     global.showToast(error&&error.message?error.message:'PO导出失败','danger');
   }finally{
-    if(button){button.disabled=false;button.textContent='📥 导出Excel';}
+    if(button){button.disabled=false;button.title='导出这张PO的Excel';button.textContent='📥';}
   }
 }
+
 
 function drawPOPlan(data){
   const el=$('#po-table');if(!el)return;
   if(!data.length){el.innerHTML='<div class="empty-state"><div class="empty-icon">🛒</div>暂无PO采购计划</div>';return;}
-  el.innerHTML=`<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PO号</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>PO日期</th><th class="po-plan-col-left">明细</th><th class="po-plan-col-left">计划数量</th><th class="po-plan-col-left">已转PI</th><th class="po-plan-col-left">剩余可转</th><th>状态</th><th>操作</th></tr></thead><tbody>${data.map(p=>`<tr class="clickable-detail-row" data-id="${E(p.id)}"><td class="cell-id"><span class="link-text">${E(p.po_no)}</span></td><td>${E(p.supplier_name)}</td><td>${E(p.brand)}</td><td>${E(p.country)}</td><td>${E(p.target_warehouse)}</td><td class="cell-date">${global.fmtDate?global.fmtDate(p.po_date):E(p.po_date)}</td><td class="po-plan-col-left">${qty(p.item_count)}</td><td class="po-plan-col-left po-plan-num">${qty(p.planned_qty)}</td><td class="po-plan-col-left po-plan-used">${qty(p.transferred_qty)}</td><td class="po-plan-col-left po-plan-remain">${qty(p.remaining_qty)}</td><td><span class="status-badge ${statusClass(p.plan_status)}">${statusText(p.plan_status)}</span></td><td class="cell-actions"><button class="action-btn pp-view">👁️</button>${global.hasPermission&&global.hasPermission('po_create')&&p.plan_status!=='closed'?'<button class="action-btn pp-edit" title="编辑计划数量">✏️</button><button class="action-btn pp-close" title="关闭PO">关闭</button>':''}${global.hasPermission&&global.hasPermission('po_create')&&qty(p.transferred_qty)===0?'<button class="action-btn pp-del" style="color:#d4380d" title="删除未使用PO">删除</button>':''}</td></tr>`).join('')}</tbody></table></div>`;
-  el.querySelectorAll('tr[data-id]').forEach(tr=>{const id=tr.dataset.id;tr.onclick=e=>{if(e.target.closest('button'))return;viewPOPlan(id)};tr.querySelector('.pp-view').onclick=()=>viewPOPlan(id);tr.querySelector('.pp-edit')?.addEventListener('click',()=>editPOPlan(id));tr.querySelector('.pp-close')?.addEventListener('click',()=>closePOPlan(id));tr.querySelector('.pp-del')?.addEventListener('click',()=>deletePOPlan(id));});
+  el.innerHTML=`<div class="table-container" style="box-shadow:none;border-radius:0"><table class="data-table"><thead><tr><th>PO号</th><th>供应商</th><th>品牌</th><th>国家</th><th>仓库</th><th>PO日期</th><th class="po-plan-col-left">明细</th><th class="po-plan-col-left">计划数量</th><th class="po-plan-col-left">已转PI</th><th class="po-plan-col-left">剩余可转</th><th>状态</th><th>操作</th></tr></thead><tbody>${data.map(p=>`<tr class="clickable-detail-row" data-id="${E(p.id)}"><td class="cell-id"><span class="link-text">${E(p.po_no)}</span></td><td>${E(p.supplier_name)}</td><td>${E(p.brand)}</td><td>${E(p.country)}</td><td>${E(p.target_warehouse)}</td><td class="cell-date">${global.fmtDate?global.fmtDate(p.po_date):E(p.po_date)}</td><td class="po-plan-col-left">${qty(p.item_count)}</td><td class="po-plan-col-left po-plan-num">${qty(p.planned_qty)}</td><td class="po-plan-col-left po-plan-used">${qty(p.transferred_qty)}</td><td class="po-plan-col-left po-plan-remain">${qty(p.remaining_qty)}</td><td><span class="status-badge ${statusClass(p.plan_status)}">${statusText(p.plan_status)}</span></td><td class="cell-actions"><button class="action-btn pp-view">👁️</button>${global.hasPermission&&global.hasPermission('po_create')&&p.plan_status!=='closed'?'<button class="action-btn pp-edit" title="编辑计划数量">✏️</button>':''}${global.hasPermission&&(global.hasPermission('po_export')||global.hasPermission('po_create'))?'<button class="action-btn pp-export" title="导出这张PO的Excel">📥</button>':''}${global.hasPermission&&global.hasPermission('po_create')&&p.plan_status!=='closed'?'<button class="action-btn pp-close" title="关闭PO">关闭</button>':''}${global.hasPermission&&global.hasPermission('po_create')&&qty(p.transferred_qty)===0?'<button class="action-btn pp-del" style="color:#d4380d" title="删除未使用PO">删除</button>':''}</td></tr>`).join('')}</tbody></table></div>`;
+  el.querySelectorAll('tr[data-id]').forEach(tr=>{const id=tr.dataset.id;tr.onclick=e=>{if(e.target.closest('button'))return;viewPOPlan(id)};tr.querySelector('.pp-view').onclick=()=>viewPOPlan(id);tr.querySelector('.pp-edit')?.addEventListener('click',()=>editPOPlan(id));tr.querySelector('.pp-export')?.addEventListener('click',e=>{e.stopPropagation();exportPOPlan(id,e.currentTarget);});tr.querySelector('.pp-close')?.addEventListener('click',()=>closePOPlan(id));tr.querySelector('.pp-del')?.addEventListener('click',()=>deletePOPlan(id));});
 }
 async function createPOPlan(){
   global.openModal('新建PO采购计划','<div style="padding:40px;text-align:center">⏳ 加载中…</div>');
