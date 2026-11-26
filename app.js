@@ -15111,7 +15111,7 @@ async function selectCIForPL(ciId){
     const skuMap={};skus.forEach(s=>skuMap[s.sku_code]=s);
     const users=await api('/api/users');
     window._plCI=ci;window._plCostSummary=costSummary;window._plSkuMap=skuMap;window._plUsers=users;
-    window._plDraft=[];window._otherFees=[];
+    window._plDraft=[];window._otherFees=[];window._plCartonTotalBase=0;window._plCartonRowsBaseSum=0;window._plImportTotalCartons=null;window._plImportSourceSheet='';window._plImportReferenceCiNo='';
     const plCheck=ci.pl_check||[];
     // 聚合 CI items 中相同 SKU 的多行（CI 可能包含同 SKU 多行）
     const ciAgg={};
@@ -15147,7 +15147,7 @@ async function selectCIForPL(ciId){
       '<div class="form-group"><label>发货日期</label><input type="date" id="npl-pickup" value="'+shipDate+'" readonly style="background:#f5f5f7;color:#666"></div>'+
       '<div class="form-group"><label>预计到港</label><input type="date" id="npl-eta"></div>'+
       '</div></div>'+
-      '<div class="detail-section"><h3>PL装箱明细 <label style="font-size:13px;font-weight:normal;color:#666;margin-left:12px">总CTN数量: <input type="number" id="npl-total-ctn" value="0" style="width:70px;padding:2px" placeholder="0" onchange="renderPLDraftTable()"></label></h3>'+
+      '<div class="detail-section"><h3>PL装箱明细 <label style="font-size:13px;font-weight:normal;color:#666;margin-left:12px">总CTN数量: <input type="number" id="npl-total-ctn" value="0" style="width:70px;padding:2px" placeholder="0" onchange="updatePLTotalCartons(this.value)"></label></h3>'+
       '<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn btn-secondary btn-sm" onclick="downloadPLTemplate()">下载导入模板</button></div>'+
       '<div id="pl-drop-zone" style="border:2px dashed #d9d9d9;border-radius:8px;padding:20px;text-align:center;cursor:pointer;background:#fafafa;transition:all .2s;margin-bottom:8px" '+
         'onclick="document.getElementById(\'pl-file-input\').click()" '+
@@ -15171,13 +15171,34 @@ async function selectCIForPL(ciId){
     renderPLDraftTable();renderOtherFees();calcTotalFreight();
   }catch(e){showToast(e.message,'danger')}
 }
+function plDraftCartonSum(items){
+  return (items||[]).reduce((sum,it)=>sum+(Number(it.cartons)||0),0);
+}
+function getPLDraftTotalCartons(items){
+  const rowsSum=plDraftCartonSum(items);
+  const baseTotal=Number(window._plCartonTotalBase);
+  const baseRows=Number(window._plCartonRowsBaseSum);
+  // Keep supplier-declared shipment total (important for mixed cartons), then
+  // apply only the net change made to the editable SKU carton rows.
+  if(Number.isFinite(baseTotal)&&Number.isFinite(baseRows)){
+    return Math.max(0,baseTotal+rowsSum-baseRows);
+  }
+  return rowsSum;
+}
+function updatePLTotalCartons(value){
+  const parsed=Number(value);
+  window._plCartonTotalBase=Number.isFinite(parsed)?Math.max(0,parsed):0;
+  window._plCartonRowsBaseSum=plDraftCartonSum(window._plDraft||[]);
+  renderPLDraftTable();
+}
 function renderPLDraftTable(){
   const items=window._plDraft||[];
+  const shipmentCartons=getPLDraftTotalCartons(items);
+  const totalCtnInput=document.getElementById('npl-total-ctn');
+  if(totalCtnInput)totalCtnInput.value=String(shipmentCartons);
   if(!items.length){document.getElementById('pl-draft-table').innerHTML='<div style="padding:24px 12px;text-align:center;color:#999"><div style="font-size:32px;margin-bottom:8px">📋</div><div style="font-size:14px;margin-bottom:4px">暂无PL明细</div><div style="font-size:12px;color:#bbb">点击上方上传区域导入Excel，或手动编辑下方明细</div></div>';return;}
-  let tc=0,tq=0,tg=0,tn=0,tb=0;
-  items.forEach(it=>{tc+=it.cartons||0;tq+=it.total_qty||0;tg+=it.gross_weight||0;tn+=it.net_weight||0;tb+=it.cbm||0;});
-  // 混装箱会同时归属多个 SKU；供应商原始 PL 的整票 CTN 必须以总计行为准，不能把 SKU 箱数重复相加。
-  const shipmentCartons=window._plImportSourceSheet&&Number(window._plImportTotalCartons)>0?Number(window._plImportTotalCartons):tc;
+  let tq=0,tg=0,tn=0,tb=0;
+  items.forEach(it=>{tq+=Number(it.total_qty)||0;tg+=Number(it.gross_weight)||0;tn+=Number(it.net_weight)||0;tb+=Number(it.cbm)||0;});
   document.getElementById('pl-draft-table').innerHTML='<style>.pl-draft-wrap{overflow:auto;max-height:420px}.pl-draft-wrap thead th{position:sticky;top:0;z-index:2;background:#eef0f3;white-space:nowrap}</style><div class="table-container pl-draft-wrap"><table class="data-table" style="font-size:12px"><thead><tr><th>SKU</th><th>CI发货</th><th>已生成PL</th><th>剩余</th><th>CTN数量</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th><th></th></tr></thead><tbody>'+
     items.map((it,i)=>'<tr><td class="cell-id">'+esc(it.sku_code)+'</td><td class="text-right">'+(it.ci_shipped_qty||0)+'</td><td class="text-right">'+(it.pl_qty||0)+'</td><td class="text-right">'+(it.remaining||0)+'</td>'+
       '<td><input type="number" value="'+(it.cartons||0)+'" style="width:60px;padding:2px" onchange="updatePLRow('+i+',\'cartons\',this.value)"></td>'+
@@ -15329,11 +15350,11 @@ function handlePLFile(file){
     window._plImportTotalCartons=totalCartons;
     window._plImportSourceSheet=sourceSheet;
     window._plImportReferenceCiNo=referenceCiNo;
+    window._plCartonRowsBaseSum=plDraftCartonSum(nextDraft);
+    window._plCartonTotalBase=Number.isFinite(Number(totalCartons))&&Number(totalCartons)>0
+      ? Number(totalCartons)
+      : window._plCartonRowsBaseSum;
     renderPLDraftTable();
-    if(totalCartons!==null){
-      const totalCtnInput=document.getElementById('npl-total-ctn');
-      if(totalCtnInput)totalCtnInput.value=totalCartons;
-    }
 
     const refMismatch=referenceCiNo&&ci.ci_no&&referenceCiNo.trim().toLowerCase()!==String(ci.ci_no).trim().toLowerCase();
     const sourceHint=sourceSheet?'已识别「'+sourceSheet+'」工作表；':'';
@@ -15389,7 +15410,7 @@ async function saveLogWithPL(){
     international_freight:parseFloat(document.getElementById('npl-freight').value)||0,
     local_charges:otherSum,customs_service_fee:0,delivery_fee:0,customs_duty:0,vat_gst:0,other_fees:0,
     remark:document.getElementById('npl-remark').value||'',
-    total_cartons:parseInt(document.getElementById('npl-total-ctn')?.value)||0,
+    total_cartons:getPLDraftTotalCartons(items),
     items:items.map(it=>({sku_code:it.sku_code,cartons:it.cartons||0,qty_per_carton:it.qty_per_carton||0,
       total_qty:it.total_qty||0,gross_weight:it.gross_weight||0,net_weight:it.net_weight||0,cbm:it.cbm||0}))};
   try{
