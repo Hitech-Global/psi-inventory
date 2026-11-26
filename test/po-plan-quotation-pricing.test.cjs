@@ -198,5 +198,12 @@ test('PO creation UI exposes original/final FOB columns and blocks mixed quote c
   assert.match(ui,/同一张PO的最新报价币种不一致/);
   assert.match(ui,/button\.disabled=mismatch\|\|!rateValid\|\|!rowsValid/);
   assert.match(ui,/价格已更新\|报价币种已发生变化\|币种不一致/);
-  assert.match(boot,/ASSET_VERSION='20261105b'/);
+  assert.match(ui,/id="po-plan-export"/);
+  assert.match(ui,/\$\('#po-plan-export'\)\.onclick=exportPOPlanList/);
+  assert.match(ui,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
+  assert.match(ui,/selectedPOFacets\('brand'\)/);
+  assert.match(ui,/selectedPOFacets\('country'\)/);
+  assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(infoRows\),'PO采购计划'\)/);
+  assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(detailRows\),'SKU明细'\)/);
+  assert.match(boot,/ASSET_VERSION='20261126a'/);
 });
