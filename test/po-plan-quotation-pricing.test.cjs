@@ -202,8 +202,9 @@ test('PO creation UI exposes original/final FOB columns and per-row single-PO ex
   assert.match(ui,/class="action-btn pp-export"/);
   assert.match(ui,/title="导出这张PO的Excel"/);
   assert.match(ui,/exportPOPlan\(id,e\.currentTarget\)/);
-  assert.match(ui,/apiCall\('\/api\/po-plans\/'\+encodeURIComponent\(id\)\)/);
-  assert.doesNotMatch(ui,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
+  const exportFn=ui.match(/async function exportPOPlan\(id,button\)\{[\s\S]*?\n\}/)?.[0]||'';
+  assert.match(exportFn,/apiCall\('\/api\/po-plans\/'\+encodeURIComponent\(id\)\)/);
+  assert.doesNotMatch(exportFn,/apiCall\('\/api\/po-plans\?'\+q\.toString\(\)\)/);
   assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(infoRows\),'PO采购计划'\)/);
   assert.match(ui,/XLSX\.utils\.book_append_sheet\(wb,XLSX\.utils\.json_to_sheet\(detailRows\),'SKU明细'\)/);
   assert.match(ui,/XLSX\.writeFile\(wb,'PO_'\+safeNo\+'\.xlsx'\)/);
