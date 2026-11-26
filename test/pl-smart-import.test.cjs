@@ -93,11 +93,37 @@ test('handles duplicate carton IDs across SKUs without inflating the shipment ca
   assert.equal(parsed.total_cartons,3);
 });
 
-test('shows the shipment CTN total for mixed-carton supplier PL files instead of summing overlapping SKU carton counts',()=>{
-  assert.match(appSource,/const shipmentCartons=window\._plImportSourceSheet&&Number\(window\._plImportTotalCartons\)>0\?Number\(window\._plImportTotalCartons\):tc/);
-  assert.match(appSource,/\+shipmentCartons\+'<\/td>/);
-  assert.match(appSource,/id="npl-total-ctn"[^>]*onchange="renderPLDraftTable\(\)"/);
+test('keeps supplier shipment CTN totals for mixed cartons and recalculates edits by row delta',()=>{
+  assert.match(appSource,/function getPLDraftTotalCartons\(items\)/);
+  assert.match(appSource,/baseTotal\+rowsSum-baseRows/);
+  assert.match(appSource,/const shipmentCartons=getPLDraftTotalCartons\(items\)/);
+  assert.match(appSource,/id="npl-total-ctn"[^>]*onchange="updatePLTotalCartons\(this.value\)"/);
+  assert.match(appSource,/total_cartons:getPLDraftTotalCartons\(items\)/);
 });
+
+test('recalculates Redragon PL CTN total immediately after a SKU carton edit',()=>{
+  const getTotal=loadPLCartonTotal(588,588);
+  const currentRows=[{cartons:36},{cartons:10},{cartons:109},{cartons:40},{cartons:28},{cartons:60},{cartons:306}];
+  assert.equal(getTotal(currentRows),589);
+  currentRows[0].cartons=34;
+  assert.equal(getTotal(currentRows),587);
+});
+
+test('preserves Netac mixed-carton shipment total while applying manual SKU carton edits',()=>{
+  const getTotal=loadPLCartonTotal(12,9);
+  assert.equal(getTotal([{cartons:7},{cartons:3}]),13);
+  assert.equal(getTotal([{cartons:7},{cartons:1}]),11);
+});
+
+function loadPLCartonTotal(baseTotal,baseRows){
+  const start=appSource.indexOf('function plDraftCartonSum(items){');
+  const end=appSource.indexOf('\nfunction updatePLTotalCartons(value){',start);
+  assert.ok(start>=0&&end>start,'PL carton total helpers must exist');
+  const helperSource=appSource.slice(start,end);
+  const sandbox={window:{_plCartonTotalBase:baseTotal,_plCartonRowsBaseSum:baseRows},Number,Math};
+  require('node:vm').runInNewContext(helperSource+'\nthis.__getTotal=getPLDraftTotalCartons;',sandbox);
+  return sandbox.__getTotal;
+}
 
 
 function makeRedragonWorkbook(){
@@ -198,4 +224,5 @@ test('PL import applies only after format and quantity validation and warns when
   const saveEnd=appSource.indexOf('\nasync ',saveStart+20);
   const save=appSource.slice(saveStart,saveEnd);
   assert.ok(save.includes('超过CI剩余数量'));
+  assert.ok(save.includes('total_cartons:getPLDraftTotalCartons(items)'),'saved total CTN must use the same live recalculation as the UI');
 });
