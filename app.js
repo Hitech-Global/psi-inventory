@@ -18999,20 +18999,22 @@ function derivePayablePrBusinessStatus(prs){
 
 // 批量获取整页 payable_item 的付款申请状态，建立 payable_item_id → 业务态 map（单请求，禁止 N+1）
 async function loadPayablePrStatusMap(items){
-  _payablePrStatusMap={};
-  if(!items||!items.length)return;
+  // 返回本次请求自己的状态映射，避免较慢的旧筛选请求覆盖新请求的状态。
+  const statusMap={};
+  if(!items||!items.length)return statusMap;
   const ids=items.map(function(r){return r.id;}).filter(Boolean).join(',');
-  if(!ids)return;
+  if(!ids){items.forEach(function(r){statusMap[r.id]='未申请';});return statusMap;}
   try{
     const rels=await api('/api/payment-requests/by-payable-items?ids='+encodeURIComponent(ids));
     const prs=(rels&&rels.payment_requests)||[];
     const byItem={};
     prs.forEach(function(p){const iid=p.payable_item_id;if(!iid)return;(byItem[iid]=byItem[iid]||[]).push(p);});
-    items.forEach(function(r){_payablePrStatusMap[r.id]=derivePayablePrBusinessStatus(byItem[r.id]||[]);});
+    items.forEach(function(r){statusMap[r.id]=derivePayablePrBusinessStatus(byItem[r.id]||[]);});
   }catch(e){
     // 状态列降级：获取失败时标未申请，不影响主列表与生命周期
-    items.forEach(function(r){_payablePrStatusMap[r.id]='未申请';});
+    items.forEach(function(r){statusMap[r.id]='未申请';});
   }
+  return statusMap;
 }
 
 // ── 应付费用列表：多选下拉（checkbox，轻量实现无新依赖）──
@@ -19042,7 +19044,19 @@ function bindPaylMsOutside(){
   }, true);
 }
 // 收起态 trigger 文案：未选=全部 / 1个=名称 / 2个=名称拼接 / 3+个=已选 N 项
-function paylMsChange(ddId){
+let _paylFilterTimer=null;
+let _paylListRequestSeq=0;
+// 筛选自动生效：多选/输入采用短暂防抖，避免连续操作时重复请求；传 0 则立即执行。
+function paylScheduleFilterLoad(delay){
+  if(_paylFilterTimer!==null){clearTimeout(_paylFilterTimer);_paylFilterTimer=null;}
+  const wait=Number(delay);
+  if(!Number.isFinite(wait)||wait<=0){loadPayableList();return;}
+  _paylFilterTimer=setTimeout(function(){
+    _paylFilterTimer=null;
+    loadPayableList();
+  },wait);
+}
+function paylMsChange(ddId,autoApply){
   const cbs=paylMsSelected(ddId);
   const txtEl=document.getElementById(ddId+'-text');
   if(txtEl){
@@ -19053,6 +19067,7 @@ function paylMsChange(ddId){
     else txt=t('payable_list.ms_selected','已选 {n} 项').replace('{n}',cbs.length);
     txtEl.textContent=txt;
   }
+  if(autoApply!==false)paylScheduleFilterLoad(280);
 }
 // 把某多选下拉的已选值写入 URLSearchParams（多值重复 param，特殊字符由 URLSearchParams 编码）
 function paylMsParam(ddId, name, params){
@@ -19087,8 +19102,12 @@ function paylMsUpdateQuickActive(){
 }
 
 async function renderPayableList(){
+  // 页面重建时使旧筛选请求失效，并清理尚未触发的自动筛选定时器。
+  if(_paylFilterTimer!==null){clearTimeout(_paylFilterTimer);_paylFilterTimer=null;}
+  const renderSeq=++_paylListRequestSeq;
   // 完整台账：先拉品牌/国家动态选项（独立全量聚合，不随筛选变化），失败降级为仅「全部」
   await loadPayableFacets();
+  if(renderSeq!==_paylListRequestSeq)return;
   const el=document.getElementById('content-inner');
   // 重建筛选区前保留已选状态（语言切换 / facets 刷新场景不丢已选）
   const prevSel={};
@@ -19192,9 +19211,9 @@ async function renderPayableList(){
         '<button type="button" id="payl-qthis" onclick="paylQuickMonth(\'this\')">'+t('payable_list.quick_this_month','本月')+'</button>'+
         '<button type="button" id="payl-qlast" onclick="paylQuickMonth(\'last\')">'+t('payable_list.quick_last_month','上月')+'</button>'+
       '</div></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_from','付款日期开始')+'</label><input type="date" id="payl-pfd" oninput="paylMsUpdateQuickActive()"></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_to','付款日期结束')+'</label><input type="date" id="payl-pft" oninput="paylMsUpdateQuickActive()"></div>'+
-      '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方/供应商')+'" onkeypress="if(event.key===\'Enter\')loadPayableList()"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_from','付款日期开始')+'</label><input type="date" id="payl-pfd" oninput="paylMsUpdateQuickActive();paylScheduleFilterLoad(350)" onchange="paylMsUpdateQuickActive();paylScheduleFilterLoad(0)"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_paydate_to','付款日期结束')+'</label><input type="date" id="payl-pft" oninput="paylMsUpdateQuickActive();paylScheduleFilterLoad(350)" onchange="paylMsUpdateQuickActive();paylScheduleFilterLoad(0)"></div>'+
+      '<div class="filter-group"><label>'+t('payable_list.filter_keyword','关键词')+'</label><input type="text" id="payl-fk" placeholder="'+t('payable_list.filter_keyword_ph','费用号/来源单号/收款方/供应商')+'" oninput="paylScheduleFilterLoad(450)" onkeydown="if(event.key===\'Enter\'){event.preventDefault();paylScheduleFilterLoad(0)}"></div>'+
       '<div class="filter-actions"><button class="btn btn-primary btn-sm" onclick="loadPayableList()">'+t('common.search','搜索')+'</button></div>'+
     '</div></div>'+
     '<div class="table-section"><div class="table-section-title"><div class="table-section-title-left">📋 '+t('nav.payable_list','应付费用列表')+'</div><div class="table-section-title-right" id="payl-selinfo"></div></div>'+
@@ -19208,7 +19227,7 @@ async function renderPayableList(){
   Object.keys(prevSel).forEach(function(id){
     const want=prevSel[id]||[];
     document.querySelectorAll('#'+id+' .payl-ms-cb').forEach(function(cb){ if(want.indexOf(cb.value)>=0)cb.checked=true; });
-    paylMsChange(id);
+    paylMsChange(id,false);
   });
   Object.keys(prevInputs).forEach(function(id){
     const el=document.getElementById(id); if(el&&prevInputs[id])el.value=prevInputs[id];
@@ -19219,6 +19238,8 @@ async function renderPayableList(){
 }
 
 async function loadPayableList(){
+  if(_paylFilterTimer!==null){clearTimeout(_paylFilterTimer);_paylFilterTimer=null;}
+  const requestId=++_paylListRequestSeq;
   // 性能层：注册应付费用列表后台刷新重渲染器
   try{ if(window.AppStore) AppStore.page.onRefresh('payable-list', function(){ try{ loadPayableList(); }catch(e){} }); }catch(e){}
   const pfd=document.getElementById('payl-pfd');
@@ -19249,15 +19270,20 @@ async function loadPayableList(){
     try{
       data=await api(_paylUrl);
     }catch(e){
+      if(requestId!==_paylListRequestSeq)return;
       const tb=document.getElementById('payl-table');if(tb)tb.innerHTML='<div class="flash flash-danger show">'+esc(e.message)+'</div>';
       // 失败路径同样刷新快捷按钮 active，避免高亮残留（session 过期等场景）
       paylMsUpdateQuickActive();
       return;
     }
+    if(requestId!==_paylListRequestSeq)return;
     if(window.AppStore) AppStore.page.set('payable-list',_paylUrl,data,{ttl:30000});
   }
+  if(requestId!==_paylListRequestSeq)return;
   _payableListData=(data&&data.items)||[];
-  await loadPayablePrStatusMap(_payableListData);
+  const nextPrStatusMap=await loadPayablePrStatusMap(_payableListData);
+  if(requestId!==_paylListRequestSeq)return;
+  _payablePrStatusMap=nextPrStatusMap;
   renderPayableTable();
   updatePayableMenu();
   // 兜底刷新快捷按钮 active：任何路径改动日期（含程序赋值/清空）后状态都同步
