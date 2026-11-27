@@ -10891,7 +10891,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     return;
   } catch (e) {
     const msg=e&&e.message||String(e||'未知错误');
-    if(/关联PO|多PO|PI确认数量|PO余量|PO没有商品|PO出现重复SKU|PO数量回退|PI来源明细|来源商品明细|PI汇总|原PO占用数量|原PO数量回退|PO不存在|PO已全部转PI|供应商或国家|币种必须一致|品牌必须一致|目标仓库必须一致/.test(msg))
+    if(/关联PO|多PO|PI确认数量|PI数量超过|PO剩余数量|PO余量|PO没有商品|PO出现重复SKU|PO数量回退|PI来源明细|PI来源行|来源行数量|来源商品明细|PI汇总|原PO占用数量|原PO数量回退|PO不存在|PO已全部转PI|供应商或国家|币种必须一致|品牌必须一致|目标仓库必须一致/.test(msg))
       return res.status(400).json({error:msg});
     res.status(500).json({ error: msg });
   }
