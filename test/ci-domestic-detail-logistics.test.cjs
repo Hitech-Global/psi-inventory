@@ -49,4 +49,15 @@ test('PG, SQLite, and production sync migrations include CI logistics fields',()
   assert.ok(db.includes("ADD COLUMN IF NOT EXISTS ci_logistics_status TEXT DEFAULT ''"));
   assert.ok(db.includes("ADD COLUMN IF NOT EXISTS actual_arrival_date TEXT DEFAULT ''"));
 });
+
+test('CI editor footer actions are rebound safely after modal creation',()=>{
+  const index=read('index.html');
+  const fix=read('assets/ci-edit-save-handler-fix.js');
+  assert.ok(index.includes('assets/ci-edit-save-handler-fix.js?v=20261128-1'));
+  assert.ok(fix.includes("save.removeAttribute('onclick')"));
+  assert.ok(fix.includes('save.onclick = function (event)'));
+  assert.ok(fix.includes("cancel.removeAttribute('onclick')"));
+  assert.ok(fix.includes('global.saveCIEdit(id, backPay, backMode)'));
+});
+
 console.log('ci domestic detail/logistics: PASS');
