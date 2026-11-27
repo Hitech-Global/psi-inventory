@@ -3877,11 +3877,6 @@ app.put('/api/skus/:id', requireApiPermission('sku_edit'), asyncHandler((req, re
     }
     const fields = [];
     const values = [];
-    if(isMultiPOEdit&&d.related_po_ids!==undefined){
-      const first=multiPOsForEdit[0],nos=multiPOsForEdit.map(po=>po.po_no);
-      fields.push('related_po_ids = ?','related_po_nos = ?','related_po_id = ?','related_po_no = ?');
-      values.push(JSON.stringify(requestedRelatedPOIds),JSON.stringify(nos),first.id,first.po_no);
-    }
     const allowed = ['product_name', 'brand', 'category', 'model', 'color_spec', 'barcode', 'default_supplier_id', 'default_supplier_name', 'purchase_currency', 'standard_purchase_price', 'purchase_price_rmb', 'purchase_price_usd', 'reference_customs_rate', 'weighted_avg_cost', 'carton_spec', 'qty_per_carton', 'unit_weight', 'unit_cbm', 'is_new_product', 'launch_date', 'new_product_protection_days', 'lifecycle_status', 'auto_replenish', 'status', 'remark'];
     allowed.forEach(f => {
       if (d[f] !== undefined) {
@@ -10716,6 +10711,11 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     const fields = [];
     const values = [];
+    if(isMultiPOEdit&&d.related_po_ids!==undefined){
+      const first=multiPOsForEdit[0],nos=multiPOsForEdit.map(po=>po.po_no);
+      fields.push('related_po_ids = ?','related_po_nos = ?','related_po_id = ?','related_po_no = ?');
+      values.push(JSON.stringify(requestedRelatedPOIds),JSON.stringify(nos),first.id,first.po_no);
+    }
     // PI号：允许编辑为供应商真实编号（仅未进入后续业务阶段时可改，前端+后端双重校验）
     if (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) {
       const numLock = getPINumberLockReason(pi);
