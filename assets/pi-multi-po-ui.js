@@ -2,7 +2,7 @@
 // New PI only; the old #npi-po select is retained as a legacy first-PO
 // compatibility field, while the visible picker is native checkbox multi-select.
 (function(root){
- const state={enabled:false,ids:[],sequence:0,details:[],all:[],loading:false};
+ const state={enabled:false,ids:[],originalIds:[],originalRows:[],sequence:0,details:[],all:[],loading:false,editMode:false};
  function el(id){return document.getElementById(id);}
  const norm=x=>String(x||'').trim().toLocaleLowerCase();
  function match(po){
@@ -41,18 +41,22 @@
    if(country){country.value=first.country;country.disabled=true;}
    if(wh){wh.value=first.target_warehouse||'';wh.disabled=true;}
    // Keep one editable PI line per PO+SKU, even when different POs share SKU.
-   const lines=[];
+   const lines=[],current=window._piRows||[],original=state.originalRows||[];
    for(const po of pos){
      for(const item of (po.items||[])){
        const sku=String(item.sku_code||'').trim();
        if(!sku)continue;
-       const left=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0));
-       if(left<=0)continue;
+       const prior=current.find(r=>r.fromPO&&r.poId===po.id&&r.sku===sku);
+       const base=original.find(r=>r.fromPO&&r.poId===po.id&&r.sku===sku);
+       const own=Number(base?.piQty||0);
+       const left=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0)+own);
+       if(left<=0&&!prior)continue;
        lines.push({poId:po.id,poNo:po.po_no,sku,poQty:left,
-         poPrice:Number(item.unit_price||0),piQty:0,piPrice:0,piDisc:0,fromPO:true});
+         poPrice:Number(item.unit_price||0),piQty:Number(prior?.piQty??0),
+         piPrice:Number(prior?.piPrice??0),piDisc:Number(prior?.piDisc??0),fromPO:true});
      }
    }
-   const extra=(window._piRows||[]).filter(r=>!r.fromPO);
+   const extra=current.filter(r=>!r.fromPO);
    window._poRef=lines.map(x=>({po_no:x.poNo,sku_code:x.sku,po_qty:x.poQty,unit_price:x.poPrice}));
    window._piRows=lines.concat(extra);
    renderCmpTable();
@@ -65,9 +69,9 @@
  function ineligibility(po){
    if(po.po_status==='cancelled')return 'PO已作废';
    if(po.po_status==='rejected'||po.approval_status==='rejected')return '审批已驳回';
-   if(po.po_status==='transferred_pi'||
+   if(!state.originalIds.includes(po.id)&&(po.po_status==='transferred_pi'||
       (po.remaining_pi_qty!==undefined&&po.remaining_pi_qty!==null&&
-       Number(po.remaining_pi_qty)<=0))return '已全部转PI';
+       Number(po.remaining_pi_qty)<=0)))return '已全部转PI';
    return '';
  }
  function approvalNote(po){
@@ -117,6 +121,7 @@
    const reason=ineligibility(po);
    if(checked&&reason){showToast(po.po_no+'：'+reason,'warning');refresh();return;}
    const old=state.ids.slice(),first=(window._piApprovedPOs||[]).find(p=>p.id===old[0]);
+   if(!checked&&old.length===1){showToast('至少保留一张关联PO；如需完全取消关联，请先调整PI来源明细','warning');refresh();return;}
    if(checked&&!old.includes(id)){
      if(first&&!compatible(first,po)){showToast('只能合并同供应商、国家、品牌、币种、仓库的PO','warning');refresh();return;}
      state.ids.push(id);
@@ -143,23 +148,32 @@
      showToast(e.message||'加载PO失败，请重新选择','danger');
    }
  }
- function install(){
-   state.enabled=true;state.ids=[];state.sequence++;state.all=[];state.details=[];state.loading=false;
+ function install(options={}){
+   state.enabled=true;state.ids=Array.isArray(options.selectedIds)?options.selectedIds.slice():[];
+   state.originalIds=state.ids.slice();state.originalRows=(window._piRows||[]).map(r=>({...r}));
+   state.editMode=!!options.editMode;state.sequence++;state.all=[];state.details=[];state.loading=false;
    const select=el('npi-po');if(!select)return;
    select.style.display='none';
    const wrapper='<div id="pi-multi-po-shell" style="grid-column:1/-1">'+
-     '<div style="font-size:13px;font-weight:600;margin-bottom:7px">关联PO（可多选）</div>'+
+     '<div style="font-size:13px;font-weight:600;margin-bottom:7px">关联PO（可多选，可继续筛选）</div>'+
      '<div id="pi-multi-po-count" style="font-size:12px;color:var(--text-secondary,#666);margin-bottom:5px">已选择 0 张 PO</div>'+
      '<input id="pi-multi-po-search" type="search" placeholder="搜索 PO 编号" oninput="piMultiPORefresh()" style="width:100%;max-width:450px;margin-bottom:6px;padding:7px;border:1px solid var(--border,#ddd);border-radius:8px">'+
      '<div id="pi-multi-po-picker" style="max-height:165px;overflow:auto;border:1px solid var(--border,#ddd);border-radius:10px;padding:7px;background:var(--bg-card,#fff)"></div>'+
-     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">草稿、待审批PO也可关联PI，但不会自动改变PO审批状态；已作废、已驳回及已全部转PI的PO不可选。多选同SKU按不同PO分行显示，更换PO会重置已填写的商品数量/单价。</div></div>'+
+     '<div style="font-size:11px;color:var(--text-secondary,#888);margin-top:6px">可继续添加或取消关联PO；取消后系统会释放该PO在本PI占用的数量。仅允许同供应商、国家、品牌、币种及仓库的PO；已作废、已驳回的PO不可选。</div></div>'+
      '<style>.pi-mpo-row{display:flex;gap:9px;align-items:center;padding:8px 10px;font-size:12px;cursor:pointer;border-radius:7px}.pi-mpo-row:hover{background:var(--bg-hover,#f4f6f9)}.pi-mpo-row:has(input:disabled){opacity:.65;cursor:not-allowed}.pi-mpo-state{font-size:11px;color:#94622d;margin-left:auto;white-space:nowrap}.pi-mpo-state-ok{color:#26794e}.pi-mpo-muted{font-size:12px;color:var(--text-secondary,#999);padding:12px}</style>';
    const group=select.closest&&select.closest('.form-group');
    if(group){group.insertAdjacentHTML('afterend',wrapper);group.style.display='none';}
    else select.insertAdjacentHTML('afterend',wrapper);
    refresh();
+   if(state.ids.length){
+     const seq=++state.sequence;
+     Promise.all(state.ids.map(x=>api('/api/purchase-orders/'+encodeURIComponent(x)))).then(pos=>{
+       if(seq!==state.sequence||!state.enabled)return;
+       state.details=pos;
+     }).catch(e=>showToast(e.message||'加载已关联PO失败','danger'));
+   }
  }
- function disable(){state.enabled=false;state.ids=[];state.sequence++;state.details=[];state.loading=false;}
+ function disable(){state.enabled=false;state.ids=[];state.originalIds=[];state.originalRows=[];state.sequence++;state.details=[];state.loading=false;}
  root.PIMultiPO={install,disable,refresh,toggle,ids,active:()=>state.enabled,loading:()=>state.loading};
 })(window);
 function piMultiPORefresh(){window.PIMultiPO.refresh();}
