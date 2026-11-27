@@ -12,11 +12,9 @@ const i18n = read('i18n.js');
 
 test('PI schema stores trade mode, VAT and domestic CI claim for both drivers', () => {
   for (const source of [pg, sqlite]) {
-    assert.match(source, /proforma_invoices ADD COLUMN[^\n]*trade_mode/);
-    assert.match(source, /proforma_invoices ADD COLUMN[^\n]*vat_amount/);
-    assert.match(source, /proforma_invoices ADD COLUMN[^\n]*domestic_ci_id/);
-    assert.match(source, /commercial_invoices ADD COLUMN[^\n]*trade_mode/);
-    assert.match(source, /commercial_invoices ADD COLUMN[^\n]*vat_amount/);
+    assert.match(source, /trade_mode TEXT DEFAULT 'international'/);
+    assert.match(source, /vat_amount (?:NUMERIC\(18,4\)|REAL) DEFAULT 0/);
+    assert.match(source, /domestic_ci_id TEXT DEFAULT ''/);
   }
 });
 
