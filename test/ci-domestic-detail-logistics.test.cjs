@@ -50,14 +50,35 @@ test('PG, SQLite, and production sync migrations include CI logistics fields',()
   assert.ok(db.includes("ADD COLUMN IF NOT EXISTS actual_arrival_date TEXT DEFAULT ''"));
 });
 
-test('CI editor footer actions are rebound safely after modal creation',()=>{
+test('CI editor footer actions are rebound safely after modal creation',async()=>{
   const index=read('index.html');
   const fix=read('assets/ci-edit-save-handler-fix.js');
   assert.ok(index.includes('assets/ci-edit-save-handler-fix.js?v=20261128-1'));
+  assert.ok(index.lastIndexOf('app.js') < index.lastIndexOf('ci-edit-save-handler-fix.js'));
   assert.ok(fix.includes("save.removeAttribute('onclick')"));
   assert.ok(fix.includes('save.onclick = function (event)'));
   assert.ok(fix.includes("cancel.removeAttribute('onclick')"));
   assert.ok(fix.includes('global.saveCIEdit(id, backPay, backMode)'));
+  new Function('window',fix);
+
+  const calls=[];
+  const cancel={removeAttribute(name){this.removed=name;},onclick:null,type:''};
+  const footer={querySelector(){return cancel;}};
+  const save={removeAttribute(name){this.removed=name;},closest(){return footer;},onclick:null,type:''};
+  const fakeWindow={
+    document:{getElementById(id){return id==='eci-save'?save:null;}},
+    editCI:async function(){return 'opened';},
+    saveCIEdit:function(){calls.push(['save',...arguments]);return 'saved';},
+    viewCI:function(){calls.push(['cancel',...arguments]);return 'viewed';}
+  };
+  new Function('window',fix)(fakeWindow);
+  assert.equal(await fakeWindow.editCI('ci-123','pay-1','view'),'opened');
+  save.onclick({preventDefault(){},stopPropagation(){}});
+  cancel.onclick({preventDefault(){},stopPropagation(){}});
+  assert.deepEqual(calls,[
+    ['save','ci-123','pay-1','view'],
+    ['cancel','ci-123','pay-1','view']
+  ]);
 });
 
 console.log('ci domestic detail/logistics: PASS');
