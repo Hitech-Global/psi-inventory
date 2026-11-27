@@ -12,7 +12,7 @@ assert.match(app, /ci-clearance-filter/);
 assert.ok(app.includes('nci-clearance-type') && app.includes('formal') && app.includes('正清'), 'create form must offer 正清');
 assert.ok(app.includes('nci-clearance-type') && app.includes('non_formal') && app.includes('非正清'), 'create form must offer 非正清');
 assert.match(app, /clearance_type:clearanceType/);
-assert.match(app, /ciClearanceLabelForCI\\(c\\.clearance_type,c\\.trade_mode\\)/);
+assert.match(app, /ciClearanceLabelForCI\(c\.clearance_type,c\.trade_mode\)/);
 assert.ok(app.includes('nci-clearance-type'), 'create form must include clearance selector');
 assert.match(app, /清关方式/);
 
