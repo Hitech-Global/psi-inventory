@@ -156,3 +156,40 @@ test('draft PO already fully converted to PI cannot be selected despite unapprov
  assert.deepEqual([...f.ids()],[]);
  assert.match(u.toast[0][0],/已全部转PI/);
 });
+
+test('PI edit picker preselects old PO, converts removed source rows to manual, and adds a new PO',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piRows=[
+  {poId:'p1',poNo:'PO-1',sku:'N1',poQty:80,poPrice:10,piQty:20,piPrice:9,piDisc:0.1,fromPO:true},
+  {poId:'p1',poNo:'PO-1',sku:'N2',poQty:5,poPrice:4,piQty:2,piPrice:4,piDisc:0,fromPO:true}
+ ];
+ f.installEdit({selectedIds:['p1']});
+ assert.deepEqual([...f.ids()],['p1']);
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/checked/);
+ assert.equal(u.elements['npi-country'].disabled,true);
+ await f.toggle('p1',false);
+ assert.deepEqual([...f.ids()],[]);
+ const retained=u.ctx.window._piRows.find(r=>r.sku==='N1');
+ assert.equal(retained.fromPO,false);
+ assert.equal(retained.piQty,20);
+ assert.equal(retained.piPrice,9);
+ assert.equal(retained.piDisc,0.1);
+ await f.toggle('p2',true);
+ assert.deepEqual([...f.ids()],['p2']);
+ const rows=u.ctx.window._piRows;
+ assert.ok(rows.some(r=>r.sku==='N1'&&!r.fromPO&&r.piQty===20));
+ assert.ok(rows.some(r=>r.sku==='N1'&&r.fromPO&&r.poId==='p2'&&r.poQty===40));
+ assert.equal(u.elements['npi-country'].disabled,true);
+ assert.equal(f.loading(),false);
+});
+test('PI edit can remove an originally selected PO even when it no longer matches the current filter',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piRows=[{poId:'p1',poNo:'PO-1',sku:'N1',poQty:80,poPrice:10,piQty:5,piPrice:9,piDisc:0,fromPO:true}];
+ f.installEdit({selectedIds:['p1']});
+ u.elements['npi-country'].value='印度尼西亚';
+ f.refresh();
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/PO-1/);
+ await f.toggle('p1',false);
+ assert.deepEqual([...f.ids()],[]);
+ assert.equal(u.ctx.window._piRows[0].fromPO,false);
+});
