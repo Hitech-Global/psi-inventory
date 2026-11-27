@@ -1280,7 +1280,7 @@ async function initDatabase() {
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS ci_logistics_status TEXT DEFAULT ''");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS actual_arrival_date TEXT DEFAULT ''");
-  await exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
+
 
   await exec(`
     CREATE TABLE IF NOT EXISTS historical_commercial_invoices (
@@ -1382,6 +1382,7 @@ async function initDatabase() {
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS related_pi_nos TEXT DEFAULT ''");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS shipping_attachments TEXT NOT NULL DEFAULT '[]'");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''");
+  await exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
   await exec("CREATE INDEX IF NOT EXISTS idx_ci_clearance_type ON commercial_invoices(clearance_type)");
   // CI 多 PI：commercial_invoice_items 新增来源 PI 字段
   await exec("ALTER TABLE commercial_invoice_items ADD COLUMN IF NOT EXISTS pi_id TEXT DEFAULT ''");

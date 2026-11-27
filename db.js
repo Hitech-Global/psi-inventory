@@ -422,7 +422,8 @@ if (driver === 'pg') {
         console.log('[DB] domestic PI VAT migration OK: ' + domesticPiVatMigrations[dpvi]);
       }
       syncRequest('query', "UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
-      console.log('[DB] domestic PI VAT and CI logistics schema migration verified.');
+      console.log('[DB] domestic PI VAT schema migration verified.');
+      console.log('[DB] CI logistics schema migration verified.');
 
       // 合并派送费生产实际迁移（DB_DRIVER=pg 的 worker_threads 同步入口）。
       // 单据表只有 FK 至既有的 logistics_batches，0 历史数据回填。

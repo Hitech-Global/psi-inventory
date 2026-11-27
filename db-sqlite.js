@@ -1170,7 +1170,7 @@ function initDatabase() {
       if (!/duplicate column/i.test(e.message)) throw e;
     }
   }
-  d.exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
+
 
   // 历史 CI 财务导入：与运营 CI 完全隔离，只承载历史货款及其应付结算。
   d.exec(`
@@ -2466,6 +2466,7 @@ function initDatabase() {
       { name: 'import_duty_total', sql: 'REAL DEFAULT 0' },
       { name: 'clearance_type', sql: "TEXT NOT NULL DEFAULT ''" }
     ]);
+    d.exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
     addColumns('commercial_invoice_items', [
       { name: 'actual_customs_rate', sql: 'REAL DEFAULT NULL' }
     ]);
