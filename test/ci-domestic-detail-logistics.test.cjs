@@ -31,6 +31,7 @@ test('CI editor saves CI-level logistics status and actual arrival date',()=>{
   assert.ok(server.includes('ci_logistics_status = ?'));
   assert.ok(server.includes('actual_arrival_date = ?'));
   assert.ok(server.includes('ci.ci_logistics_status_for_edit'));
+  assert.ok(!server.includes('ciDetailMaxRawStatus'));
 });
 
 test('CI logistics summary does not replace batch-level physical logistics facts',()=>{
