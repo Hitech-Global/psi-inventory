@@ -257,6 +257,6 @@ test('zero-allocation PO marker prevents legacy quantity inference and cancelled
 test('single selected PO enforces brand currency and warehouse dimensions',()=>{
  const x=db();
  assert.throws(()=>core.validatePOs(['po1'],{...form(),currency:'USD'},x.queryOne,{enforceDimensions:true}),/币种/);
- assert.throws(()=>core.validatePOs(['po1'],{...form(),target_warehouse:'Other'},x.queryOne,{enforceDimensions:true}),/目标仓库/);
+ assert.throws(()=>core.validatePOs(['po1'],{...form(),target_warehouse:'Other'},x.queryOne,{enforceDimensions:true}),/PI仓库/);
  x.sqlite.close();
 });
