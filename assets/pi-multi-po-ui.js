@@ -108,7 +108,7 @@
    if(!state.enabled)return;
    const matched=candidates(),eligible=available();
    if(!state.editMode){
-     const keep=state.ids.filter(id=>matched.some(po=>po.id===id));
+     const keep=state.ids.filter(id=>eligible.some(po=>po.id===id));
      if(keep.length!==state.ids.length){state.ids=keep;resetRows();}
    }
    const box=el('pi-multi-po-picker');if(!box)return;
