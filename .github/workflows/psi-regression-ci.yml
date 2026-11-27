@@ -63,6 +63,7 @@ on:
       - 'assets/ci-attachment-actions.js'
       - 'test/ci-attachment-actions.test.cjs'
       - 'test/ci-summary-compact.test.cjs'
+      - 'test/i18n-layout-structure.test.cjs'
       - 'assets/ci-list-freight.js'
       - 'assets/ci-shared-freight-display.js'
       - 'shared-logistics-fee-server.js'
@@ -305,6 +306,8 @@ jobs:
         run: node test/logistics-detail-loading-hotfix.test.cjs
       - name: Test compact CI procurement summary layout
         run: node test/ci-summary-compact.test.cjs
+      - name: Audit translated HTML structure and compact CI/PL layout
+        run: node test/i18n-layout-structure.test.cjs
       - name: Test compact CI single-date filter and synced procurement totals
         run: node --test test/ci-single-date-filter.test.cjs
       - name: Test Mac-style CI expense modal and currency handling
