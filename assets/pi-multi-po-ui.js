@@ -29,11 +29,10 @@
    if(poSel)poSel.value=state.ids[0]||'';
    if(!pos.length){
      if(state.editMode){
-       const pi=state.pi||{};
-       if(cur){cur.value=pi.currency||cur.value;cur.disabled=false;}
-       if(brand){brand.value=pi.brand||'';brand.disabled=false;}
-       if(country){country.value=pi.country||'';country.disabled=false;}
-       if(wh){wh.value=pi.target_warehouse||'';wh.disabled=false;}
+       if(cur)cur.disabled=false;
+       if(brand)brand.disabled=false;
+       if(country)country.disabled=false;
+       if(wh)wh.disabled=false;
        state.details=[];
        if(typeof window._piEditRowsForSelection==='function')
          window._piEditRowsForSelection([]);
@@ -101,6 +100,17 @@
    return ['supplier_id','country','brand','currency','target_warehouse']
      .every(k=>norm(a[k])===norm(b[k]));
  }
+ function editAnchor(){
+   const sup=el('npi-sup');
+   return {supplier_id:sup?.value||'',country:el('npi-country')?.value||'',
+     brand:el('npi-brand')?.value||'',currency:el('npi-cur')?.value||'',
+     target_warehouse:el('npi-wh')?.value||''};
+ }
+ function compatibleWithEditForm(po){
+   const a=editAnchor();
+   return ['supplier_id','country','brand','currency','target_warehouse']
+     .every(k=>!norm(a[k])||norm(a[k])===norm(po[k]));
+ }
  function refresh(){
    if(!state.enabled)return;
    const matched=candidates(),eligible=matched.filter(canSelect),old=state.ids;
@@ -116,7 +126,7 @@
      }else resetRows();
    }
    const first=(window._piApprovedPOs||[]).find(po=>po.id===state.ids[0]);
-   const anchor=first||(state.editMode?state.pi:null);
+   const anchor=first||null;
    const box=el('pi-multi-po-picker');
    if(!box)return;
    const search=(el('pi-multi-po-search')?.value||'').trim().toLocaleLowerCase();
@@ -127,7 +137,7 @@
      const reason=ineligibility(po);
      const restorable=originalFullPO(po,reason);
      const displayReason=restorable?'':reason;
-     const conflict=!selected&&!!anchor&&!compatible(anchor,po);
+     const conflict=!selected&&(anchor?!compatible(anchor,po):(state.editMode&&!compatibleWithEditForm(po)));
      const forbidden=!selected&&(!!displayReason||conflict);
      const hint=displayReason||(conflict?'品牌/仓库/币种不同，不可合并':'');
      const stateText=displayReason||(restorable?'原关联可恢复':
@@ -155,9 +165,9 @@
    }
    const old=state.ids.slice(),oldDetails=state.details.slice();
    const first=(window._piApprovedPOs||[]).find(p=>p.id===old[0]);
-   const anchor=first||(state.editMode?state.pi:null);
+   const anchor=first||null;
    if(checked&&!old.includes(id)){
-     if(anchor&&!compatible(anchor,po)){
+     if(anchor?!compatible(anchor,po):(state.editMode&&!compatibleWithEditForm(po))){
        showToast('只能合并同供应商、国家、品牌、币种、仓库的PO','warning');refresh();return;
      }
      state.ids.push(id);
