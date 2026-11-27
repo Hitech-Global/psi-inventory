@@ -12011,15 +12011,23 @@ function buildMultiPOEditableRows(poRef,pi){
     const totalQty=Number(it.pi_confirmed_qty||0);
     const manualQty=Math.max(0,totalQty-(allocatedQty.get(sku)||0));
     if(manualQty>0||!sourced.has(sku)){
-      const totalAmount=it.pi_amount!=null?Number(it.pi_amount):
-        totalQty*Number(it.unit_price||0)*(1-Number(it.discount||0));
-      const manualAmount=totalAmount-(allocatedAmount.get(sku)||0);
-      rows.push({
-        poId:'',poNo:'',sku,fromPO:false,poQty:0,poPrice:0,
-        piQty:manualQty,
-        piPrice:manualQty>0?Math.max(0,manualAmount/manualQty):Number(it.unit_price||0),
-        piDisc:0
-      });
+      const hasAllocated=(allocatedQty.get(sku)||0)>0;
+      if(!hasAllocated){
+        rows.push({
+          poId:'',poNo:'',sku,fromPO:false,poQty:0,poPrice:0,
+          piQty:totalQty,piPrice:Number(it.unit_price||0),piDisc:Number(it.discount||0)
+        });
+      }else{
+        const totalAmount=it.pi_amount!=null?Number(it.pi_amount):
+          totalQty*Number(it.unit_price||0)*(1-Number(it.discount||0));
+        const manualAmount=totalAmount-(allocatedAmount.get(sku)||0);
+        rows.push({
+          poId:'',poNo:'',sku,fromPO:false,poQty:0,poPrice:0,
+          piQty:manualQty,
+          piPrice:manualQty>0?Math.max(0,manualAmount/manualQty):Number(it.unit_price||0),
+          piDisc:0
+        });
+      }
     }
   }
   return rows;
