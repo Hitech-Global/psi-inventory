@@ -24,7 +24,7 @@ const insert = server.match(/INSERT INTO commercial_invoices \(([^\n]+?)\) VALUE
 assert.ok(insert, 'operational CI INSERT must be found');
 assert.equal(insert[1].split(',').length, (insert[2].match(/\?/g) || []).length, 'CI INSERT columns and placeholders must match');
 assert.match(insert[1], /clearance_type/);
-assert.match(server, /ciCurrency, clearanceType, 0, piTotalAmount/);
+assert.match(server, /ciCurrency, ciTradeMode, ciVatAmount, clearanceType, 0, piTotalAmount/);
 
 assert.match(pgDb, /ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS clearance_type TEXT NOT NULL DEFAULT ''/);
 assert.match(sqliteDb, /name: 'clearance_type', sql: "TEXT NOT NULL DEFAULT ''"/);

@@ -1079,6 +1079,13 @@ function initDatabase() {
     )
   `);
 
+  // PI trade mode / VAT / one-CI lock. Existing PI rows default to international trade.
+  for (const col of ["trade_mode TEXT DEFAULT 'international'", "vat_amount REAL DEFAULT 0", "domestic_ci_id TEXT DEFAULT ''"]) {
+    try { d.exec('ALTER TABLE proforma_invoices ADD COLUMN ' + col); } catch (e) {
+      if (!/duplicate column/i.test(e.message)) throw e;
+    }
+  }
+
   // PI-MULTI-PO: legacy PI rows keep their single PO reference unchanged.
   for (const col of ["related_po_ids TEXT DEFAULT ''", "related_po_nos TEXT DEFAULT ''"]) {
     try { d.exec('ALTER TABLE proforma_invoices ADD COLUMN ' + col); } catch (e) {
@@ -1156,6 +1163,13 @@ function initDatabase() {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // CI trade mode / VAT snapshot. Historical and existing CI rows default to international / zero VAT.
+  for (const col of ["trade_mode TEXT DEFAULT 'international'", "vat_amount REAL DEFAULT 0"]) {
+    try { d.exec('ALTER TABLE commercial_invoices ADD COLUMN ' + col); } catch (e) {
+      if (!/duplicate column/i.test(e.message)) throw e;
+    }
+  }
 
   // 历史 CI 财务导入：与运营 CI 完全隔离，只承载历史货款及其应付结算。
   d.exec(`

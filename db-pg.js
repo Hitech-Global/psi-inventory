@@ -1188,6 +1188,9 @@ async function initDatabase() {
     )
   `);
 
+  await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'");
+  await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0");
+  await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS domestic_ci_id TEXT DEFAULT ''");
   await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_ids TEXT DEFAULT ''");
   await exec("ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS related_po_nos TEXT DEFAULT ''");
   await exec(`CREATE TABLE IF NOT EXISTS pi_po_allocations (
@@ -1272,6 +1275,9 @@ async function initDatabase() {
       updated_at TEXT DEFAULT NOW()
     )
   `);
+
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS historical_commercial_invoices (
