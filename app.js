@@ -11967,7 +11967,7 @@ async function viewPI(id, backPay, backMode){
       :renderCmpReadonly(computePODiff(poRef,pi.items||[]));
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
     const backFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5449.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
-    openModal(t('modal.title.viewPI', 'PI详情 - {v1}', {v1: pi.pi_no}),t('modal.body.viewPI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid detail-grid-pi">{v1}{v2}</div></div><div class="detail-section"><h3>PI明细</h3><div class="pi-table-scroll"><table class="data-table pi-items-table"><thead><tr><th style="text-align:left">PO号</th><th>SKU</th><th>PO数量</th><th>PI确认</th><th>单价</th><th>折扣</th><th>金额</th><th>已发货</th><th>未发货</th></tr></thead><tbody>{v3}</tbody></table></div></div><div class="detail-section"><h3>PO vs PI 差异对比</h3>{v4}</div></div>', {v1: [{f:'pi_no',l:t('col.pi_no','PI号')},{f:'related_po_no',l:t('col.related_po','关联PO')},{f:'supplier_name',l:t('pi.field.supplier','供应商')},{f:'brand',l:t('app.112','品牌')},{f:'country',l:t('app.113','国家')},{f:'target_warehouse',l:t('app.114','仓库')},{f:'pi_date',l:t('pi.field.date','PI日期')},{f:'currency',l:t('html.pay.th.currency','币种')},{f:'total_amount',l:t('pi.field.total_amount','总金额')},{f:'payment_terms',l:t('nav.payment_terms','付款条件')},{f:'need_deposit',l:t('col.is_deposit','是否定金')},{f:'deposit_ratio',l:t('col.deposit_ratio','定金比例')},{f:'payable_deposit',l:t('col.deposit_amount','定金金额')},{f:'expected_delivery',l:t('pi.field.expected_delivery','预计交期')},{f:'pi_status',l:t('pi.field.status','PI状态')}].map(o=>'<div class="detail-item"><span class="detail-label">'+o.l+'</span><span class="detail-value">'+(o.f==='need_deposit'?(piNeedsDeposit(pi[o.f])?t('gen.L5450.1','是'):t('gen.L5450.2','否')):(o.f==='pi_status'?esc(formatPIStatus(pi.pi_status)):(o.f==='deposit_ratio'?(pi[o.f]||0)+'%':(o.f==='total_amount'||o.f==='payable_deposit'?(pi.currency?pi.currency+' ':'')+fmtMoney(pi[o.f]):esc(pi[o.f])))))+'</span></div>').join(''), v2: attachmentHtml('pi',pi.id,'attachment',pi.attachment,t("pi.field.attachment", "PI\u9644\u4ef6")), v3: piDetailRows.map(i=>'<tr><td class="cell-id" style="text-align:left">'+esc(i.po_no||'-')+'</td><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td><td class="text-right">'+i.pi_confirmed_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+((i.discount||0)*100)+'%</td><td class="text-right">'+fmtMoney(i.pi_amount)+'</td><td class="text-right">'+(i.shipped_qty==null?'—':i.shipped_qty)+'</td><td class="text-right">'+(i.unshipped_qty==null?'—':i.unshipped_qty)+'</td></tr>').join(''), v4: diffHtml.replace('class="table-container"','class="pi-table-scroll"')}),backFooter,'modal-pi');
+    openModal(t('modal.title.viewPI', 'PI详情 - {v1}', {v1: pi.pi_no}),t('modal.body.viewPI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>基本信息</h3><div class="detail-grid detail-grid-pi">{v1}{v2}</div></div><div class="detail-section"><h3>PI明细</h3><div class="pi-table-scroll"><table class="data-table pi-items-table"><thead><tr><th style="text-align:left">PO号</th><th>SKU</th><th>PO数量</th><th>PI确认</th><th>单价</th><th>折扣</th><th>金额</th><th>已发货</th><th>未发货</th></tr></thead><tbody>{v3}</tbody></table></div></div><div class="detail-section"><h3>PO vs PI 差异对比</h3>{v4}</div></div>', {v1: [{f:'pi_no',l:t('col.pi_no','PI号')},{f:'related_po_no',l:t('col.related_po','关联PO')},{f:'supplier_name',l:t('pi.field.supplier','供应商')},{f:'brand',l:t('app.112','品牌')},{f:'country',l:t('app.113','国家')},{f:'target_warehouse',l:t('app.114','仓库')},{f:'pi_date',l:t('pi.field.date','PI日期')},{f:'currency',l:t('html.pay.th.currency','币种')},{f:'trade_mode',l:t('pi.trade_mode','贸易模式')},{f:'vat_amount',l:t('pi.vat_amount','VAT费用')},{f:'total_amount',l:t('pi.field.total_amount','总金额')},{f:'payment_terms',l:t('nav.payment_terms','付款条件')},{f:'need_deposit',l:t('col.is_deposit','是否定金')},{f:'deposit_ratio',l:t('col.deposit_ratio','定金比例')},{f:'payable_deposit',l:t('col.deposit_amount','定金金额')},{f:'expected_delivery',l:t('pi.field.expected_delivery','预计交期')},{f:'pi_status',l:t('pi.field.status','PI状态')}].filter(o=>o.f!=='vat_amount'||String(pi.trade_mode||'international')==='domestic').map(o=>'<div class="detail-item"><span class="detail-label">'+o.l+'</span><span class="detail-value">'+(o.f==='need_deposit'?(piNeedsDeposit(pi[o.f])?t('gen.L5450.1','是'):t('gen.L5450.2','否')):(o.f==='pi_status'?esc(formatPIStatus(pi.pi_status)):(o.f==='deposit_ratio'?(pi[o.f]||0)+'%':(o.f==='total_amount'||o.f==='payable_deposit'||o.f==='vat_amount'?(pi.currency?pi.currency+' ':'')+fmtMoney(pi[o.f]):(o.f==='trade_mode'?(String(pi.trade_mode||'international')==='domestic'?t('pi.trade_mode.domestic','国内贸易'):t('pi.trade_mode.international','国际贸易')):esc(pi[o.f]))))))+'</span></div>').join(''), v2: attachmentHtml('pi',pi.id,'attachment',pi.attachment,t("pi.field.attachment", "PI\u9644\u4ef6")), v3: piDetailRows.map(i=>'<tr><td class="cell-id" style="text-align:left">'+esc(i.po_no||'-')+'</td><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.po_qty+'</td><td class="text-right">'+i.pi_confirmed_qty+'</td><td class="text-right">'+fmtMoney(i.unit_price)+'</td><td class="text-right">'+((i.discount||0)*100)+'%</td><td class="text-right">'+fmtMoney(i.pi_amount)+'</td><td class="text-right">'+(i.shipped_qty==null?'—':i.shipped_qty)+'</td><td class="text-right">'+(i.unshipped_qty==null?'—':i.unshipped_qty)+'</td></tr>').join(''), v4: diffHtml.replace('class="table-container"','class="pi-table-scroll"')}),backFooter,'modal-pi');
     // PI-TABLE-ALIGN-01 R4: 给 i18n 渲染的 Items 表补 pi-items-readonly class + 像素 colgroup（8列总宽1165px）
     const _piItemsTbl=document.querySelector('.modal-pi .pi-table-scroll .data-table:not(.pi-cmp-table)');
     // Existing translated HTML templates may still have the old 8-column head.
@@ -12046,13 +12046,15 @@ async function editPI(id){
       +t('gen.L5473.1','<div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'"></div>'
       +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur"')+((pi.deposit_payment_status==='pending_approval')?' disabled':'')+'>'+curOpts+'</select>'
       +((pi.deposit_payment_status==='pending_approval')?'<div class="form-hint" style="color:#fa8c16;font-size:12px">'+t('pi.currency.locked_hint','定金审批中，币种不可修改')+'</div>':'')+'</div>'
+      +'<div class="form-group"><label>'+t('pi.trade_mode','贸易模式')+'</label><select id="npi-trade-mode" onchange="onPITradeModeChange()"><option value="international"'+((pi.trade_mode||'international')==='international'?' selected':'')+'>'+t('pi.trade_mode.international','国际贸易')+'</option><option value="domestic"'+(pi.trade_mode==='domestic'?' selected':'')+'>'+t('pi.trade_mode.domestic','国内贸易')+'</option></select></div>'
+      +'<div class="form-group" id="npi-vat-group" style="'+(pi.trade_mode==='domestic'?'':'display:none;')+'"><label>'+t('pi.vat_amount','VAT费用')+'</label><input type="number" min="0" step="0.01" id="npi-vat-amount" value="'+esc(pi.vat_amount||0)+'" oninput="recomputeCmpFooter()"></div>'
       +t('gen.L5475.1','<div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1"')+(piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.2','>是</option><option value="0"')+(!piNeedsDeposit(pi.need_deposit)?' selected':'')+t('gen.L5475.3','>否</option></select></div>')
       +t('gen.L5476.1','<div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="')+(pi.deposit_ratio||0)+'"></div>'
       +t('gen.L5477.1','<div class="form-group"><label>预计交期</label><input type="date" id="npi-del" value="')+esc(pi.expected_delivery||'')+'"></div>'
       +t('gen.L5478.1','<div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div>')
       +'</div>'
       +t('gen.L5480.1','<h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button></h4>')
-      +t('gen.L5481.1','<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div>')
+      +t('gen.L5481.1','<div class="table-container" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div><div id="pi-vat-total-preview" style="display:none;margin:8px 0 12px;padding:10px 12px;background:#f6f8fb;border-radius:6px;font-size:12px;color:#444"></div>')
       +'</div>';
     openModal(t('modal.title.editPI.2', '编辑PI - {v1}', {v1: esc(pi.pi_no)}),body,t('modal.footer.editPI', `<button class="btn btn-secondary" onclick="closeModal()">关闭</button><button class="btn btn-primary" onclick="saveEditPI('{v1}')">💾 保存</button>`, {v1: id}),'modal-pi');
     // The "show" class is on #modal-overlay, not on .modal.
@@ -12067,6 +12069,7 @@ async function editPI(id){
     window._editingPIIsMultiPO=relatedIdsForRows.length>1;
     window._piRows=window._editingPIIsMultiPO?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
     renderCmpTable();
+    onPITradeModeChange();
     // 仓库选项同步填充 + 回填保存值（预取数据，表单打开后立即填充，无空窗期；先加载选项→确认 option 存在→回填值）
     const wSel=document.getElementById('npi-wh');
     if(wSel){
@@ -12138,6 +12141,8 @@ async function saveEditPI(id){
       related_po_ids:piIsMultiSource?window.PIMultiPO.ids():undefined,
       pi_date:document.getElementById('npi-date')?.value||'',
       currency:document.getElementById('npi-cur')?.value||'',
+      trade_mode:document.getElementById('npi-trade-mode')?.value||'international',
+      vat_amount:(document.getElementById('npi-trade-mode')?.value==='domestic'?(parseFloat(document.getElementById('npi-vat-amount')?.value)||0):0),
       payment_terms:paymentTermsText,
       payment_term_id:termId,
       expected_delivery:document.getElementById('npi-del').value,
@@ -12206,8 +12211,9 @@ async function createPI(){
   const countryOpts='<option value="">（请选择国家）</option>'+countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.default_currency?' data-cur="'+esc(c.default_currency)+'"':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
   const whOpts='<option value="">（请选择仓库）</option>';
   const brandOpts='<option value="">（请选择品牌）</option>'+(brands||[]).map(b=>'<option value="'+esc(b)+'">'+esc(b)+'</option>').join('');
-  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>PI号（可选，留空自动生成）</label><input type="text" id="npi-no" placeholder="留空则系统自动生成"></div><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>国家 <span class="required">*</span></label><select id="npi-country" onchange="onPICountryChange()"></select></div><div class="form-group"><label>仓库 <span class="required">*</span></label><select id="npi-wh"></select></div><div class="form-group"><label>品牌 <span class="required">*</span></label><select id="npi-brand"></select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
+  openModal(t('gen.L5520.1','新建PI'),t('modal.body.createPI', `<div class="form-card" style="box-shadow:none;padding:0"><div class="form-grid"><div class="form-group"><label>PI号（可选，留空自动生成）</label><input type="text" id="npi-no" placeholder="留空则系统自动生成"></div><div class="form-group"><label>关联PO</label><select id="npi-po" onchange="loadPOForPI()"><option value="">无关联</option>{v1}</select></div><div class="form-group"><label>供应商 <span class="required">*</span></label><select id="npi-sup" onchange="onPISupplierChange()">{v2}</select></div><div class="form-group"><label>国家 <span class="required">*</span></label><select id="npi-country" onchange="onPICountryChange()"></select></div><div class="form-group"><label>仓库 <span class="required">*</span></label><select id="npi-wh"></select></div><div class="form-group"><label>品牌 <span class="required">*</span></label><select id="npi-brand"></select></div><div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="{v3}"></div><div class="form-group"><label>币种</label><select id="npi-cur"><option>USD</option><option>RMB</option><option>IDR</option><option>MYR</option><option>THB</option></select></div><div class="form-group"><label>'+t('pi.trade_mode','贸易模式')+'</label><select id="npi-trade-mode" onchange="onPITradeModeChange()"><option value="international" selected>'+t('pi.trade_mode.international','国际贸易')+'</option><option value="domestic">'+t('pi.trade_mode.domestic','国内贸易')+'</option></select></div><div class="form-group" id="npi-vat-group" style="display:none"><label>'+t('pi.vat_amount','VAT费用')+'</label><input type="number" min="0" step="0.01" id="npi-vat-amount" value="0" oninput="recomputeCmpFooter()"></div><div class="form-group"><label>是否需要定金</label><select id="npi-need-dep" onchange="togglePIDeposit()"><option value="1">${t('term.yes','是')}</option><option value="0">${t('term.no','否')}</option></select></div><div class="form-group"><label>定金比例(%)</label><input type="number" id="npi-dep" value="30"></div><div class="form-group"><label>预计交期</label><input type="date" id="npi-del"></div><div class="form-group"><label>付款条件</label><select id="npi-terms"><option value="">（未选择）</option></select></div></div><h4 style="margin:16px 0 8px">PO vs PI 合并对比 <button class="btn btn-secondary btn-sm" onclick="addPIRow()">➕ 添加行</button> <button class="btn btn-secondary btn-sm" onclick="openSupplierPIImport()">📥 导入供应商PI</button> <button class="btn btn-secondary btn-sm" onclick="downloadDocTemplate('supplierPI')">📄 模板</button></h4><div class="pi-table-scroll" style="max-height:52vh;overflow:auto;box-shadow:none;margin-bottom:8px"><table class="data-table pi-cmp-table" id="pi-items-table"><thead><tr><th>SKU</th><th>PO数量</th><th>PI确认数量</th><th>PO单价</th><th>PI确认单价</th><th>PI折扣</th><th>PI金额</th><th>数量差异</th><th>单价差异</th><th>操作</th></tr></thead><tbody id="pi-items"></tbody><tfoot id="pi-cmp-foot"></tfoot></table></div><div id="pi-vat-total-preview" style="display:none;margin:8px 0 12px;padding:10px 12px;background:#f6f8fb;border-radius:6px;font-size:12px;color:#444"></div></div>`, {v1: pos.map(p=>'<option value="'+p.id+'" data-no="'+p.po_no+'">'+esc(p.po_no)+' - '+esc(p.supplier_name)+'</option>').join(''), v2: suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'">'+esc(s.name)+'</option>').join(''), v3: todayStr()}),t('gen.L5520.2','<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveNewPI()">创建</button>'),'modal-pi');
   window._piRows=[];renderCmpTable();
+  onPITradeModeChange();
   if(window.PIMultiPO)window.PIMultiPO.install();
   onPISupplierChange();
   // 统一填充 select 选项（三语模板结构一致，选项由 JS 填充）
@@ -12309,6 +12315,12 @@ function setPICountryWarehouseEditable(editable){
   _setPIBrandEditable(editable); // 品牌随国家/仓库同步可编辑态
 }
 function togglePIDeposit(){const need=document.getElementById('npi-need-dep')?.value!=='0';const dep=document.getElementById('npi-dep');if(dep){dep.disabled=!need;if(!need)dep.value=0;else if(!dep.value||dep.value==='0')dep.value=30;}}
+function onPITradeModeChange(){
+  const mode=document.getElementById('npi-trade-mode')?.value||'international';
+  const group=document.getElementById('npi-vat-group');
+  if(group)group.style.display=mode==='domestic'?'':'none';
+  recomputeCmpFooter();
+}
 function addPIRow(){window._piRows.push({sku:'',poQty:0,poPrice:0,piQty:0,piPrice:0,piDisc:0,fromPO:false});renderCmpTable();}
 function renderCmpTable(){const tb=document.getElementById('pi-items');if(!tb)return;
 const header=tb.parentElement?.querySelector('thead tr');
@@ -12320,8 +12332,24 @@ function cmpRowHTML(idx,r){return '<tr data-idx="'+idx+'"><td class="cell-id" st
 function updCmpRow(idx){const r=window._piRows[idx];if(!r)return;r.sku=document.getElementById('pi-rsk-'+idx)?.value||'';r.piQty=parseFloat(document.getElementById('pi-rq-'+idx)?.value)||0;r.piPrice=parseFloat(document.getElementById('pi-rp-'+idx)?.value)||0;r.piDisc=parseFloat(document.getElementById('pi-rd-'+idx)?.value)||0;const d=cmpDerived(r);const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('pi-ramt-'+idx,d.piAmt.toFixed(2));set('pi-rqd-'+idx,String(d.qtyDiff));set('pi-rpd-'+idx,d.priceDiff.toFixed(2));recomputeCmpFooter();}
 function delCmpRow(idx){window._piRows.splice(idx,1);renderCmpTable();}
 function cmpDerived(r){const poQty=+r.poQty||0,poPrice=+r.poPrice||0,piQty=+r.piQty||0,piPrice=+r.piPrice||0,piDisc=+r.piDisc||0;const poAmt=poQty*poPrice;const piAmt=piQty*piPrice*(1-piDisc);const qtyDiff=piQty-poQty;const priceDiff=piPrice-poPrice;const amtDiff=piAmt-poAmt;const hasPO=poQty>0||poPrice>0,hasPI=piQty>0||piPrice>0;let status=t("app.926", "\u4e00\u81f4");if(!hasPO&&hasPI)status=t("app.927", "PI\u65b0\u589e");else if(hasPO&&!hasPI)status=t("app.928", "PO\u6709PI\u7f3a");else if(Math.abs(qtyDiff)>1e-9&&Math.abs(priceDiff)>1e-9)status=t("app.929", "\u91cf\u4ef7\u5747\u5dee");else if(Math.abs(qtyDiff)>1e-9)status=t("app.930", "\u4ec5\u6570\u91cf\u5dee");else if(Math.abs(priceDiff)>1e-9)status=t("app.931", "\u4ec5\u5355\u4ef7\u5dee");return {poAmt,piAmt,qtyDiff,priceDiff,amtDiff,status};}
-function recomputeCmpFooter(){const f=document.getElementById('pi-cmp-foot');if(!f)return;let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;(window._piRows||[]).forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});f.innerHTML=t('html.recomputeCmpFooter', '<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">{v1}</td><td class="text-right">{v2}</td><td></td><td></td><td></td><td class="text-right">{v3}</td><td class="text-right">{v4}</td><td colspan="2" class="text-right">金额差异：{v5}</td></tr>', {v1: poQty, v2: piQty, v3: fmtMoney(piAmt), v4: qtyD, v5: fmtMoney(amtD)});
-const footerRow=f.querySelector('tr');if(footerRow&&!footerRow.querySelector('.pi-po-source-total'))footerRow.insertAdjacentHTML('afterbegin','<td class="pi-po-source-total"></td>');}
+function recomputeCmpFooter(){
+  const f=document.getElementById('pi-cmp-foot');if(!f)return;
+  let poQty=0,piQty=0,piAmt=0,qtyD=0,amtD=0;
+  (window._piRows||[]).forEach(r=>{const d=cmpDerived(r);poQty+=r.poQty;piQty+=r.piQty;piAmt+=d.piAmt;qtyD+=d.qtyDiff;amtD+=d.amtDiff;});
+  const tradeMode=document.getElementById('npi-trade-mode')?.value||'international';
+  const vatAmount=tradeMode==='domestic'?(parseFloat(document.getElementById('npi-vat-amount')?.value)||0):0;
+  const totalAmount=piAmt+vatAmount;
+  const currency=document.getElementById('npi-cur')?.value||'';
+  const preview=document.getElementById('pi-vat-total-preview');
+  if(preview){
+    if(tradeMode==='domestic'){
+      preview.style.display='';
+      preview.innerHTML=t('pi.vat.preview','商品金额 {v1} + VAT {v2} = PI总金额 {v3}',{v1:(currency?currency+' ':'')+fmtMoney(piAmt),v2:(currency?currency+' ':'')+fmtMoney(vatAmount),v3:(currency?currency+' ':'')+fmtMoney(totalAmount)});
+    }else{preview.style.display='none';preview.innerHTML='';}
+  }
+  f.innerHTML=t('html.recomputeCmpFooter', '<tr style="font-weight:700;background:#e8edf3"><td>汇总</td><td class="text-right">{v1}</td><td class="text-right">{v2}</td><td></td><td></td><td></td><td class="text-right">{v3}</td><td class="text-right">{v4}</td><td colspan="2" class="text-right">金额差异：{v5}</td></tr>', {v1: poQty, v2: piQty, v3: fmtMoney(totalAmount), v4: qtyD, v5: fmtMoney(amtD)});
+  const footerRow=f.querySelector('tr');if(footerRow&&!footerRow.querySelector('.pi-po-source-total'))footerRow.insertAdjacentHTML('afterbegin','<td class="pi-po-source-total"></td>');
+}
 async function loadPOForPI(){
   const poSel=document.getElementById('npi-po');
   if(!poSel)return;
@@ -12513,7 +12541,8 @@ async function saveNewPI(){
     po_id:r.poId||'',po_no:r.poNo||'',sku_code:r.sku.trim(),po_qty:Number(r.poQty||0),
     pi_confirmed_qty:Number(r.piQty||0),unit_price:Number(r.piPrice||0),discount:Number(r.piDisc||0)
   })):undefined;
-  const d={po_source_items,related_po_ids:linkedPOIds,related_po_id:linkedPOIds[0]||'',related_po_no:(window._piApprovedPOs||[]).find(p=>p.id===linkedPOIds[0])?.po_no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_no:(document.getElementById('npi-no')?.value||'').trim()||'',pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
+  const tradeMode=document.getElementById('npi-trade-mode')?.value||'international';
+  const d={po_source_items,related_po_ids:linkedPOIds,related_po_id:linkedPOIds[0]||'',related_po_no:(window._piApprovedPOs||[]).find(p=>p.id===linkedPOIds[0])?.po_no||'',supplier_id:supSel.value,supplier_name:supSel.options[supSel.selectedIndex].dataset.name,brand,country,target_warehouse,pi_no:(document.getElementById('npi-no')?.value||'').trim()||'',pi_date:document.getElementById('npi-date').value,currency:document.getElementById('npi-cur').value,trade_mode:tradeMode,vat_amount:tradeMode==='domestic'?(parseFloat(document.getElementById('npi-vat-amount')?.value)||0):0,need_deposit:document.getElementById('npi-need-dep').value==='1'?1:0,deposit_ratio:parseFloat(document.getElementById('npi-dep').value)||0,expected_delivery:document.getElementById('npi-del').value,payment_terms:paymentTermsText,payment_term_id:termId,items};
   if(linkedPOIds.length){
     const matched=(window._piApprovedPOs||[]).filter(p=>linkedPOIds.includes(p.id));
     const po=matched[0];
@@ -12975,7 +13004,8 @@ async function createHistoricalCI(){
     var avlPiMap={};var EPSILON=0.001;
     allPis.forEach(function(p){
       var remainQty=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
-      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid')){
+      var isDomestic=String(p.trade_mode||'international').toLowerCase()==='domestic';
+      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid') && !(isDomestic&&(p.domestic_ci_id||Number(p.shipped_qty_sum||0)>0))){
         avlPiMap[p.id]=p;
       }
     });
@@ -13125,7 +13155,7 @@ function onHistoricalSupplierChange(){
         html+='<input type="checkbox" class="hci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-cur="'+p.currency+'" data-wh="'+esc(p.target_warehouse||'')+'" data-wh-id="'+(p.warehouse_id||'')+'" onchange="onHciPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
         html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
         html+='</div>';
-        html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
+        html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+(String(p.trade_mode||'international')==='domestic'?' · '+t('ci.domestic.one_ci_hint','国内贸易：整单一次生成CI，VAT不分摊'):'')+'</div>';
         html+='</label>';
       });
       piList.innerHTML=html;
@@ -13575,19 +13605,25 @@ async function viewCI(id, backPay, backMode){
     // 若来自付款申请详情，提供【← 返回付款申请详情】入口，保留原上下文（含 mode）
     const ciBackFooter=backPay?'<button class="btn btn-secondary" onclick="viewPayment(\''+backPay+'\',\''+(backMode||'view')+t('gen.L5836.1','\')">← 返回付款申请详情</button><button class="btn btn-secondary" onclick="closeModal()">关闭</button>'):'';
     openModal(t('modal.title.viewCI', 'CI/PL详情 - {v1}', {v1: ci.ci_no}),t('modal.body.viewCI', '<div class="detail-card" style="box-shadow:none;padding:0"><div class="detail-section"><h3>'+t('section.basic_info','基本信息')+'</h3><div class="detail-grid">{v1}<div class="detail-item"><span class="detail-label">'+t('field.actual_ship_date','实际出货日期')+'</span><span class="detail-value{v2}">{v3}</span></div>{v4}{v5}{v6}</div></div></div>', {v1: (function(fields){
-      var labels={ci_no:t('field.ci_no','CI号'),related_pi_no:t('field.related_pi_no','关联PI'),supplier_name:t('field.supplier_name','供应商'),brand:t('field.brand','品牌'),country:t('field.country','国家'),target_warehouse:t('field.target_warehouse','目标仓库'),ci_date:t('field.ci_date','CI日期'),payable_date:t('field.payable_date','应付日期'),currency:t('field.currency','币种'),ci_total_qty:t('ci.detail.total_qty','CI总数量'),goods_amount:t('field.goods_amount','CI金额'),pi_total_amount:t('ci.detail.pi_total','PI总金额'),amount_difference:t('ci.detail.amount_diff','金额差异'),difference_reason:t('ci.detail.diff_reason','差异原因'),actual_deducted_deposit:t('ci.detail.deposit','已抵扣定金'),balance_gross_amount:t('ci.detail.payable_amount','应付金额'),balance_paid_amount:t('ci.detail.paid_amount','已付款金额'),balance_unpaid_amount:t('ci.detail.bal_unpaid','剩余未付金额'),transport_basis:t('ci.detail.transport','运输方式'),import_duty_total:t('ci.detail.duty','进口关税'),ci_status:t('field.ci_status','CI状态'),balance_payment_status:t('ci.detail.bal_status','尾款付款状态')};
-      var moneyFields={goods_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_gross_amount:1,balance_paid_amount:1,balance_unpaid_amount:1,import_duty_total:1};
+      var labels={ci_no:t('field.ci_no','CI号'),related_pi_no:t('field.related_pi_no','关联PI'),supplier_name:t('field.supplier_name','供应商'),brand:t('field.brand','品牌'),country:t('field.country','国家'),target_warehouse:t('field.target_warehouse','目标仓库'),ci_date:t('field.ci_date','CI日期'),payable_date:t('field.payable_date','应付日期'),currency:t('field.currency','币种'),trade_mode:t('ci.detail.trade_mode','贸易模式'),ci_total_qty:t('ci.detail.total_qty','CI总数量'),goods_amount:t('field.goods_amount','CI金额'),vat_amount:t('ci.detail.vat_amount','VAT费用'),ci_total_amount:t('ci.detail.total_amount','CI总金额'),pi_total_amount:t('ci.detail.pi_total','PI总金额'),amount_difference:t('ci.detail.amount_diff','金额差异'),difference_reason:t('ci.detail.diff_reason','差异原因'),actual_deducted_deposit:t('ci.detail.deposit','已抵扣定金'),balance_gross_amount:t('ci.detail.payable_amount','应付金额'),balance_paid_amount:t('ci.detail.paid_amount','已付款金额'),balance_unpaid_amount:t('ci.detail.bal_unpaid','剩余未付金额'),transport_basis:t('ci.detail.transport','运输方式'),import_duty_total:t('ci.detail.duty','进口关税'),ci_status:t('field.ci_status','CI状态'),balance_payment_status:t('ci.detail.bal_status','尾款付款状态')};
+      var moneyFields={goods_amount:1,vat_amount:1,ci_total_amount:1,pi_total_amount:1,amount_difference:1,actual_deducted_deposit:1,balance_gross_amount:1,balance_paid_amount:1,balance_unpaid_amount:1,import_duty_total:1};
       var buf='';fields.forEach(function(f){
-        var v;if(f==='related_pi_no'){var pns=[];try{pns=JSON.parse(ci.related_pi_nos||'[]');}catch(e){}if(pns.length===0&&ci.related_pi_no)pns=[ci.related_pi_no];v=pns.length>0?pns.map(esc).join('<br>'):'—';}
+        var isDomesticCI=String(ci.trade_mode||'international').toLowerCase()!=='international';
+        if(!isDomesticCI&&(f==='trade_mode'||f==='vat_amount'||f==='ci_total_amount'))return;
+        var v;if(f==='trade_mode'){var mode=String(ci.trade_mode||'international').toLowerCase();v=mode==='domestic'?t('pi.trade_mode.domestic','国内贸易'):mode==='mixed'?t('pi.trade_mode.mixed','混合贸易'):t('pi.trade_mode.international','国际贸易');}
+        else if(f==='vat_amount'){v=fmtCIMoney(ci.vat_amount,ci.currency);}
+        else if(f==='ci_total_amount'){v=fmtCIMoney(ci.total_amount!=null?ci.total_amount:(Number(ci.goods_amount||0)+Number(ci.vat_amount||0)),ci.currency);}
+        else if(f==='related_pi_no'){var pns=[];try{pns=JSON.parse(ci.related_pi_nos||'[]');}catch(e){}if(pns.length===0&&ci.related_pi_no)pns=[ci.related_pi_no];v=pns.length>0?pns.map(esc).join('<br>'):'—';}
         else if(f==='country'){var cv=ci[f];if(typeof getLang==='function'&&getLang()==='en'){cv=({'印度尼西亚':'Indonesia','泰国':'Thailand','马来西亚':'Malaysia'})[cv]||cv;}v=esc(cv);}
         else if(f==='import_duty_total'){var dutyCurrency=String(ci.import_duty_currency||ci.currency||'').trim().toUpperCase();v=fmtCIMoney(ci[f],dutyCurrency,ci.import_duty_rmb_conversion);}
         else if(moneyFields[f]){v=fmtCIMoney(ci[f],ci.currency);}
         else if(f==='ci_status'){var sc=ciStatusClass(ci[f]);v='<span class="status-badge '+sc+'">'+statusLabel(ci[f])+'</span>';}
         else if(f==='ci_total_qty'){v=formatQuantityDisplay((ci.items||[]).reduce(function(s,i){return s+(parseInt(i.shipped_qty,10)||0);},0));}else if(f==='balance_payment_status')v=statusLabel(ci[f]);
         else v=esc(ci[f]);
-        buf+='<div class=\"detail-item\"><span class=\"detail-label\">'+(labels[f]||f)+'</span><span class=\"detail-value\">'+v+'</span></div>';
+        var fieldLabel=(f==='goods_amount'&&isDomesticCI)?t('ci.detail.goods_amount','商品金额'):(labels[f]||f);
+        buf+='<div class=\"detail-item\"><span class=\"detail-label\">'+fieldLabel+'</span><span class=\"detail-value\">'+v+'</span></div>';
       });return buf;
-    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','ci_total_qty','goods_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','balance_gross_amount','balance_paid_amount','balance_unpaid_amount','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.attachments", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '<div class="detail-item"><span class="detail-label">清关方式</span><span class="detail-value">'+ciClearanceLabel(ci.clearance_type)+'</span></div>', v7: '', v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
+    })(ci._v1fields||['ci_no','related_pi_no','supplier_name','brand','country','target_warehouse','ci_date','payable_date','currency','trade_mode','ci_total_qty','goods_amount','vat_amount','ci_total_amount','pi_total_amount','amount_difference','difference_reason','actual_deducted_deposit','balance_gross_amount','balance_paid_amount','balance_unpaid_amount','transport_basis','import_duty_total','ci_status','balance_payment_status']), v2: !ci.actual_ship_date?' text-warning':'', v3: ci.actual_ship_date?esc(fmtDate(ci.actual_ship_date)):t("app.998", "\u5f85\u8865\u5145"), v4: hasPermission('ci_edit')?'<div class="detail-item" style="grid-column:1/-1"><button class="btn btn-secondary btn-sm" onclick="editActualShipDate(\'commercial\',\''+ci.id+'\',\''+(ci.actual_ship_date||'')+t('gen.L5837.1','\')">补充/更正实际出货日期</button></div>'):'', v5: '<div class="detail-item" style="grid-column:1/-1"><span class="detail-label">'+t("ci.attachments", "CI / PL 附件")+'</span><span class="detail-value">'+ciUnifiedAttachmentHtml(ci)+'</span></div>', v6: '<div class="detail-item"><span class="detail-label">清关方式</span><span class="detail-value">'+ciClearanceLabel(ci.clearance_type)+'</span></div>', v7: '', v8: plItems.length?t('gen.L5837.2','<div class="table-container"><table class="data-table"><thead><tr><th>SKU</th><th>每箱数量</th><th>箱数</th><th>总数量</th><th>总毛重</th><th>总净重</th><th>总体积</th></tr></thead><tbody>')+plItems.map(i=>'<tr><td class="cell-id">'+esc(i.sku_code)+'</td><td class="text-right">'+i.qty_per_carton+'</td><td class="text-right">'+i.cartons+'</td><td class="text-right">'+i.total_qty+'</td><td class="text-right">'+i.gross_weight+'</td><td class="text-right">'+i.net_weight+'</td><td class="text-right">'+i.cbm+'</td></tr>').join('')+'</tbody></table></div>':t('gen.L5837.3','<div class="empty-state"><div class="empty-icon">📦</div>暂无PL明细</div>')}),ciBackFooter,'modal-ci-create');
     const _ciShellMb=document.querySelector('#modal-content .modal-body');
     if(_ciShellMb)_ciShellMb.insertAdjacentHTML('beforeend', renderCIItemsShell(ci)+renderCIPLShell(ci)+renderCILogisticsShell(id));
     refreshCISharedFeeAction(id); // fire-and-forget; authoritative /api/me permissions, no modal loading delay
@@ -14257,7 +14293,8 @@ async function createOperationalCI(){
     var EPSILON=0.001;
     pis.forEach(function(p){
       var remainQty=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
-      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid')){
+      var isDomestic=String(p.trade_mode||'international').toLowerCase()==='domestic';
+      if(remainQty>EPSILON && (p.need_deposit!==1||p.deposit_payment_status==='paid') && !(isDomestic&&(p.domestic_ci_id||Number(p.shipped_qty_sum||0)>0))){
         avlPiMap[p.id]=p;
       }
     });
@@ -14332,10 +14369,10 @@ function onCISupplierChange(){
       var remain=(p.confirmed_qty_sum||0)-(p.shipped_qty_sum||0);
       html+='<label class="nci-pi-item" style="display:block;padding:10px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;margin:0;transition:background .15s" onmouseover="this.style.background=\'#f5f5f5\'" onmouseout="this.style.background=\'#fff\'">';
       html+='<div style="display:flex;align-items:center;gap:8px">';
-      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-supname="'+esc(p.supplier_name)+'" data-wh="'+esc(p.target_warehouse||'')+'" data-wh-id="'+(p.warehouse_id||'')+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
+      html+='<input type="checkbox" class="nci-pi-cb" value="'+p.id+'" data-no="'+esc(p.pi_no)+'" data-supid="'+p.supplier_id+'" data-cur="'+p.currency+'" data-trade-mode="'+(p.trade_mode||'international')+'" data-supname="'+esc(p.supplier_name)+'" data-wh="'+esc(p.target_warehouse||'')+'" data-wh-id="'+(p.warehouse_id||'')+'" onchange="onCIPISelectionChange()" style="flex-shrink:0;width:16px;height:16px">';
       html+='<span style="font-size:13px;font-weight:500;color:#333;white-space:nowrap">'+esc(p.pi_no)+'</span>';
       html+='</div>';
-      html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+'</div>';
+      html+='<div style="font-size:12px;color:#888;margin-top:4px;padding-left:24px">'+t('ci.pi.remain','剩余可出货：')+remain+' '+t('unit.pcs','件')+(String(p.trade_mode||'international')==='domestic'?' · '+t('ci.domestic.one_ci_hint','国内贸易：整单一次生成CI，VAT不分摊'):'')+'</div>';
       html+='</label>';
     });
   });
@@ -14373,6 +14410,9 @@ async function onCIPaymentTermsFilter(supId){
 }
 function onCIPISelectionChange(){
   var cbs=document.querySelectorAll('.nci-pi-cb:checked'),selSup=null,selCur=null;
+  var hasDomestic=Array.from(cbs).some(function(cb){return String(cb.dataset.tradeMode||'international')==='domestic';});
+  var batchEl=document.getElementById('nci-batch');
+  if(batchEl){batchEl.disabled=hasDomestic;if(hasDomestic)batchEl.value='1';}
   // Lock to first selected PI's supplier+currency
   cbs.forEach(function(cb){if(!selSup){selSup=cb.dataset.supid;selCur=cb.dataset.cur;}});
   document.querySelectorAll('.nci-pi-cb:not(:checked)').forEach(function(cb){
@@ -14432,10 +14472,11 @@ async function loadMultiPIItems(addedPiIds,removedPiIds){
         var pi=window._availPiMap&&window._availPiMap[addedPiIds[i]];
         // _availPiMap comes from list endpoint (no items), so always fetch single PI for item details
         if(!pi||!pi.items||pi.items.length===0){try{pi=await api('/api/proforma-invoices/'+addedPiIds[i]);}catch(e){continue;}}
+        if(pi&&pi.id&&window._availPiMap)window._availPiMap[pi.id]=pi;
         (pi.items||[]).forEach(function(it){
           if((it.unshipped_qty||0)>0){
             window._ciAllItems=(window._ciAllItems||[]);
-            window._ciAllItems.push({pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,discount:it.discount||0,reference_customs_rate:it.reference_customs_rate,idx:curR++,currency:pi.currency});
+            window._ciAllItems.push({pi_id:pi.id,pi_no:pi.pi_no,sku_code:it.sku_code,pi_confirmed_qty:it.pi_confirmed_qty||0,shipped_qty:it.shipped_qty||0,unshipped_qty:it.unshipped_qty,unit_price:it.unit_price,discount:it.discount||0,trade_mode:pi.trade_mode||'international',reference_customs_rate:it.reference_customs_rate,idx:curR++,currency:pi.currency});
           }
         });
       }catch(e){}
@@ -14488,19 +14529,22 @@ function buildCIItemRow(it,allItems){
   var refRate=it.reference_customs_rate!=null&&it.reference_customs_rate!==undefined?it.reference_customs_rate:'';
   var cQty=it.pi_confirmed_qty||0, sQty=it.shipped_qty||0, uQty=it.unshipped_qty||0;
   var discount=it.discount||0;
+  var isDomestic=String(it.trade_mode||'international').toLowerCase()==='domestic';
   var netUnitPrice=it.unit_price*(1-discount);
+  var qtyInput='<input type="number" id="ci-rq-'+it.idx+'" value="'+uQty+'" min="0" max="'+uQty+'" '+(isDomestic?'disabled title="'+t('ci.domestic.full_quantity','国内贸易 PI 必须一次性出完全部数量')+'"':'')+' onchange="updateCISummary()" oninput="updateCISummary()">';
+  var action=isDomestic?'<span style="color:#aaa;font-size:11px">'+t('ci.domestic.full','整单')+'</span>':'<button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button>';
   return '<tr id="ci-r-'+it.idx+'" data-pi-id="'+it.pi_id+'">'+
     '<td class="ci-col-sku">'+esc(it.sku_code)+'</td>'+
     '<td class="ci-col-pi" style="font-size:12px;color:#888">'+esc(it.pi_no)+'</td>'+
     '<td class="ci-col-right" style="color:#888">'+cQty+'</td>'+
     '<td class="ci-col-right" style="color:#888">'+sQty+'</td>'+
     '<td class="ci-col-right" style="color:#888">'+uQty+'</td>'+
-    '<td class="ci-col-right"><input type="number" id="ci-rq-'+it.idx+'" value="'+uQty+'" min="0" max="'+uQty+'" onchange="updateCISummary()" oninput="updateCISummary()"></td>'+
+    '<td class="ci-col-right">'+qtyInput+'</td>'+
     '<td class="ci-col-right">'+fmtMoney(it.unit_price)+'</td>'+
     '<td class="ci-col-right" style="color:#888">'+(discount>0?(discount*100).toFixed(1)+'%':'—')+'</td>'+
     '<td class="ci-col-right" style="color:#888">'+fmtMoney(netUnitPrice)+'</td>'+
     '<td class="ci-col-right" style="font-weight:bold" id="ci-ra-'+it.idx+'">'+fmtMoney(uQty*netUnitPrice)+'</td>'+
-    '<td class="ci-col-act"><button onclick="deleteCIRow('+it.idx+')" style="color:#bbb;border:none;background:none;cursor:pointer;font-size:13px;line-height:1;padding:2px 4px" title="'+t('common.delete','删除')+'">×</button></td>'+
+    '<td class="ci-col-act">'+action+'</td>'+
     '<input type="hidden" id="ci-rr-'+it.idx+'" value="'+refRate+'">'+
     '<input type="hidden" id="ci-rd-'+it.idx+'" value="'+discount+'">'+
     '</tr>';
@@ -14521,15 +14565,31 @@ function updateCISummary(){
   });
   summary.style.display='';
   var currency=(allItems[0]||{}).currency||'';
-  summary.innerHTML='<div class="ci-summary-bar">'+
-    '<span>'+t('ci.summary.qty','合计数量：{v1} 件',{v1:totalQty})+'</span>'+
-    '<span class="ci-sum-right">'+t('ci.summary.amt','CI金额：{v1} {v2}',{v1:fmtMoney(totalAmt),v2:currency})+'</span>'+
-    '</div>';
+  var selectedPis=Object.keys(window._ciSelectedPiIds||{}).map(function(id){return window._availPiMap&&window._availPiMap[id];}).filter(Boolean);
+  var domesticPis=selectedPis.filter(function(pi){return String(pi.trade_mode||'international').toLowerCase()==='domestic';});
+  var vatAmount=domesticPis.reduce(function(sum,pi){return sum+(Number(pi.vat_amount)||0);},0);
+  if(domesticPis.length){
+    summary.innerHTML='<div class="ci-summary-bar">'+
+      '<span>'+t('ci.summary.qty','合计数量：{v1} 件',{v1:totalQty})+'</span>'+
+      '<span>'+t('ci.summary.goods_amt','商品金额：{v1} {v2}',{v1:fmtMoney(totalAmt),v2:currency})+'</span>'+
+      '<span>'+t('ci.summary.vat_amt','VAT费用：{v1} {v2}',{v1:fmtMoney(vatAmount),v2:currency})+'</span>'+
+      '<span class="ci-sum-right">'+t('ci.summary.total_amt','CI总金额：{v1} {v2}',{v1:fmtMoney(totalAmt+vatAmount),v2:currency})+'</span>'+
+      '</div>';
+  }else{
+    summary.innerHTML='<div class="ci-summary-bar">'+
+      '<span>'+t('ci.summary.qty','合计数量：{v1} 件',{v1:totalQty})+'</span>'+
+      '<span class="ci-sum-right">'+t('ci.summary.amt','CI金额：{v1} {v2}',{v1:fmtMoney(totalAmt),v2:currency})+'</span>'+
+      '</div>';
+  }
 }
 
 // ── Delete individual CI item row (user can remove SKUs not shipping this batch) ──
 function deleteCIRow(idx){
   var allItems=window._ciAllItems||[];
+  var target=allItems.find(function(it){return it.idx===idx;});
+  if(target&&String(target.trade_mode||'international').toLowerCase()==='domestic'){
+    showToast(t('ci.domestic.full_quantity','国内贸易 PI 必须一次性出完全部数量'),'warning');return;
+  }
   window._ciAllItems=allItems.filter(function(it){return it.idx!==idx;});
   var row=document.getElementById('ci-r-'+idx);
   if(row)row.remove();
@@ -14628,7 +14688,7 @@ async function createBalPay(id){
   try{
     const ci=await api('/api/commercial-invoices/'+id);
     openModal(t('modal.title.createBalPay', '创建尾款付款申请 - {v1}', {v1: ci.ci_no}),
-      t('modal.body.createBalPay', `<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">CI金额</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">已抵扣定金</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">应付尾款</span><span class="detail-value font-bold">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>是否抵扣</label><select id="bal-ded" onchange="document.getElementById('bal-ded-amt').disabled=this.value==='0'"><option value="0">否</option><option value="1">是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="bal-ded-amt" value="0" disabled></div><div class="form-group"><label>抵扣来源类型</label><select id="bal-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="quality_claim">质量索赔</option><option value="advance_payment">预付款抵扣</option><option value="other">其他</option></select></div><div class="form-group"><label>抵扣参考号</label><input type="text" id="bal-ded-ref"></div><div class="form-group form-group-full"><label>抵扣说明</label><textarea id="bal-ded-desc" rows="2"></textarea></div></div></div>`, {v1: fmtMoney(ci.goods_amount), v2: fmtMoney(ci.actual_deducted_deposit), v3: fmtMoney(ci.payable_balance)}),
+      t('modal.body.createBalPay', `<div class="form-card" style="box-shadow:none;padding:0"><div class="detail-grid mb-16"><div class="detail-item"><span class="detail-label">CI金额</span><span class="detail-value">{v1}</span></div><div class="detail-item"><span class="detail-label">已抵扣定金</span><span class="detail-value">{v2}</span></div><div class="detail-item"><span class="detail-label">应付尾款</span><span class="detail-value font-bold">{v3}</span></div></div><div class="form-grid"><div class="form-group"><label>是否抵扣</label><select id="bal-ded" onchange="document.getElementById('bal-ded-amt').disabled=this.value==='0'"><option value="0">否</option><option value="1">是</option></select></div><div class="form-group"><label>抵扣金额</label><input type="number" step="0.01" id="bal-ded-amt" value="0" disabled></div><div class="form-group"><label>抵扣来源类型</label><select id="bal-ded-type"><option value="">选择</option><option value="other_payment">其他付款多付</option><option value="price_diff">价格差异</option><option value="quality_claim">质量索赔</option><option value="advance_payment">预付款抵扣</option><option value="other">其他</option></select></div><div class="form-group"><label>抵扣参考号</label><input type="text" id="bal-ded-ref"></div><div class="form-group form-group-full"><label>抵扣说明</label><textarea id="bal-ded-desc" rows="2"></textarea></div></div></div>`, {v1: fmtMoney(Number(ci.goods_amount||0)+Number(ci.vat_amount||0)), v2: fmtMoney(ci.actual_deducted_deposit), v3: fmtMoney(ci.payable_balance)}),
       t('modal.footer.createBalPay', `<button class="btn btn-secondary" onclick="closeModal()">取消</button><button class="btn btn-primary" onclick="saveBalPay('{v1}')">创建</button>`, {v1: id}));
   }catch(e){showToast(e.message,'danger')}
 }
