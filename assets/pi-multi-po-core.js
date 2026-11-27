@@ -162,7 +162,15 @@ function assignSourceAllocations({piId,poRows,items,sourceItems,query,run,genId}
    allocations.push({pi_id:piId,po_id:po.id,po_no:po.po_no,sku_code:sku,allocated_qty:qty});
  }
  for(const po of poRows){
-   if(!seenPOs.has(po.id))throw Error('关联PO缺少来源商品明细：'+po.po_no);
+   // A selected PO can legitimately contribute no quantity to this PI. Keep a
+   // hidden zero-quantity ledger marker so later edits never infer legacy
+   // allocations from the PI header or its aggregated SKU rows.
+   if(!seenPOs.has(po.id)){
+     const marker=poItems.get(po.id).values().next().value;
+     if(!marker)throw Error('PO没有商品明细：'+po.po_no);
+     run('INSERT INTO pi_po_allocations (id,pi_id,po_id,po_no,sku_code,allocated_qty,pi_unit_price,pi_discount) VALUES (?,?,?,?,?,?,?,?)',
+       [genId('ppa'),piId,po.id,po.po_no,marker.sku_code,0,0,0]);
+   }
    updatePOStatus(po.id,query,run);
  }
  return allocations;
