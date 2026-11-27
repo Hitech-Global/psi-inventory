@@ -119,6 +119,7 @@
      return !!po&&(state.editMode||canSelect(po));
    });
    if(keep.length!==old.length){
+     state.sequence++;state.loading=false;
      state.ids=keep;
      if(state.editMode){
        state.details=state.details.filter(po=>keep.includes(po.id));
