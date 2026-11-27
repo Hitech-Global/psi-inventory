@@ -11388,7 +11388,7 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
   let ciDetailMaxRank = -1;
   ciDetailLogisticsRows.forEach(row => {
     const rank = LOGISTICS_STAGE_RANK[row.logistics_status] !== undefined ? LOGISTICS_STAGE_RANK[row.logistics_status] : -1;
-    if (rank > ciDetailMaxRank) { ciDetailMaxRank = rank; ciDetailMaxRawStatus = row.logistics_status || ''; }
+    if (rank > ciDetailMaxRank) ciDetailMaxRank = rank;
   });
   const ciDetailEditStatusByRank = ['pending', 'in_transit', 'customs', 'delivering', 'completed'];
   ci.ci_logistics_status_for_edit = String(ci.ci_logistics_status || '').trim() || (ciDetailMaxRank >= 0 ? ciDetailEditStatusByRank[ciDetailMaxRank] : '');
