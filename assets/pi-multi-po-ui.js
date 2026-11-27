@@ -136,7 +136,7 @@
  }
  async function toggleEdit(id,checked){
    const po=(window._piApprovedPOs||[]).find(p=>p.id===id);
-   if(!po||!match(po))return;
+   if(!po||(checked&&!match(po)))return;
    const reason=ineligibility(po);
    if(checked&&reason){showToast(po.po_no+'：'+reason,'warning');refresh();return;}
    const beforeIds=state.ids.slice(),beforeRows=(window._piRows||[]).map(r=>({...r}));
