@@ -208,6 +208,12 @@ function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
        [genId('ppa'),piId,po.id,po.po_no,sku,qty,Number(line.unit_price||0),Number(line.discount||0)]);
      allocations.push({pi_id:piId,po_id:po.id,po_no:po.po_no,sku_code:sku,allocated_qty:qty});
    }
+   if(!allocations.length&&poRows.length){
+     const po=poRows[0];
+     const marker=query('SELECT sku_code FROM purchase_order_items WHERE po_id=? LIMIT 1',[po.id]).rows[0];
+     if(marker)run('INSERT INTO pi_po_allocations (id,pi_id,po_id,po_no,sku_code,allocated_qty,pi_unit_price,pi_discount) VALUES (?,?,?,?,?,?,?,?)',
+       [genId('ppa'),piId,po.id,po.po_no,marker.sku_code,0,null,null]);
+   }
    for(const po of poRows)updatePOStatus(po.id,query,run);
    return allocations;
  }
@@ -236,6 +242,12 @@ function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
      if(!remaining)break;
    }
    if(remaining>0)throw Error('PI确认数量超过已关联PO剩余数量：'+sku+'，超出 '+remaining);
+ }
+ if(!allocations.length&&poRows.length){
+   const po=poRows[0];
+   const marker=query('SELECT sku_code FROM purchase_order_items WHERE po_id=? LIMIT 1',[po.id]).rows[0];
+   if(marker)run('INSERT INTO pi_po_allocations (id,pi_id,po_id,po_no,sku_code,allocated_qty,pi_unit_price,pi_discount) VALUES (?,?,?,?,?,?,?,?)',
+     [genId('ppa'),piId,po.id,po.po_no,marker.sku_code,0,null,null]);
  }
  for(const po of poRows)updatePOStatus(po.id,query,run);
  return allocations;
