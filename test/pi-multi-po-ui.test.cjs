@@ -156,3 +156,34 @@ test('draft PO already fully converted to PI cannot be selected despite unapprov
  assert.deepEqual([...f.ids()],[]);
  assert.match(u.toast[0][0],/已全部转PI/);
 });
+
+test('edit picker preselects existing POs and supports adding and cancelling associations',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piRows=[{poId:'p1',poNo:'PO-1',sku:'N1',fromPO:true,poQty:80,piQty:10,piPrice:9,piDisc:0}];
+ u.ctx.window._piEditRowsForSelection=pos=>{u.ctx.window.lastEditSelection=pos.map(p=>p.id);};
+ f.install({editMode:true,selectedIds:['p1'],pi:{supplier_id:'s1',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok'}});
+ assert.deepEqual([...f.ids()],['p1']);
+ assert.match(u.elements['pi-multi-po-picker'].innerHTML,/<input type="checkbox" checked /);
+ await f.toggle('p2',true);
+ assert.deepEqual([...f.ids()],['p1','p2']);
+ assert.deepEqual(u.ctx.window.lastEditSelection,['p1','p2']);
+ await f.toggle('p1',false);
+ assert.deepEqual([...f.ids()],['p2']);
+ assert.deepEqual(u.ctx.window.lastEditSelection,['p2']);
+});
+test('edit picker can uncheck and restore its own fully transferred original PO',async()=>{
+ const full={...PO[0],id:'p5',po_no:'PO-FULL-ORIGINAL',po_status:'transferred_pi',remaining_pi_qty:0};
+ PO.push(full);
+ try{
+  const u=ui(),f=u.ctx.window.PIMultiPO;
+  u.ctx.window._piRows=[{poId:'p5',poNo:full.po_no,sku:'N1',fromPO:true,poQty:0,piQty:80,piPrice:10,piDisc:0}];
+  u.ctx.window._piEditRowsForSelection=pos=>{u.ctx.window.lastEditSelection=pos.map(p=>p.id);};
+  f.install({editMode:true,selectedIds:['p5'],pi:{supplier_id:'s1',country:'泰国',brand:'Netac',currency:'RMB',target_warehouse:'Bangkok'}});
+  assert.match(u.elements['pi-multi-po-picker'].innerHTML,/原关联可恢复/);
+  await f.toggle('p5',false);
+  assert.deepEqual([...f.ids()],[]);
+  await f.toggle('p5',true);
+  assert.deepEqual([...f.ids()],['p5']);
+  assert.deepEqual(u.ctx.window.lastEditSelection,['p5']);
+ }finally{PO.pop();}
+});
