@@ -12018,6 +12018,7 @@ async function editPI(id){
     }
     // 并行加载主数据(缓存) + PO 明细 + 仓库选项（预取，避免表单打开后仓库空窗期）
     var _poPromise=piLoadRelatedPOItems(pi).catch(function(){return [];});
+     var _poListPromise=api('/api/purchase-orders').catch(function(){return [];});
     var _whPromise=pi.country?api('/api/warehouses/by-country?country='+encodeURIComponent(pi.country)).catch(function(){return [];}):Promise.resolve([]);
     var _edData;
     try{ _edData=await Promise.all([_getMaster(['suppliers','countries','brands']),_poPromise,_whPromise,_poListPromise]);     }catch(e){showToast(e.message,'danger');return;}
