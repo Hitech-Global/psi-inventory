@@ -38,6 +38,11 @@ on:
       - 'test/app-perf-diagnostics.test.cjs'
       - 'test/app-perf-brand-invalidation.test.cjs'
       - 'server.js'
+      - 'assets/pi-multi-po-core.js'
+      - 'assets/pi-multi-po-ui.js'
+      - 'test/pi-multi-po.test.cjs'
+      - 'test/pi-multi-po-ui.test.cjs'
+      - 'test/pi-multi-po-route.test.cjs'
       - 'test/forecast-auto-sync.test.cjs'
       - 'ci-customs-duty-fx.js'
       - 'test/ci-customs-duty-fx.test.cjs'
@@ -363,6 +368,8 @@ jobs:
         run: node --test test/payable-list-auto-filter.test.cjs
       - name: Test PI deposit payable date follows PI date
         run: node --test test/pi-deposit-payable-date.test.cjs
+      - name: Test editable PI PO association and quantity rollback
+        run: node --test test/pi-multi-po.test.cjs test/pi-multi-po-ui.test.cjs test/pi-multi-po-route.test.cjs
       - name: Test PO number date and country format
         run: node test/po-number-date-country.test.cjs
       - name: Test PO latest FOB quotation and FX pricing
