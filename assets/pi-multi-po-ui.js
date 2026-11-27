@@ -88,7 +88,7 @@
  }
  // PO approval and PI association are separate: draft/pending plans can be
  // linked without silently approving the PO. Voided/rejected plans remain blocked.
- function candidates(){return (window._piApprovedPOs||[]).filter(match);}
+ function candidates(){return (window._piApprovedPOs||[]).filter(po=>match(po)||(state.editMode&&state.ids.includes(po.id)));}
  function ineligibility(po){
    if(po.po_status==='cancelled')return 'PO已作废';
    if(po.po_status==='rejected'||po.approval_status==='rejected')return '审批已驳回';
