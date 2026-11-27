@@ -7,7 +7,7 @@ const MARKER='// CI-UNIFIED-DATA-BINDING-V1';
 function patchAppSource(src){
   if(src.includes(MARKER)) return src;
   const labelOld="function ciClearanceLabel(v){return v==='formal'?t('ci.clearance.formal','正清'):v==='non_formal'?t('ci.clearance.non_formal','非正清'):t('ci.clearance.unset','未设置');}";
-  const labelNew="function ciClearanceLabel(v){var raw=String(v==null?'':v);return raw==='formal'?t('ci.clearance.formal','正清'):raw==='non_formal'?t('ci.clearance.non_formal','非正清'):raw?t('ci.clearance.unknown','原值待核对')+' ('+raw+')':t('ci.clearance.unset','未设置');}";
+  const labelNew="function ciClearanceLabel(v){var raw=String(v==null?'':v);return raw==='domestic'?t('pi.trade_mode.domestic','国内贸易'):raw==='formal'?t('ci.clearance.formal','正清'):raw==='non_formal'?t('ci.clearance.non_formal','非正清'):raw?t('ci.clearance.unknown','原值待核对')+' ('+raw+')':t('ci.clearance.unset','未设置');}";
   if(!src.includes(labelOld))throw new Error('[CI-DATA-BINDING] clearance label anchor not found');
   src=src.replace(labelOld,labelNew);
   const renderAt=src.indexOf('function renderUnifiedCITable');
@@ -27,13 +27,17 @@ function patchAppSource(src){
 "    tr.appendChild(textCell(unifiedCICountryLabel(c.country)));",
 "    tr.appendChild(textCell(c.target_warehouse));",
 "    var clearanceCell=document.createElement('td');",
-"    var clearanceValue=String(c.clearance_type==null?'':c.clearance_type);",
-"    var clearanceSelect=document.createElement('select');clearanceSelect.className='ci-clearance-inline';",
-"    var clearanceLabel=t('ci.clearance_type','清关方式');clearanceSelect.setAttribute('aria-label',clearanceLabel);clearanceSelect.title=clearanceLabel;",
-"    clearanceSelect.setAttribute('data-saved-value',clearanceValue);clearanceSelect.setAttribute('data-original-value',clearanceValue);clearanceSelect.setAttribute('data-ci-id',String(c.id));",
-"    clearanceSelect.disabled=!(typeof hasPermission==='function'&&hasPermission('ci_edit'));",
-"    var clearanceOptions=[['',t('ci.clearance.unset','未设置')],['formal',t('ci.clearance.formal','正清')],['non_formal',t('ci.clearance.non_formal','非正清')]];if(clearanceValue&&['formal','non_formal'].indexOf(clearanceValue)<0)clearanceOptions.push([clearanceValue,t('ci.clearance.unknown','原值待核对')+' ('+clearanceValue+')']);clearanceOptions.forEach(function(option){var node=document.createElement('option');node.value=option[0];node.textContent=option[1];if(clearanceValue===option[0])node.setAttribute('selected','selected');if(option[0]===clearanceValue&&option[0]!==''&&['formal','non_formal'].indexOf(option[0])<0)node.disabled=true;clearanceSelect.appendChild(node);});",
-"    clearanceCell.appendChild(clearanceSelect);tr.appendChild(clearanceCell);",
+"    if(String(c.trade_mode||'international').toLowerCase()==='domestic'){clearanceCell.textContent=t('pi.trade_mode.domestic','国内贸易');}",
+"    else {",
+"      var clearanceValue=String(c.clearance_type==null?'':c.clearance_type);",
+"      var clearanceSelect=document.createElement('select');clearanceSelect.className='ci-clearance-inline';",
+"      var clearanceLabel=t('ci.clearance_type','清关方式');clearanceSelect.setAttribute('aria-label',clearanceLabel);clearanceSelect.title=clearanceLabel;",
+"      clearanceSelect.setAttribute('data-saved-value',clearanceValue);clearanceSelect.setAttribute('data-original-value',clearanceValue);clearanceSelect.setAttribute('data-ci-id',String(c.id));",
+"      clearanceSelect.disabled=!(typeof hasPermission==='function'&&hasPermission('ci_edit'));",
+"      var clearanceOptions=[['',t('ci.clearance.unset','未设置')],['formal',t('ci.clearance.formal','正清')],['non_formal',t('ci.clearance.non_formal','非正清')]];if(clearanceValue&&['formal','non_formal'].indexOf(clearanceValue)<0)clearanceOptions.push([clearanceValue,t('ci.clearance.unknown','原值待核对')+' ('+clearanceValue+')']);clearanceOptions.forEach(function(option){var node=document.createElement('option');node.value=option[0];node.textContent=option[1];if(clearanceValue===option[0])node.setAttribute('selected','selected');if(option[0]===clearanceValue&&option[0]!==''&&['formal','non_formal'].indexOf(option[0])<0)node.disabled=true;clearanceSelect.appendChild(node);});",
+"      clearanceCell.appendChild(clearanceSelect);",
+"    }",
+"    tr.appendChild(clearanceCell);",
 "    tr.appendChild(textCell(fmtDate(c.ci_date)));",
 "    tr.appendChild(textCell(fmtMoney(c.goods_amount,c.currency)));",
 "    var freightTotal=textCell('—');freightTotal.setAttribute('data-ci-freight-cell','total');freightTotal.setAttribute('data-ci-id',String(c.id));tr.appendChild(freightTotal);",
