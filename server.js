@@ -11261,6 +11261,7 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
   if (warehouse) { sql += ' AND target_warehouse = ?'; params.push(warehouse); }
   if (brand) { sql += ' AND brand = ?'; params.push(brand); }
   if (clearance_type === 'formal' || clearance_type === 'non_formal') { sql += ' AND clearance_type = ?'; params.push(clearance_type); }
+  else if (clearance_type === 'domestic') { sql += " AND trade_mode = 'domestic'"; }
   else if (clearance_type === 'unset') { sql += " AND COALESCE(clearance_type, '') = ''"; }
   sql += ' ORDER BY created_at DESC';
   let rows = query(sql, params).rows;
@@ -11320,9 +11321,12 @@ app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandle
     r.related_logistics_batch_nos = lbInfo ? lbInfo.batch_nos.join(', ') : '';
     r.inbound_derived_status = inboundDerived;
 
-    // 派生 ci_logistics_display_status：按业务阶段排序取最高阶段
-    // 纯粹由 logistics_status 派生，不依赖 Inbound 事实
-    if (lbInfo && lbInfo.logistics_statuses.length > 0) {
+    // CI 层级状态是 CI 总览的人工摘要；未设置时继续使用物流批次最高阶段。
+    // 不将 CI 摘要状态写入物流批次，因此不会改变在途/WAC 的批次级物理事实。
+    const ciManualLogisticsStatus = String(r.ci_logistics_status || '').trim();
+    if (ciManualLogisticsStatus) {
+      r.ci_logistics_display_status = deriveLogisticsDisplayStatus(ciManualLogisticsStatus);
+    } else if (lbInfo && lbInfo.logistics_statuses.length > 0) {
       let maxRank = -1;
       lbInfo.logistics_statuses.forEach(s => {
         const rank = LOGISTICS_STAGE_RANK[s] !== undefined ? LOGISTICS_STAGE_RANK[s] : 0;
@@ -11377,6 +11381,23 @@ app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_vi
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const ci = queryOne('SELECT *, (goods_amount + COALESCE(vat_amount, 0)) AS total_amount, (goods_amount + COALESCE(vat_amount, 0) - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
+  const ciDetailLogisticsRows = query(
+    'SELECT logistics_status, actual_arrival_date FROM logistics_batches WHERE related_ci_id = ? ORDER BY created_at DESC',
+    [ci.id]
+  ).rows || [];
+  let ciDetailMaxRank = -1;
+  ciDetailLogisticsRows.forEach(row => {
+    const rank = LOGISTICS_STAGE_RANK[row.logistics_status] !== undefined ? LOGISTICS_STAGE_RANK[row.logistics_status] : -1;
+    if (rank > ciDetailMaxRank) { ciDetailMaxRank = rank; ciDetailMaxRawStatus = row.logistics_status || ''; }
+  });
+  const ciDetailEditStatusByRank = ['pending', 'in_transit', 'customs', 'delivering', 'completed'];
+  ci.ci_logistics_status_for_edit = String(ci.ci_logistics_status || '').trim() || (ciDetailMaxRank >= 0 ? ciDetailEditStatusByRank[ciDetailMaxRank] : '');
+  ci.ci_logistics_display_status = String(ci.ci_logistics_status || '').trim()
+    ? deriveLogisticsDisplayStatus(ci.ci_logistics_status)
+    : (ciDetailMaxRank >= 0 ? STAGE_KEYS[ciDetailMaxRank] : '');
+  ci.actual_arrival_date_for_edit = String(ci.actual_arrival_date || '').trim()
+    || (ciDetailLogisticsRows.find(row => String(row.actual_arrival_date || '').trim()) || {}).actual_arrival_date
+    || '';
   // CI-DETAIL-RMB-FX-20261116: show a RMB reference only when the linked Import Duty
   // has one authoritative payable and fully settled, immutable actual-payment RMB FX snapshots.
   const detailDutyItems = Number(ci.import_duty_total || 0) > 0
@@ -11624,8 +11645,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
   try {
     const d = req.body;
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
-    const clearanceType = String(d.clearance_type || '').trim();
-    if (!['formal', 'non_formal'].includes(clearanceType)) return res.status(400).json({ error: '请选择清关方式：正清或非正清' });
+    let clearanceType = String(d.clearance_type || '').trim();
     // CI-SHIP-DATE-01：实际出货日期必填（不允许默认填充今天）
     let actualShipDate;
     try { actualShipDate = historicalCIDate(d.actual_ship_date, '实际出货日期', true); }
@@ -11687,6 +11707,10 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const domesticPis = pis.filter(pi => String(pi.trade_mode || 'international').toLowerCase() === 'domestic');
     const ciTradeMode = domesticPis.length === 0 ? 'international' : (domesticPis.length === pis.length ? 'domestic' : 'mixed');
     const ciVatAmount = domesticPis.reduce((sum, pi) => sum + n(pi.vat_amount, 0), 0);
+    if (ciTradeMode === 'domestic') clearanceType = 'domestic';
+    else if (!['formal', 'non_formal'].includes(clearanceType)) {
+      return res.status(400).json({ error: '请选择清关方式：正清或非正清' });
+    }
     if (domesticPis.length && Number(d.shipment_batch || 1) !== 1) {
       return res.status(400).json({ error: '国内贸易 PI 只能一次性生成一张 CI，批次必须为 1' });
     }
@@ -12628,10 +12652,23 @@ app.put('/api/commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHa
     }
     if (d.difference_reason !== undefined) { fields.push('difference_reason = ?'); values.push(String(d.difference_reason || '').trim()); }
     if (d.remark !== undefined) { fields.push('remark = ?'); values.push(String(d.remark || '').trim()); }
-    if (d.clearance_type !== undefined) {
+    if (String(ci.trade_mode || 'international').toLowerCase() === 'domestic') {
+      if (String(ci.clearance_type || '') !== 'domestic') { fields.push('clearance_type = ?'); values.push('domestic'); }
+    } else if (d.clearance_type !== undefined) {
       const v = String(d.clearance_type || '').trim();
       if (!['formal', 'non_formal'].includes(v)) return res.status(400).json({ error: '请选择清关方式：正清或非正清' });
       fields.push('clearance_type = ?'); values.push(v);
+    }
+    if (d.ci_logistics_status !== undefined) {
+      const v = String(d.ci_logistics_status || '').trim();
+      if (!['', 'pending', 'in_transit', 'customs', 'delivering', 'completed'].includes(v)) return res.status(400).json({ error: '物流状态无效，请重新选择' });
+      fields.push('ci_logistics_status = ?'); values.push(v);
+    }
+    if (d.actual_arrival_date !== undefined) {
+      let v = '';
+      try { v = d.actual_arrival_date ? (historicalCIDate(d.actual_arrival_date, '实际到货日期', false) || '') : ''; }
+      catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+      fields.push('actual_arrival_date = ?'); values.push(v);
     }
     if (!fields.length) return res.json({ success: true, id: ci.id, ci_no: ci.ci_no });
 

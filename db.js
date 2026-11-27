@@ -413,13 +413,17 @@ if (driver === 'pg') {
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0",
         "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS domestic_ci_id TEXT DEFAULT ''",
         "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'",
-        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0"
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0",
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS ci_logistics_status TEXT DEFAULT ''",
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS actual_arrival_date TEXT DEFAULT ''"
       ];
       for (var dpvi = 0; dpvi < domesticPiVatMigrations.length; dpvi++) {
         syncRequest('query', domesticPiVatMigrations[dpvi]);
         console.log('[DB] domestic PI VAT migration OK: ' + domesticPiVatMigrations[dpvi]);
       }
+      syncRequest('query', "UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
       console.log('[DB] domestic PI VAT schema migration verified.');
+      console.log('[DB] CI logistics schema migration verified.');
 
       // 合并派送费生产实际迁移（DB_DRIVER=pg 的 worker_threads 同步入口）。
       // 单据表只有 FK 至既有的 logistics_batches，0 历史数据回填。
