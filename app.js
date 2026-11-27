@@ -12025,37 +12025,50 @@ function buildMultiPOEditableRows(poRef,pi){
 function rebuildPIEditRowsForPOSelection(pos){
   const current=(window._piRows||[]).slice();
   const selectedIds=new Set((pos||[]).map(po=>String(po.id)));
-  const currentSource=new Map();
+  const currentSource=new Map(),removedSource=new Map();
   for(const row of current){
-    if(row.fromPO)currentSource.set(String(row.poId||'')+'|'+String(row.sku||''),row);
+    const key=String(row.poId||'')+'|'+String(row.sku||'');
+    if(row.fromPO)currentSource.set(key,row);
+    else if(row.removedFromPOId)removedSource.set(String(row.removedFromPOId)+'|'+String(row.sku||''),row);
   }
   const next=[];
+  const restoredManual=new Set();
   for(const po of (pos||[])){
     for(const item of (po.items||[])){
       const sku=String(item.sku_code||'').trim();
       if(!sku)continue;
       const key=String(po.id)+'|'+sku;
-      const old=currentSource.get(key);
+      let old=currentSource.get(key);
+      if(!old){
+        old=removedSource.get(key);
+        if(old)restoredManual.add(old);
+      }
       const remaining=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0));
       if(!old&&remaining<=0)continue;
       const qty=old?Number(old.piQty||0):0;
-      next.push(old?{
+      const row=old?{
         ...old,poId:po.id,poNo:po.po_no,sku,fromPO:true,
-        poQty:remaining+qty,poPrice:Number(item.unit_price||old.poPrice||0)
+        poQty:remaining+qty,
+        poPrice:Number(item.unit_price||old.removedPoPrice||old.poPrice||0)
       }:{
         poId:po.id,poNo:po.po_no,sku,fromPO:true,
         poQty:remaining,poPrice:Number(item.unit_price||0),
         piQty:0,piPrice:0,piDisc:0
-      });
+      };
+      delete row.removedFromPOId;
+      delete row.removedPoPrice;
+      next.push(row);
     }
   }
   // Removing a PO releases its source link but keeps the supplier PI line and
-  // its price/quantity as a manual line. Nothing disappears during reselection.
+  // its price/quantity as a manual line. The source marker allows undoing an
+  // uncheck before save without losing the original PO allocation.
   for(const row of current){
     if(row.fromPO){
       if(!selectedIds.has(String(row.poId||''))&&Number(row.piQty||0)>0)
-        next.push({...row,poId:'',poNo:'',poQty:0,poPrice:0,fromPO:false});
-    }else next.push({...row});
+        next.push({...row,removedFromPOId:String(row.poId||''),
+          removedPoPrice:Number(row.poPrice||0),poId:'',poNo:'',poQty:0,poPrice:0,fromPO:false});
+    }else if(!restoredManual.has(row))next.push({...row});
   }
   window._piRows=next;
   window._poRef=next.filter(r=>r.fromPO).map(r=>({
