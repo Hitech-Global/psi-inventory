@@ -4161,7 +4161,7 @@ I18N.dict.en["term.sys.user"] = "User"; I18N.dict.id["term.sys.user"] = "Penggun
   I18N.dict.en["gen.L5764.3"] = "')\" title=\"View Historical CI\">👁️</button>"; I18N.dict.id["gen.L5764.3"] = "')\" title=\"Lihat CI Historis\">👁️</button>";
   I18N.dict.en["gen.L5764.4"] = "')\" title=\"Payment & Settlement\">💳</button>"; I18N.dict.id["gen.L5764.4"] = "')\" title=\"Pembayaran & Penyelesaian\">💳</button>";
   I18N.dict.en["gen.L5767.1"] = " records; RMB pending completion: "; I18N.dict.id["gen.L5767.1"] = " catatan; RMB menunggu dilengkapi: ";
-  I18N.dict.en["gen.L5767.2"] = " records</div></div>"; I18N.dict.id["gen.L5767.2"] = " catatan</div></div>";
+  I18N.dict.en["gen.L5767.2"] = " records"; I18N.dict.id["gen.L5767.2"] = " catatan";
   I18N.dict.en["gen.L5768.1"] = "Historical Purchase Amount"; I18N.dict.id["gen.L5768.1"] = "Jumlah Pembelian Historis";
   I18N.dict.en["gen.L5783.1"] = "Historical CI import requires CI creation, payment creation, and payment approval permissions"; I18N.dict.id["gen.L5783.1"] = "Impor CI Historis memerlukan izin pembuatan CI, pembuatan pembayaran, dan persetujuan pembayaran";
   I18N.dict.en["gen.L5786.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Cancel</button><button class=\"btn btn-primary\" id=\"hci-save\" onclick=\"saveHistoricalCI()\">Import</button>"; I18N.dict.id["gen.L5786.1"] = "<button class=\"btn btn-secondary\" onclick=\"closeModal()\">Batal</button><button class=\"btn btn-primary\" id=\"hci-save\" onclick=\"saveHistoricalCI()\">Impor</button>";
@@ -5511,4 +5511,5 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.zh["ci.048"]="已作废"; I18N.dict.en["ci.048"]="Voided"; I18N.dict.id["ci.048"]="Dibatalkan";
   I18N.dict.zh["ci.049"]="全部状态"; I18N.dict.en["ci.049"]="All statuses"; I18N.dict.id["ci.049"]="Semua Status";
 
+  I18N.dict.zh["gen.L5756.1"] = "<button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('ci')\">📥 CI模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('ci')\">📤 导入CI</button><button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('pl')\">📥 PL模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('pl')\">📦 导入PL</button><button class=\"btn btn-primary btn-sm\" onclick=\"createCI()\">➕ 新建CI</button>";
 })();
