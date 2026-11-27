@@ -5511,4 +5511,5 @@ I18N.dict.zh["user.external.pending"]="您的外部账号已注册，等待管�
   I18N.dict.zh["ci.048"]="已作废"; I18N.dict.en["ci.048"]="Voided"; I18N.dict.id["ci.048"]="Dibatalkan";
   I18N.dict.zh["ci.049"]="全部状态"; I18N.dict.en["ci.049"]="All statuses"; I18N.dict.id["ci.049"]="Semua Status";
 
-  I18N.dict.zh["gen.L5756.1"] = "<button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('ci')\">📥 CI模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('ci')\">📤 导入CI</button><button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('pl')\">📥 PL模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('pl')\">📦 导入PL</button><button class=\"btn btn-primary btn-sm\" onclick=\"createCI()\">➕ 新建CI</button>";\n})();
+  I18N.dict.zh["gen.L5756.1"] = "<button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('ci')\">📥 CI模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('ci')\">📤 导入CI</button><button class=\"btn btn-secondary btn-sm\" onclick=\"downloadDocTemplate('pl')\">📥 PL模板</button><button class=\"btn btn-secondary btn-sm\" onclick=\"openDocImport('pl')\">📦 导入PL</button><button class=\"btn btn-primary btn-sm\" onclick=\"createCI()\">➕ 新建CI</button>";
+})();
