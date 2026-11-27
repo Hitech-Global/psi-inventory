@@ -406,6 +406,21 @@ if (driver === 'pg') {
           console.error('[DB] migration FAILED: ' + e.message);
         }
       }
+      // PI-DOMESTIC-VAT-01：生产 PG 使用 worker_threads 同步入口，db-pg.js 的 async initDatabase 不会执行。
+      // PI/CI 创建接口直接依赖这些列；单独 fail-closed，避免数据库 schema 未就绪时服务继续对外提供不完整功能。
+      var domesticPiVatMigrations = [
+        "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'",
+        "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0",
+        "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS domestic_ci_id TEXT DEFAULT ''",
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'",
+        "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0"
+      ];
+      for (var dpvi = 0; dpvi < domesticPiVatMigrations.length; dpvi++) {
+        syncRequest('query', domesticPiVatMigrations[dpvi]);
+        console.log('[DB] domestic PI VAT migration OK: ' + domesticPiVatMigrations[dpvi]);
+      }
+      console.log('[DB] domestic PI VAT schema migration verified.');
+
       // 合并派送费生产实际迁移（DB_DRIVER=pg 的 worker_threads 同步入口）。
       // 单据表只有 FK 至既有的 logistics_batches，0 历史数据回填。
       // Fail-closed: 任意 DDL 失败禁止继续启动可能使用新费用接口的版本。
