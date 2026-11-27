@@ -39,6 +39,7 @@ test('linked id normalization, legacy fallback, duplicate and malformed rejectio
  assert.deepEqual(core.parseRelatedIds(['po1','po2'] ),['po1','po2']);
  assert.deepEqual(core.parseRelatedIds('["po1","po2"]'),['po1','po2']);
  assert.deepEqual(core.parseRelatedIds('', 'po1'),['po1']);
+ assert.deepEqual(core.parseRelatedIds('[]', 'po1'),['po1']);
  assert.deepEqual(core.parseRelatedIds('', ''),[]);
  assert.throws(()=>core.parseRelatedIds(['po1','po1']),/重复/);
  assert.throws(()=>core.parseRelatedIds('not-json'),/格式/);
