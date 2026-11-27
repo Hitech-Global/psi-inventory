@@ -11915,18 +11915,34 @@ function piSeparatedDetailRows(pi,poRef){
   const ledger=pi.po_allocations||[];
   if(!ledger.length)return (pi.items||[]).map(it=>({...it,po_no:it.po_no||pi.related_po_no||''}));
   const grouped=new Map((pi.items||[]).map(it=>[it.sku_code,it]));
-  const sourced=new Set(ledger.map(a=>a.sku_code));
-  const rows=ledger.map(a=>{
+  const bySku=new Map(),rows=[];
+  for(const a of ledger){
     const consolidated=grouped.get(a.sku_code);
     const item=poRef.find(it=>it.po_no===a.po_no&&it.sku_code===a.sku_code);
     const qty=Number(a.allocated_qty||0);
     const price=a.pi_unit_price!=null?Number(a.pi_unit_price):Number(consolidated?.unit_price||0);
     const disc=a.pi_discount!=null?Number(a.pi_discount):Number(consolidated?.discount||0);
-    return {po_no:a.po_no,sku_code:a.sku_code,po_qty:Number(item?.po_qty||0),
+    const row={po_no:a.po_no,sku_code:a.sku_code,po_qty:Number(item?.po_qty||0),
       pi_confirmed_qty:qty,unit_price:price,discount:disc,pi_amount:qty*price*(1-disc),
       shipped_qty:null,unshipped_qty:null};
-  });
-  for(const it of pi.items||[])if(!sourced.has(it.sku_code))rows.push({...it,po_no:it.po_no||''});
+    rows.push(row);
+    const agg=bySku.get(a.sku_code)||{qty:0,amount:0};
+    agg.qty+=qty;agg.amount+=row.pi_amount;bySku.set(a.sku_code,agg);
+  }
+  // A SKU can have both PO-sourced and manually retained quantities after a
+  // PO is unlinked. Show the residual as a separate manual row, not lost.
+  for(const it of pi.items||[]){
+    const allocated=bySku.get(it.sku_code)||{qty:0,amount:0};
+    const residualQty=Math.max(0,Number(it.pi_confirmed_qty||0)-allocated.qty);
+    if(residualQty>0){
+      const totalAmount=it.pi_amount!=null?Number(it.pi_amount):
+        Number(it.pi_confirmed_qty||0)*Number(it.unit_price||0)*(1-Number(it.discount||0));
+      const residualAmount=Math.max(0,totalAmount-allocated.amount);
+      rows.push({...it,po_no:'',po_qty:0,pi_confirmed_qty:residualQty,
+        unit_price:residualAmount/residualQty,discount:0,pi_amount:residualAmount,
+        shipped_qty:null,unshipped_qty:null});
+    }
+  }
   return rows;
 }
 function renderPIReadonlyByPO(rows){
@@ -11978,29 +11994,38 @@ async function viewPI(id, backPay, backMode){
   }catch(e){showToast(e.message,'danger')}
 }
 function buildMultiPOEditableRows(poRef,pi){
-  const allocations=pi.po_allocations||[],bySource=new Map();
-  for(const a of allocations)bySource.set(a.po_no+'|'+a.sku_code,a);
-  const existing=new Map((pi.items||[]).map(it=>[it.sku_code,it]));
-  const sourced=new Set(),rows=[];
+  const allocations=pi.po_allocations||[],bySource=new Map(),bySku=new Map();
+  for(const a of allocations){
+    bySource.set(a.po_no+'|'+a.sku_code,a);
+    const agg=bySku.get(a.sku_code)||{qty:0,amount:0};
+    const consolidated=(pi.items||[]).find(it=>it.sku_code===a.sku_code);
+    const price=a.pi_unit_price!=null?Number(a.pi_unit_price):Number(consolidated?.unit_price||0);
+    const disc=a.pi_discount!=null?Number(a.pi_discount):Number(consolidated?.discount||0);
+    const qty=Number(a.allocated_qty||0);
+    agg.qty+=qty;agg.amount+=qty*price*(1-disc);bySku.set(a.sku_code,agg);
+  }
+  const rows=[];
   for(const item of poRef){
     const sku=String(item.sku_code||''),poNo=String(item.po_no||'');
-    const a=bySource.get(poNo+'|'+sku);
-    const own=Number(a?.allocated_qty||0);
+    const a=bySource.get(poNo+'|'+sku),own=Number(a?.allocated_qty||0);
     const available=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0)+own);
-    if(!available&&!own)continue;
-    sourced.add(sku);
-    const fallback=existing.get(sku);
+    if(!available&&!own&&!a)continue;
+    const consolidated=(pi.items||[]).find(it=>it.sku_code===sku);
     rows.push({poId:item.po_id,poNo,sku,fromPO:true,poQty:available,
       poPrice:Number(item.unit_price||0),piQty:own,
-      piPrice:a?.pi_unit_price!=null?Number(a.pi_unit_price):Number(fallback?.unit_price||0),
-      piDisc:a?.pi_discount!=null?Number(a.pi_discount):Number(fallback?.discount||0)});
+      piPrice:a?.pi_unit_price!=null?Number(a.pi_unit_price):Number(consolidated?.unit_price||0),
+      piDisc:a?.pi_discount!=null?Number(a.pi_discount):Number(consolidated?.discount||0)});
   }
   for(const it of pi.items||[]){
-    if(!sourced.has(it.sku_code))rows.push({
-      poId:'',poNo:'',sku:it.sku_code,fromPO:false,poQty:Number(it.po_qty||0),
-      poPrice:0,piQty:Number(it.pi_confirmed_qty||0),piPrice:Number(it.unit_price||0),
-      piDisc:Number(it.discount||0)
-    });
+    const allocated=bySku.get(it.sku_code)||{qty:0,amount:0};
+    const residualQty=Math.max(0,Number(it.pi_confirmed_qty||0)-allocated.qty);
+    if(residualQty>0){
+      const totalAmount=it.pi_amount!=null?Number(it.pi_amount):
+        Number(it.pi_confirmed_qty||0)*Number(it.unit_price||0)*(1-Number(it.discount||0));
+      const residualAmount=Math.max(0,totalAmount-allocated.amount);
+      rows.push({poId:'',poNo:'',sku:it.sku_code,fromPO:false,poQty:0,poPrice:0,
+        piQty:residualQty,piPrice:residualAmount/residualQty,piDisc:0});
+    }
   }
   return rows;
 }
