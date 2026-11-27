@@ -15,6 +15,7 @@ test('PI schema stores trade mode, VAT and domestic CI claim for both drivers', 
     assert.match(source, /trade_mode TEXT DEFAULT 'international'/);
     assert.match(source, /vat_amount (?:NUMERIC\(18,4\)|REAL) DEFAULT 0/);
     assert.match(source, /domestic_ci_id TEXT DEFAULT ''/);
+    assert.match(source, /commercial_invoices ADD COLUMN/);
   }
 });
 
@@ -47,7 +48,7 @@ test('CI carries the full VAT amount and includes it in payable and detail total
 test('PI and CI forms expose VAT only for domestic trade and lock CI quantity to full shipment', () => {
   assert.match(app, /id="npi-trade-mode"/);
   assert.match(app, /id="npi-vat-group"/);
-  assert.match(app, /id="npi-vat-total-preview"/);
+  assert.match(app, /pi-vat-total-preview/);
   assert.match(app, /onPITradeModeChange\(\)/);
   assert.match(app, /vat_amount:tradeMode==='domestic'/);
   assert.match(app, /isDomestic\?'disabled/);
