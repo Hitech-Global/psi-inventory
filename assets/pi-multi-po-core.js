@@ -58,7 +58,7 @@ function updatePOStatus(poId,query,run){
  if(!items.length)throw Error('PO没有商品明细：'+poId);
  // A PI is a sourcing fact, NOT an approval action. Preserve draft/pending
  // approval state; final PO approval will derive the transfer status afresh.
- if(po.approval_status!=='approved')return;
+ if(po.approval_status!=='approved'||['cancelled','rejected'].includes(po.po_status))return;
  const anyTransferred=items.some(i=>Number(i.transferred_pi_qty)>0);
  const status=anyTransferred&&items.every(i=>Number(i.transferred_pi_qty)>=Number(i.po_qty))?'transferred_pi':
    anyTransferred?'partial_pi':'approved';
