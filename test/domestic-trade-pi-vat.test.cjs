@@ -31,7 +31,8 @@ test('PI defaults to international and includes domestic VAT in its total and de
 
 test('domestic PI can only generate one CI with all confirmed SKU quantities', () => {
   assert.match(server, /国内贸易 PI 必须整单一次性生成 CI/);
-  assert.match(server, /requestedQty !== confirmedQty/);
+  assert.match(server, /requestedQty !== expected\.qty/);
+  assert.match(server, /国内贸易 PI 只能一次性生成一张 CI，批次必须为 1/);
   assert.match(server, /domestic_ci_id = \?/);
   assert.match(server, /domesticImportRow/);
   assert.match(server, /domestic_ci_id = '' WHERE id = \? AND domestic_ci_id = \?/);

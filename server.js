@@ -11687,6 +11687,9 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const domesticPis = pis.filter(pi => String(pi.trade_mode || 'international').toLowerCase() === 'domestic');
     const ciTradeMode = domesticPis.length === 0 ? 'international' : (domesticPis.length === pis.length ? 'domestic' : 'mixed');
     const ciVatAmount = domesticPis.reduce((sum, pi) => sum + n(pi.vat_amount, 0), 0);
+    if (domesticPis.length && Number(d.shipment_batch || 1) !== 1) {
+      return res.status(400).json({ error: '国内贸易 PI 只能一次性生成一张 CI，批次必须为 1' });
+    }
     // 补全 relatedPiNos
     if (relatedPiNos.length !== relatedPiIds.length) {
       relatedPiNos = pis.map(p => p.pi_no);
@@ -11713,13 +11716,20 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
       if (priorCI) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已关联 CI ' + priorCI.ci_no + '，不允许再次生成' });
       const domesticItems = query('SELECT sku_code, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [pi.id]).rows || [];
       if (!domesticItems.length) return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 没有商品明细，无法生成 CI' });
+      const expectedBySku = new Map();
       for (const piItem of domesticItems) {
-        if (Number(piItem.shipped_qty || 0) > 0) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已有出货记录，不能拆分生成 CI' });
-        const key = pi.id + '|' + piItem.sku_code;
+        const sku = String(piItem.sku_code || '');
+        const current = expectedBySku.get(sku) || { qty: 0, shipped: 0 };
+        current.qty += Number(piItem.pi_confirmed_qty || 0);
+        current.shipped += Number(piItem.shipped_qty || 0);
+        expectedBySku.set(sku, current);
+      }
+      for (const [sku, expected] of expectedBySku.entries()) {
+        if (expected.shipped > 0) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已有出货记录，不能拆分生成 CI' });
+        const key = pi.id + '|' + sku;
         const requestedQty = domesticQtyByKey.get(key) || 0;
-        const confirmedQty = Number(piItem.pi_confirmed_qty || 0);
-        if (requestedQty !== confirmedQty) {
-          return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 必须一次性出完全部数量（SKU: ' + piItem.sku_code + '，PI确认数量: ' + confirmedQty + '，本次CI数量: ' + requestedQty + '）' });
+        if (requestedQty !== expected.qty) {
+          return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 必须一次性出完全部数量（SKU: ' + sku + '，PI确认数量: ' + expected.qty + '，本次CI数量: ' + requestedQty + '）' });
         }
         domesticQtyByKey.delete(key);
       }
@@ -12866,9 +12876,12 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
     const _rowLimit = batchImportRowLimitExceeded('commercial-invoices/batch-import', rows);
     if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
     const domesticImportRow = rows.find(row => {
-      const piNo = s(pick(row, ['关联PI编号', 'PI编号', 'related_pi_no', 'pi_no']));
-      if (!piNo) return false;
-      const sourcePi = queryOne('SELECT trade_mode FROM proforma_invoices WHERE pi_no = ?', [piNo]);
+      const piId = s(pick(row, ['关联PI ID', '关联PIID', 'related_pi_id', 'pi_id']));
+      const piNo = s(pick(row, ['关联PI编号', '关联PI号', '关联PI', 'PI编号', 'PI号', 'related_pi_no', 'pi_no']));
+      if (!piId && !piNo) return false;
+      const sourcePi = piId
+        ? queryOne('SELECT trade_mode FROM proforma_invoices WHERE id = ?', [piId])
+        : queryOne('SELECT trade_mode FROM proforma_invoices WHERE pi_no = ?', [piNo]);
       return sourcePi && String(sourcePi.trade_mode || 'international').toLowerCase() === 'domestic';
     });
     if (domesticImportRow) return res.status(400).json({ error: '国内贸易 PI 必须通过新建运营 CI 一次性生成完整 CI，不支持通过 CI 批量导入拆分生成' });
