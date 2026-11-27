@@ -11920,6 +11920,7 @@ function piSeparatedDetailRows(pi,poRef){
     const consolidated=grouped.get(a.sku_code);
     const item=poRef.find(it=>it.po_no===a.po_no&&it.sku_code===a.sku_code);
     const qty=Number(a.allocated_qty||0);
+    if(qty<=0)continue; // Zero-allocation PO link markers are intentionally hidden.
     const price=a.pi_unit_price!=null?Number(a.pi_unit_price):Number(consolidated?.unit_price||0);
     const disc=a.pi_discount!=null?Number(a.pi_discount):Number(consolidated?.discount||0);
     const row={po_no:a.po_no,sku_code:a.sku_code,po_qty:Number(item?.po_qty||0),
@@ -12009,7 +12010,7 @@ function buildMultiPOEditableRows(poRef,pi){
     const sku=String(item.sku_code||''),poNo=String(item.po_no||'');
     const a=bySource.get(poNo+'|'+sku),own=Number(a?.allocated_qty||0);
     const available=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0)+own);
-    if(!available&&!own&&!a)continue;
+    if(!available&&!own)continue;
     const consolidated=(pi.items||[]).find(it=>it.sku_code===sku);
     rows.push({poId:item.po_id,poNo,sku,fromPO:true,poQty:available,
       poPrice:Number(item.unit_price||0),piQty:own,
