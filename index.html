@@ -222,6 +222,28 @@ input[type="number"]{-moz-appearance:textfield;appearance:textfield}
 .listing-status-select:focus{background-color:#fff;border-color:#007aff;box-shadow:0 0 0 3px rgba(0,122,255,.18);}
 .listing-status-select option{background:#fff;color:#1d1d1f;}
 .filter-actions{display:flex;gap:6px;align-items:center;margin-left:auto}
+/* CI-PL-I18N-COMPACT-LAYOUT-20261127: keep the CI filters and actions on one compact desktop row. */
+#content-inner .filter-form:has(#ci-source-mode){flex-wrap:nowrap;gap:6px;min-width:0}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group{min-width:0;flex:0 1 112px;box-sizing:border-box}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(1){flex-basis:112px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(2){flex-basis:118px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(3){flex-basis:122px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(4){flex-basis:110px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(5){flex-basis:108px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(6){flex-basis:124px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group:nth-child(7){flex-basis:108px}
+#content-inner .filter-form:has(#ci-source-mode)>.ci-date-filter-group{width:118px;min-width:108px;max-width:118px;flex:0 1 118px}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group select,
+#content-inner .filter-form:has(#ci-source-mode)>.filter-group input{width:100%;min-width:0;box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#content-inner .filter-form:has(#ci-source-mode) .filter-actions{flex:0 0 auto;gap:4px;margin-left:auto;white-space:nowrap}
+#content-inner .filter-form:has(#ci-source-mode) .filter-actions .btn{padding:5px 7px;font-size:11px;line-height:1.2;white-space:nowrap}
+@media(max-width:1540px){
+  #content-inner .filter-form:has(#ci-source-mode){flex-wrap:wrap}
+  #content-inner .filter-form:has(#ci-source-mode)>.filter-group{flex:1 1 118px;min-width:108px}
+  #content-inner .filter-form:has(#ci-source-mode)>.ci-date-filter-group{flex:0 1 118px}
+  #content-inner .filter-form:has(#ci-source-mode) .filter-actions{margin-left:auto}
+}
 .status-badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:12px;font-weight:500;white-space:nowrap}
 /* CI 类型标签 — 区分运营CI与历史CI（仅展示） */
 .ci-type-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:12px;font-weight:500;white-space:nowrap}
