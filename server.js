@@ -10223,6 +10223,7 @@ function parseAttachment(value) {
 function getPILockReason(pi) {
   if (!pi) return null;
   if (pi.pi_status === 'cancelled') return '已作废';
+  if (pi.domestic_ci_id) return '已生成CI';
   // 多 PI 改造：增加 ci_items.pi_id 维度（CI 明细来源 PI）
   const ci = queryOne(`
     SELECT ci.id FROM commercial_invoices ci
@@ -10416,6 +10417,14 @@ const piMultiPO = require('./assets/pi-multi-po-core');
 app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandler(async (req, res) => {
   try {
     const d = req.body;
+    const tradeMode = String(d.trade_mode || 'international').trim().toLowerCase();
+    if (!['international', 'domestic'].includes(tradeMode)) return res.status(400).json({ error: '贸易模式无效，请选择国内贸易或国际贸易' });
+    const vatInput = d.vat_amount === undefined || d.vat_amount === null || d.vat_amount === '' ? 0 : Number(d.vat_amount);
+    if (!Number.isFinite(vatInput) || vatInput < 0) return res.status(400).json({ error: 'VAT费用必须为不小于0的数字' });
+    const vatAmount = tradeMode === 'domestic' ? vatInput : 0;
+    if (tradeMode === 'domestic' && !((Array.isArray(d.items) && d.items.length) || (Array.isArray(d.po_source_items) && d.po_source_items.length))) {
+      return res.status(400).json({ error: '国内贸易PI必须至少包含一条商品明细' });
+    }
     if (!d.supplier_name) return res.status(400).json({ error: '供应商不能为空' });
     let selectedPOs = [];
     let relatedPoIds = [];
@@ -10476,8 +10485,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
     const depositRatio = needDeposit ? n(d.deposit_ratio, 0) : 0;
 
     transaction(() => {
-      run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
+      run(`INSERT INTO proforma_invoices (id, pi_no, related_po_id, related_po_no, supplier_id, supplier_name, brand, country, target_warehouse, pi_date, currency, trade_mode, vat_amount, total_amount, payment_terms, payment_term_id, need_deposit, deposit_ratio, balance_ratio, payable_deposit, pi_status, expected_delivery, attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [piId, piNo, d.related_po_id || '', d.related_po_no || '', d.supplier_id || '', d.supplier_name, d.brand || '', d.country || '', d.target_warehouse || '', d.pi_date || new Date().toISOString().split('T')[0], finalCurrency, tradeMode, vatAmount, 0, d.payment_terms || '', d.payment_term_id || '', needDeposit, depositRatio, 100 - depositRatio, 0, d.pi_status || 'pending', d.expected_delivery || '', parseAttachment(d.attachment), d.remark || '']);
       if (isMultiPO) {
         run('UPDATE proforma_invoices SET related_po_ids = ?, related_po_nos = ? WHERE id = ?',
           [JSON.stringify(relatedPoIds), JSON.stringify(selectedPOs.map(p=>p.po_no)), piId]);
@@ -10533,6 +10542,7 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
             }
           });
         }
+        totalAmount += vatAmount;
         const payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
         run('UPDATE proforma_invoices SET total_amount = ?, payable_deposit = ?, available_deduct_deposit = ? WHERE id = ?', [totalAmount, payableDeposit, payableDeposit, piId]);
 
@@ -10586,6 +10596,8 @@ app.post('/api/proforma-invoices', requireApiPermission('pi_create'), asyncHandl
       pi_no: piNo,
       ...d,
       total_amount: totalAmount,
+      trade_mode: tradeMode,
+      vat_amount: vatAmount,
       need_deposit: needDeposit,
       deposit_ratio: depositRatio,
       payable_deposit: payableDeposit,
@@ -10614,6 +10626,11 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const { id } = req.params;
     const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [id]);
     if (!pi) return res.status(404).json({ error: 'PI不存在' });
+    const nextTradeMode = String(d.trade_mode !== undefined ? d.trade_mode : (pi.trade_mode || 'international')).trim().toLowerCase();
+    if (!['international', 'domestic'].includes(nextTradeMode)) return res.status(400).json({ error: '贸易模式无效，请选择国内贸易或国际贸易' });
+    const vatInput = d.vat_amount !== undefined ? Number(d.vat_amount) : Number(pi.vat_amount || 0);
+    if (!Number.isFinite(vatInput) || vatInput < 0) return res.status(400).json({ error: 'VAT费用必须为不小于0的数字' });
+    const nextVatAmount = nextTradeMode === 'domestic' ? vatInput : 0;
     let multiPOsForEdit=[],oldRelatedPOIds=[],requestedRelatedPOIds=[];
     let isMultiPOEdit=false;
     try {
@@ -10676,19 +10693,22 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const depositAffectingEdit =
       (d.items !== undefined && Array.isArray(d.items)) ||
       d.need_deposit !== undefined ||
-      d.deposit_ratio !== undefined;
+      d.deposit_ratio !== undefined ||
+      d.trade_mode !== undefined ||
+      d.vat_amount !== undefined;
     if (depositAffectingEdit) {
-      let prospectiveTotal = pi.total_amount || 0;
+      let prospectiveGoodsTotal = Math.max(0, n(pi.total_amount, 0) - n(pi.vat_amount, 0));
       if (d.items !== undefined && Array.isArray(d.items)) {
-        prospectiveTotal = 0;
+        prospectiveGoodsTotal = 0;
         d.items.forEach(item => {
           const itemDiscount = n(item.discount, 0);
           const itemBase = (item.pi_confirmed_qty || 0) * (item.unit_price || 0);
-          prospectiveTotal += (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '')
+          prospectiveGoodsTotal += (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '')
             ? n(item.pi_amount, 0)
             : itemBase * (1 - itemDiscount);
         });
       }
+      const prospectiveTotal = prospectiveGoodsTotal + nextVatAmount;
       const prospectiveDeposit = needDeposit ? prospectiveTotal * depositRatio / 100 : 0;
       const depPayable = queryOne(
         `SELECT id, lifecycle_status, payable_amount_minor FROM payable_items
@@ -10738,6 +10758,8 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     ['brand', 'country', 'target_warehouse', 'currency'].forEach(f => {
       if (d[f] !== undefined) { fields.push(`${f} = ?`); values.push(d[f]); }
     });
+    fields.push('trade_mode = ?', 'vat_amount = ?');
+    values.push(nextTradeMode, nextVatAmount);
     if (d.need_deposit !== undefined) { fields.push('need_deposit = ?'); values.push(needDeposit); }
     if (d.deposit_ratio !== undefined) { fields.push('deposit_ratio = ?'); values.push(depositRatio); }
     fields.push('balance_ratio = ?'); values.push(balanceRatio);
@@ -10745,7 +10767,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
 
     const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
     const oldForecastKeys = collectPIForecastKeys(id);
-    let totalAmount = pi.total_amount || 0;
+    let totalAmount = Math.max(0, n(pi.total_amount, 0) - n(pi.vat_amount, 0));
     let payableDeposit = 0;
     // 解析最新 PI号（若本次编辑修改了 pi_no，事务内新明细需用最新值）
     const newPiNo = (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) ? d.pi_no : pi.pi_no;
@@ -10799,7 +10821,8 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         }
       }
 
-      // 总额 + 应付定金 + 可用抵扣定金 重算
+      // 总额 + VAT + 应付定金 + 可用抵扣定金 重算
+      totalAmount += nextVatAmount;
       payableDeposit = needDeposit ? totalAmount * depositRatio / 100 : 0;
       fields.push('total_amount = ?', 'payable_deposit = ?', 'available_deduct_deposit = ?');
       values.push(totalAmount, payableDeposit, payableDeposit);
@@ -10875,8 +10898,8 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         operation_type: 'edit',
         target_ids: [id],
         affected_count: (d.items && d.items.length) || oldItems.length,
-        old_values: { total_amount: pi.total_amount, payable_deposit: pi.payable_deposit, deposit_ratio: pi.deposit_ratio },
-        new_values: { total_amount: totalAmount, payable_deposit: payableDeposit, deposit_ratio: depositRatio, balance_ratio: balanceRatio, items_count: (d.items ? d.items.length : oldItems.length) },
+        old_values: { total_amount: pi.total_amount, vat_amount: pi.vat_amount || 0, trade_mode: pi.trade_mode || 'international', payable_deposit: pi.payable_deposit, deposit_ratio: pi.deposit_ratio },
+        new_values: { total_amount: totalAmount, vat_amount: nextVatAmount, trade_mode: nextTradeMode, payable_deposit: payableDeposit, deposit_ratio: depositRatio, balance_ratio: balanceRatio, items_count: (d.items ? d.items.length : oldItems.length) },
         reason: d.edit_reason || '',
         triggered_recalc: 1,
         is_rollbackable: 0
@@ -11227,7 +11250,7 @@ function getPiTransitAssets(foreignToRmbMap, piScopeSql, piScopeParams, opts) {
 app.get('/api/commercial-invoices', requireApiPermission('ci_view'), asyncHandler((req, res) => {
   const { inbound_status, logistics_display_status, keyword, related_pi, country, warehouse, brand, clearance_type, ci_status } = req.query;
   // 差异 = CI金额 - 已付定金 - 应付尾款（付款闭环校验）
-  let sql = 'SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
+  let sql = 'SELECT *, (goods_amount + COALESCE(vat_amount, 0) - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE 1=1';
   const params = [];
   // 列表状态筛选：默认由前端请求有效CI；作废记录仅在用户主动筛选时展示。
   if (ci_status === 'active') { sql += " AND COALESCE(ci_status, '') NOT IN ('cancelled', 'reversed')"; }
@@ -11352,7 +11375,7 @@ app.get('/api/commercial-invoices/available-for-pl', requireApiPermission('ci_vi
 }));
 
 app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHandler((req, res) => {
-  const ci = queryOne('SELECT *, (goods_amount - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
+  const ci = queryOne('SELECT *, (goods_amount + COALESCE(vat_amount, 0)) AS total_amount, (goods_amount + COALESCE(vat_amount, 0) - COALESCE(actual_deducted_deposit, 0) - COALESCE(payable_balance, 0)) AS amount_difference FROM commercial_invoices WHERE id = ?', [req.params.id]);
   if (!ci) return res.status(404).json({ error: 'CI不存在' });
   // CI-DETAIL-RMB-FX-20261116: show a RMB reference only when the linked Import Duty
   // has one authoritative payable and fully settled, immutable actual-payment RMB FX snapshots.
@@ -11661,6 +11684,9 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     const relatedPoNo = d.related_po_no || (firstPi ? firstPi.related_po_no : '');
     const ciCurrency = d.currency || firstPi.currency || 'USD';
     const piTotalAmount = pis.reduce((s, p) => s + (p.total_amount || 0), 0);
+    const domesticPis = pis.filter(pi => String(pi.trade_mode || 'international').toLowerCase() === 'domestic');
+    const ciTradeMode = domesticPis.length === 0 ? 'international' : (domesticPis.length === pis.length ? 'domestic' : 'mixed');
+    const ciVatAmount = domesticPis.reduce((sum, pi) => sum + n(pi.vat_amount, 0), 0);
     // 补全 relatedPiNos
     if (relatedPiNos.length !== relatedPiIds.length) {
       relatedPiNos = pis.map(p => p.pi_no);
@@ -11669,12 +11695,72 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
     let goodsAmount = 0;
     let totalShouldDeduct = 0;
 
+    // 国内贸易 PI 必须整单一次性生成 CI：不允许部分 SKU、部分数量或第二张 CI。
+    const domesticQtyByKey = new Map();
+    (Array.isArray(d.items) ? d.items : []).forEach(item => {
+      const itemPiId = item.pi_id || firstPi.id;
+      if (domesticPis.some(pi => pi.id === itemPiId)) {
+        const key = itemPiId + '|' + item.sku_code;
+        domesticQtyByKey.set(key, (domesticQtyByKey.get(key) || 0) + n(item.shipped_qty, 0));
+      }
+    });
+    for (const pi of domesticPis) {
+      if (pi.domestic_ci_id) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已生成 CI，不允许再次生成' });
+      const priorCI = queryOne(`SELECT ci.id, ci.ci_no FROM commercial_invoices ci
+        LEFT JOIN commercial_invoice_items cii ON cii.ci_id = ci.id
+        WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?)
+          AND COALESCE(ci.ci_status, '') != 'cancelled' LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
+      if (priorCI) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已关联 CI ' + priorCI.ci_no + '，不允许再次生成' });
+      const domesticItems = query('SELECT sku_code, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [pi.id]).rows || [];
+      if (!domesticItems.length) return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 没有商品明细，无法生成 CI' });
+      for (const piItem of domesticItems) {
+        if (Number(piItem.shipped_qty || 0) > 0) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已有出货记录，不能拆分生成 CI' });
+        const key = pi.id + '|' + piItem.sku_code;
+        const requestedQty = domesticQtyByKey.get(key) || 0;
+        const confirmedQty = Number(piItem.pi_confirmed_qty || 0);
+        if (requestedQty !== confirmedQty) {
+          return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 必须一次性出完全部数量（SKU: ' + piItem.sku_code + '，PI确认数量: ' + confirmedQty + '，本次CI数量: ' + requestedQty + '）' });
+        }
+        domesticQtyByKey.delete(key);
+      }
+      const extraKey = Array.from(domesticQtyByKey.keys()).find(key => key.startsWith(pi.id + '|'));
+      if (extraKey) return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 的 CI 明细包含不属于该 PI 的 SKU：' + extraKey.split('|')[1] });
+    }
+
     transaction(() => {
+      // Domestic PI one-CI claim is atomic; the PG path locks PI rows before claiming.
+      if (domesticPis.length) {
+        const domesticIds = domesticPis.map(pi => pi.id).sort();
+        if ((process.env.DB_DRIVER || 'sqlite').toLowerCase() === 'pg') {
+          query('SELECT id FROM proforma_invoices WHERE id IN (' + domesticIds.map(() => '?').join(',') + ') ORDER BY id FOR UPDATE', domesticIds);
+        }
+        for (const pi of domesticPis) {
+          const latest = queryOne('SELECT domestic_ci_id FROM proforma_invoices WHERE id = ?', [pi.id]);
+          if (latest && latest.domestic_ci_id) {
+            const error = new Error('国内贸易 PI ' + pi.pi_no + ' 已生成 CI，不允许再次生成');
+            error.status = 409; throw error;
+          }
+          const priorCI = queryOne(`SELECT ci.id, ci.ci_no FROM commercial_invoices ci
+            LEFT JOIN commercial_invoice_items cii ON cii.ci_id = ci.id
+            WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?)
+              AND COALESCE(ci.ci_status, '') != 'cancelled' LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
+          if (priorCI) {
+            const error = new Error('国内贸易 PI ' + pi.pi_no + ' 已关联 CI ' + priorCI.ci_no + '，不允许再次生成');
+            error.status = 409; throw error;
+          }
+          run("UPDATE proforma_invoices SET domestic_ci_id = ? WHERE id = ? AND COALESCE(domestic_ci_id, '') = ''", [ciId, pi.id]);
+          const claimed = queryOne('SELECT domestic_ci_id FROM proforma_invoices WHERE id = ?', [pi.id]);
+          if (!claimed || claimed.domestic_ci_id !== ciId) {
+            const error = new Error('国内贸易 PI ' + pi.pi_no + ' 的 CI 生成锁定失败，请刷新后重试');
+            error.status = 409; throw error;
+          }
+        }
+      }
       // CI Header INSERT — related_pi_ids/related_pi_nos JSON 数组 + 旧字段首 PI 兼容
       const relatedPiIdsJson = JSON.stringify(relatedPiIds);
       const relatedPiNosJson = JSON.stringify(relatedPiNos);
-      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_pi_ids, related_pi_nos, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, payment_terms, due_date, shipment_batch, currency, clearance_type, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', firstPi.id, firstPi.pi_no, relatedPiIdsJson, relatedPiNosJson, d.supplier_id || firstPi.supplier_id || '', d.supplier_name, d.brand || firstPi.brand || '', d.country || firstPi.country || '', d.target_warehouse || firstPi.target_warehouse || '', d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, effectivePaymentTermId, effectiveCreditDays, ciPaymentTerms, ciDueDate || payDueDate, d.shipment_batch || 1, ciCurrency, clearanceType, 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
+      run(`INSERT INTO commercial_invoices (id, ci_no, related_po_id, related_po_no, related_pi_id, related_pi_no, related_pi_ids, related_pi_nos, supplier_id, supplier_name, brand, country, target_warehouse, ci_date, actual_ship_date, payment_term_id, credit_days, payment_terms, due_date, shipment_batch, currency, trade_mode, vat_amount, clearance_type, goods_amount, pi_total_amount, amount_difference, difference_reason, ci_status, attachment, pl_attachment, remark) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ciId, ciNo, relatedPoId || '', relatedPoNo || '', firstPi.id, firstPi.pi_no, relatedPiIdsJson, relatedPiNosJson, d.supplier_id || firstPi.supplier_id || '', d.supplier_name, d.brand || firstPi.brand || '', d.country || firstPi.country || '', d.target_warehouse || firstPi.target_warehouse || '', d.ci_date || new Date().toISOString().split('T')[0], actualShipDate, effectivePaymentTermId, effectiveCreditDays, ciPaymentTerms, ciDueDate || payDueDate, d.shipment_batch || 1, ciCurrency, ciTradeMode, ciVatAmount, clearanceType, 0, piTotalAmount, 0, d.difference_reason || '', d.ci_status || 'uploaded', parseAttachment(d.attachment), parseAttachment(d.pl_attachment), d.remark || '']);
 
       if (d.items && d.items.length > 0) {
         // P2-6 守卫：按 PI+SKU 聚合校验出货数量
@@ -11733,21 +11819,27 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         // Per-PI 循环：R7 定金比例分摊 + per-PI balance payable_item + PI 更新
         for (const pi of pis) {
           const piGoodsAmount = perPiGoodsAmount.get(pi.id) || 0;
-          if (piGoodsAmount <= 0) continue;
+          const piVatAmount = String(pi.trade_mode || 'international').toLowerCase() === 'domestic' ? n(pi.vat_amount, 0) : 0;
+          const piCiTotalAmount = piGoodsAmount + piVatAmount;
+          if (piCiTotalAmount <= 0) continue;
 
-          // R7: 定金按实际出货货值比例分摊
+          // 国际贸易按实际出货货值分摊定金；国内贸易整单一次出货，直接抵扣完整可用定金。
           let shouldDeduct = 0;
           if (pi.need_deposit && (pi.available_deduct_deposit || 0) > 0) {
-            const piRemainingUnshipped = (pi.total_amount || 0) - (pi.shipped_amount || 0);
-            const newRemaining = piRemainingUnshipped - piGoodsAmount;
-            if (piRemainingUnshipped <= 0.01 || newRemaining <= 0.01) {
-              // 最后一次 CI — 吸收四舍五入残差（R9）
+            if (String(pi.trade_mode || 'international').toLowerCase() === 'domestic') {
               shouldDeduct = pi.available_deduct_deposit || 0;
             } else {
-              shouldDeduct = (pi.available_deduct_deposit || 0) * piGoodsAmount / piRemainingUnshipped;
+              const piRemainingUnshipped = (pi.total_amount || 0) - (pi.shipped_amount || 0);
+              const newRemaining = piRemainingUnshipped - piGoodsAmount;
+              if (piRemainingUnshipped <= 0.01 || newRemaining <= 0.01) {
+                // 最后一次 CI — 吸收四舍五入残差（R9）
+                shouldDeduct = pi.available_deduct_deposit || 0;
+              } else {
+                shouldDeduct = (pi.available_deduct_deposit || 0) * piGoodsAmount / piRemainingUnshipped;
+              }
             }
           }
-          const payableBalance = piGoodsAmount - shouldDeduct;
+          const payableBalance = piCiTotalAmount - shouldDeduct;
           totalShouldDeduct += shouldDeduct;
 
           // per-PI balance payable_item（R5/R8: source_type='pi', source_ci_id=ciId）
@@ -11773,7 +11865,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
           // 更新PI的已抵扣定金和已发货金额
           const newDeducted = (pi.deducted_deposit || 0) + shouldDeduct;
           const newAvailable = Math.max(0, (pi.payable_deposit || 0) - newDeducted);
-          const newShippedAmount = (pi.shipped_amount || 0) + piGoodsAmount;
+          const newShippedAmount = (pi.shipped_amount || 0) + piCiTotalAmount;
           const newUnshippedAmount = (pi.total_amount || 0) - newShippedAmount;
           run('UPDATE proforma_invoices SET deducted_deposit = ?, available_deduct_deposit = ?, shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
             [newDeducted, newAvailable, newShippedAmount, newUnshippedAmount, pi.id]);
@@ -11790,7 +11882,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
         }
 
         // CI Header 聚合
-        const payableBalanceTotal = goodsAmount - totalShouldDeduct;
+        const payableBalanceTotal = goodsAmount + ciVatAmount - totalShouldDeduct;
         run('UPDATE commercial_invoices SET should_deduct_deposit = ?, actual_deducted_deposit = ?, payable_balance = ?, unpaid_balance = ? WHERE id = ?',
           [totalShouldDeduct, totalShouldDeduct, payableBalanceTotal, payableBalanceTotal, ciId]);
 
@@ -11804,9 +11896,9 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
       console.warn('[CI-CREATE] updateInventoryTransitData failed (best-effort, ignored):', err && err.message);
     });
 
-    const payableBalanceResp = goodsAmount - totalShouldDeduct;
-    res.json({ id: ciId, ci_no: ciNo, ...d, goods_amount: goodsAmount, pi_total_amount: piTotalAmount, amount_difference: 0, should_deduct_deposit: totalShouldDeduct, payable_balance: payableBalanceResp });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const payableBalanceResp = goodsAmount + ciVatAmount - totalShouldDeduct;
+    res.json({ id: ciId, ci_no: ciNo, ...d, trade_mode: ciTradeMode, goods_amount: goodsAmount, vat_amount: ciVatAmount, total_amount: goodsAmount + ciVatAmount, pi_total_amount: piTotalAmount, amount_difference: 0, should_deduct_deposit: totalShouldDeduct, payable_balance: payableBalanceResp });
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 }));
 
 app.post('/api/commercial-invoices/:id/attachment', requireApiPermission('ci_edit'), asyncHandler((req, res) => {
@@ -12020,7 +12112,8 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
           const piCiAmount = ciItems
             .filter(item => item.pi_id === piId)
             .reduce((sum, item) => sum + (Number(item.ci_amount) || 0), 0);
-          const newShippedAmount = Math.max(0, (Number(pi.shipped_amount) || 0) - piCiAmount);
+          const piVatAmount = String(pi.trade_mode || 'international').toLowerCase() === 'domestic' ? n(pi.vat_amount, 0) : 0;
+          const newShippedAmount = Math.max(0, (Number(pi.shipped_amount) || 0) - piCiAmount - piVatAmount);
           const newUnshippedAmount = Math.max(0, (Number(pi.total_amount) || 0) - newShippedAmount);
           run(
             'UPDATE proforma_invoices SET shipped_amount = ?, unshipped_amount = ? WHERE id = ?',
@@ -12038,6 +12131,11 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
           else if (anyShipped) run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['partial_shipped', piId]);
           else run('UPDATE proforma_invoices SET pi_status = ? WHERE id = ?', ['pending', piId]);
         }
+      }
+
+      // Release the domestic one-CI claim only when the CI is hard-deleted by this void flow.
+      for (const piId of piIds) {
+        run("UPDATE proforma_invoices SET domestic_ci_id = '' WHERE id = ? AND domestic_ci_id = ?", [piId, ci.id]);
       }
 
       run(
@@ -12767,6 +12865,13 @@ app.post('/api/commercial-invoices/batch-import', requireApiPermission('ci_creat
     // Wave 0A：行数硬上限 —— 必须在任何事务/DB 工作之前整批拒绝（不 truncate）
     const _rowLimit = batchImportRowLimitExceeded('commercial-invoices/batch-import', rows);
     if (_rowLimit) return rejectBatchImportRowLimit(req, res, _rowLimit);
+    const domesticImportRow = rows.find(row => {
+      const piNo = s(pick(row, ['关联PI编号', 'PI编号', 'related_pi_no', 'pi_no']));
+      if (!piNo) return false;
+      const sourcePi = queryOne('SELECT trade_mode FROM proforma_invoices WHERE pi_no = ?', [piNo]);
+      return sourcePi && String(sourcePi.trade_mode || 'international').toLowerCase() === 'domestic';
+    });
+    if (domesticImportRow) return res.status(400).json({ error: '国内贸易 PI 必须通过新建运营 CI 一次性生成完整 CI，不支持通过 CI 批量导入拆分生成' });
     // Wave 2A: PG 走原生 async 事务（零 sync bridge / set-based mutations）；SQLite 保持 legacy sync 分支
     if (process.env.DB_DRIVER === 'pg') {
       const pgResult = await importCommercialInvoicesPg(rows, req);
