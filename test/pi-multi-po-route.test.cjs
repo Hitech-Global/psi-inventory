@@ -14,7 +14,8 @@ function fixture(){
   CREATE TABLE proforma_invoice_items(id TEXT PRIMARY KEY,pi_id TEXT,pi_no TEXT,po_no TEXT,sku_code TEXT,po_qty INTEGER,pi_confirmed_qty INTEGER,unit_price REAL,discount REAL,pi_amount REAL,shipped_qty INTEGER,unshipped_qty INTEGER,created_at TEXT DEFAULT (datetime('now')));
   CREATE TABLE pi_po_allocations(id TEXT PRIMARY KEY,pi_id TEXT,po_id TEXT,po_no TEXT,sku_code TEXT,allocated_qty INTEGER,pi_unit_price REAL,pi_discount REAL);
   CREATE TABLE payable_items (id TEXT PRIMARY KEY,source_type TEXT,source_id TEXT,fee_type TEXT,lifecycle_status TEXT,payable_amount_minor INTEGER,created_at TEXT DEFAULT (datetime('now')));
-  CREATE TABLE commercial_invoice_items (id TEXT PRIMARY KEY,pi_id TEXT);
+  CREATE TABLE commercial_invoices (id TEXT PRIMARY KEY,ci_status TEXT);
+  CREATE TABLE commercial_invoice_items (id TEXT PRIMARY KEY,ci_id TEXT,pi_id TEXT);
   CREATE TABLE historical_commercial_invoice_items (id TEXT PRIMARY KEY,pi_id TEXT);
  `);
  const p=sqlite.prepare('INSERT INTO purchase_orders VALUES (?,?,?,?,?,?,?,?,?,?)');
