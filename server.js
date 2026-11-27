@@ -11711,8 +11711,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
       if (pi.domestic_ci_id) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已生成 CI，不允许再次生成' });
       const priorCI = queryOne(`SELECT ci.id, ci.ci_no FROM commercial_invoices ci
         LEFT JOIN commercial_invoice_items cii ON cii.ci_id = ci.id
-        WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?)
-          AND COALESCE(ci.ci_status, '') != 'cancelled' LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
+        WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?) LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
       if (priorCI) return res.status(409).json({ error: '国内贸易 PI ' + pi.pi_no + ' 已关联 CI ' + priorCI.ci_no + '，不允许再次生成' });
       const domesticItems = query('SELECT sku_code, pi_confirmed_qty, shipped_qty FROM proforma_invoice_items WHERE pi_id = ?', [pi.id]).rows || [];
       if (!domesticItems.length) return res.status(400).json({ error: '国内贸易 PI ' + pi.pi_no + ' 没有商品明细，无法生成 CI' });
@@ -11752,8 +11751,7 @@ app.post('/api/commercial-invoices', requireApiPermission('ci_create'), asyncHan
           }
           const priorCI = queryOne(`SELECT ci.id, ci.ci_no FROM commercial_invoices ci
             LEFT JOIN commercial_invoice_items cii ON cii.ci_id = ci.id
-            WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?)
-              AND COALESCE(ci.ci_status, '') != 'cancelled' LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
+            WHERE (ci.related_pi_id = ? OR ci.related_pi_no = ? OR cii.pi_id = ?) LIMIT 1`, [pi.id, pi.pi_no, pi.id]);
           if (priorCI) {
             const error = new Error('国内贸易 PI ' + pi.pi_no + ' 已关联 CI ' + priorCI.ci_no + '，不允许再次生成');
             error.status = 409; throw error;
@@ -11971,7 +11969,7 @@ app.delete('/api/commercial-invoices/:id/shipping-attachments/:fileId', requireA
   } catch (e) { res.status(500).json({ error: e.message }); }
 }));
 
-// CI 作废：原子回退 PI 发货事实、释放未付款尾款，并彻底删除 CI 及明细，释放 CI 编号。
+// CI 作废：原子回退 PI 发货事实、释放未付款尾款，并彻底删除 CI 及明细、释放 CI 编号；国内贸易 PI 的一次性 CI 锁永久保留。
 app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), asyncHandler(async (req, res) => {
   try {
     const reason = String((req.body || {}).void_reason || '').trim();
@@ -12143,11 +12141,8 @@ app.post('/api/commercial-invoices/:id/void', requireApiPermission('ci_edit'), a
         }
       }
 
-      // Release the domestic one-CI claim only when the CI is hard-deleted by this void flow.
-      for (const piId of piIds) {
-        run("UPDATE proforma_invoices SET domestic_ci_id = '' WHERE id = ? AND domestic_ci_id = ?", [piId, ci.id]);
-      }
-
+      // Domestic PI one-CI claim is permanent. The CI header/details are hard-deleted below,
+      // but this PI-side tombstone must remain so voiding can never restore CI generation permission.
       run(
         "UPDATE payable_items SET lifecycle_status = 'released' WHERE fee_type = 'balance' AND (source_ci_id = ? OR (source_type = 'ci' AND source_id = ?)) AND lifecycle_status = 'active'",
         [ci.id, ci.id]

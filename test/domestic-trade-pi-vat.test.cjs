@@ -23,6 +23,7 @@ test('PI defaults to international and includes domestic VAT in its total and de
   assert.match(server, /d\.trade_mode \|\| 'international'/);
   assert.match(server, /const vatAmount = tradeMode === 'domestic' \? vatInput : 0/);
   assert.match(server, /totalAmount \+= vatAmount/);
+  assert.ok(server.includes("const payableDeposit = needDeposit ? totalAmount * depositRatio / 100"));
   assert.match(server, /const nextVatAmount = nextTradeMode === 'domestic' \? vatInput : 0/);
   assert.match(server, /prospectiveGoodsTotal \+ nextVatAmount/);
   assert.match(server, /totalAmount \+= nextVatAmount/);
@@ -34,7 +35,15 @@ test('domestic PI can only generate one CI with all confirmed SKU quantities', (
   assert.match(server, /国内贸易 PI 只能一次性生成一张 CI，批次必须为 1/);
   assert.match(server, /domestic_ci_id = \?/);
   assert.match(server, /domesticImportRow/);
-  assert.match(server, /domestic_ci_id = '' WHERE id = \? AND domestic_ci_id = \?/);
+  assert.ok(server.includes("if (pi.domestic_ci_id) return res.status(409)"));
+  assert.ok(server.includes("if (latest && latest.domestic_ci_id)"));
+});
+
+test('domestic one-CI claim stays consumed after void hard-deletes the CI', () => {
+  assert.ok(server.includes("DELETE FROM commercial_invoices WHERE id = ?"));
+  assert.ok(server.includes("Domestic PI one-CI claim is permanent"));
+  assert.ok(!server.includes("UPDATE proforma_invoices SET domestic_ci_id = ''"));
+  assert.ok(!server.includes("AND COALESCE(ci.ci_status, '') != 'cancelled' LIMIT 1"));
 });
 
 test('CI carries the full VAT amount and includes it in payable and detail totals', () => {
@@ -43,6 +52,9 @@ test('CI carries the full VAT amount and includes it in payable and detail total
   assert.match(server, /goodsAmount \+ ciVatAmount - totalShouldDeduct/);
   assert.match(server, /goods_amount \+ COALESCE\(vat_amount, 0\).*AS total_amount/);
   assert.match(server, /piCiTotalAmount = piGoodsAmount \+ piVatAmount/);
+  assert.ok(server.includes("shouldDeduct = pi.available_deduct_deposit || 0"));
+  assert.ok(server.includes("const payableBalance = piCiTotalAmount - shouldDeduct"));
+  assert.ok(server.includes("newShippedAmount = (pi.shipped_amount || 0) + piCiTotalAmount"));
 });
 
 test('PI and CI forms expose VAT only for domestic trade and lock CI quantity to full shipment', () => {
