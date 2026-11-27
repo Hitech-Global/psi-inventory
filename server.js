@@ -10640,8 +10640,14 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         d.related_po_no=selectedPOsForEdit[0]?.po_no||'';
         d.items=piMultiPO.aggregateSourceItems(d.po_source_items,selectedPOsForEdit);
         const existingAllocations=piMultiPO.getExistingAllocations(id,query);
-        if(oldRelatedIds.length>1&&!existingAllocations.length)
-          throw new Error('原关联多PO缺少分配记录，无法安全调整关联，请联系管理员');
+        if(oldRelatedIds.length>1&&!existingAllocations.length){
+          const existingItems=query('SELECT sku_code,pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id=?',[id]).rows;
+          const hasUntrackedSource=oldRelatedIds.some(poId=>existingItems.some(item=>
+            Number(item.pi_confirmed_qty||0)>0&&
+            !!queryOne('SELECT id FROM purchase_order_items WHERE po_id=? AND sku_code=?',[poId,item.sku_code])));
+          if(hasUntrackedSource)
+            throw new Error('原关联多PO缺少分配记录，无法安全调整关联，请联系管理员');
+        }
       }else{
         if(oldRelatedIds.length>1) {
           // Legacy clients keep the previous immutable-dimension guard.
