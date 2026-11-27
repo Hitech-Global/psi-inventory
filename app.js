@@ -12138,7 +12138,7 @@ async function editPI(id){
       sb.insertAdjacentHTML('beforebegin','<span id="pi-edit-save-status" role="status" aria-live="polite" style="display:none;align-items:center;gap:6px;margin-right:12px;font-size:12px;color:var(--text-muted,#6e6e73)">⏳ 正在保存，请勿重复提交…</span>');
     }
     // 预填明细（复用 computePODiff + renderCmpTable）
-    const relatedIdsForRows=(()=>{try{return Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]')}catch(e){return []}})();
+    const relatedIdsForRows=(()=>{try{const ids=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');return ids.length?ids:(pi.related_po_id?[pi.related_po_id]:[])}catch(e){return pi.related_po_id?[pi.related_po_id]:[]}})();
     window._editingPIIsMultiPO=relatedIdsForRows.length>1;
     window._piRows=(window._editingPIIsMultiPO||(pi.po_allocations||[]).length>0)
       ?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
@@ -12174,7 +12174,7 @@ async function editPI(id){
     // Multi-PO PI identity is shared by every linked PO; match the server's
     // immutable dimension guard rather than showing editable selectors.
     let linkedIds=[];
-    try{linkedIds=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');}catch(e){}
+    try{linkedIds=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');if(!linkedIds.length&&pi.related_po_id)linkedIds=[pi.related_po_id];}catch(e){if(pi.related_po_id)linkedIds=[pi.related_po_id];}
     if(linkedIds.length>1){
       ['npi-country','npi-wh','npi-brand','npi-cur'].forEach(id=>{
         const field=document.getElementById(id);if(field)field.disabled=true;
