@@ -7,7 +7,7 @@ const read=p=>fs.readFileSync(path.join(__dirname,'..',p),'utf8');
 const app=read('app.js'),server=read('server.js'),db=read('db.js'),pg=read('db-pg.js'),sqlite=read('db-sqlite.js');
 
 test('CI details show trade mode, a totals row, and hide domestic customs fields',()=>{
-  assert.match(app,/function ciClearanceLabel\(v,tradeMode\)/);
+  assert.match(app,/function ciClearanceLabelForCI\\(v,tradeMode\\)/);
   assert.match(app,/ciClearanceLabel\(c\.clearance_type,c\.trade_mode\)/);
   assert.match(app,/ciClearanceLabel\(ci\.clearance_type,ci\.trade_mode\)/);
   assert.match(app,/f==='trade_mode'/);
