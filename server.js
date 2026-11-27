@@ -10615,10 +10615,26 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const pi = queryOne('SELECT * FROM proforma_invoices WHERE id = ?', [id]);
     if (!pi) return res.status(404).json({ error: 'PI不存在' });
     let multiPOsForEdit=[];
+    let sourcePOIdsForEdit=null,sourcePOsForEdit=[],sourcePOEditForm=null;
+    const hasPOAssociationEdit=Array.isArray(d.po_source_items);
+    if((d.related_po_ids!==undefined||d.related_po_id!==undefined)&&!hasPOAssociationEdit)
+      return res.status(400).json({error:'修改关联PO时必须同时提交PO来源明细'});
     try {
-      const multiIds=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
-      if(multiIds.length>1) {
-        // PO sourcing dimensions never change after PI creation.
+      const originalIds=piMultiPO.parseRelatedIds(pi.related_po_ids,pi.related_po_id);
+      if(hasPOAssociationEdit){
+        sourcePOIdsForEdit=(d.related_po_ids!==undefined||d.related_po_id!==undefined)
+          ?piMultiPO.parseRelatedIds(d.related_po_ids,d.related_po_id):originalIds;
+        if(d.related_po_id!==undefined&&String(d.related_po_id||'')!==String(sourcePOIdsForEdit[0]||''))
+          throw new Error('关联PO主编号与PO列表不一致');
+        sourcePOEditForm={supplier_id:pi.supplier_id,supplier_name:pi.supplier_name,
+          country:d.country!==undefined?d.country:pi.country,
+          brand:d.brand!==undefined?d.brand:pi.brand,
+          currency:d.currency!==undefined?d.currency:pi.currency,
+          target_warehouse:d.target_warehouse!==undefined?d.target_warehouse:pi.target_warehouse};
+        sourcePOsForEdit=piMultiPO.validatePOs(sourcePOIdsForEdit,sourcePOEditForm,queryOne,
+          {allowFullyTransferred:true,enforceDimensions:true});
+        d.items=piMultiPO.aggregateSourceItems(d.po_source_items,sourcePOsForEdit);
+      }else if(originalIds.length>1){
         const effective={supplier_id:pi.supplier_id,supplier_name:pi.supplier_name,
           country:d.country!==undefined?d.country:pi.country,
           brand:d.brand!==undefined?d.brand:pi.brand,
@@ -10626,13 +10642,9 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
           target_warehouse:d.target_warehouse!==undefined?d.target_warehouse:pi.target_warehouse};
         if(['country','brand','currency','target_warehouse'].some(k=>d[k]!==undefined&&String(d[k]||'')!==String(pi[k]||'')))
           throw new Error('多PO的国家、品牌、仓库和币种已锁定，不可通过PI编辑更改');
-        multiPOsForEdit=piMultiPO.validatePOs(multiIds,effective,queryOne,{allowFullyTransferred:true});
+        multiPOsForEdit=piMultiPO.validatePOs(originalIds,effective,queryOne,{allowFullyTransferred:true});
       }
     } catch(e) {return res.status(400).json({error:e.message});}
-    if(multiPOsForEdit.length>1&&Array.isArray(d.po_source_items)){
-      try{d.items=piMultiPO.aggregateSourceItems(d.po_source_items,multiPOsForEdit);}
-      catch(e){return res.status(400).json({error:e.message});}
-    }
 
     // 锁定守卫：CI/PL 已生成 / 已付定金 / 已作废 → 拒绝编辑
     const lockReason = getPILockReason(pi);
@@ -10727,6 +10739,11 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     if (d.deposit_ratio !== undefined) { fields.push('deposit_ratio = ?'); values.push(depositRatio); }
     fields.push('balance_ratio = ?'); values.push(balanceRatio);
     if (d.attachment !== undefined) { fields.push('attachment = ?'); values.push(parseAttachment(d.attachment)); }
+    if(hasPOAssociationEdit){
+      const firstPO=sourcePOsForEdit[0];
+      fields.push('related_po_id = ?','related_po_no = ?','related_po_ids = ?','related_po_nos = ?');
+      values.push(firstPO?.id||'',firstPO?.po_no||'',JSON.stringify(sourcePOIdsForEdit),JSON.stringify(sourcePOsForEdit.map(p=>p.po_no)));
+    }
 
     const oldItems = query('SELECT * FROM proforma_invoice_items WHERE pi_id = ? ORDER BY created_at', [id]).rows;
     const oldForecastKeys = collectPIForecastKeys(id);
@@ -10736,7 +10753,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     const newPiNo = (d.pi_no !== undefined && d.pi_no !== '' && d.pi_no !== pi.pi_no) ? d.pi_no : pi.pi_no;
 
     // 计算是否需要触发库存派生刷新（与事务内写入解耦，事务提交后在响应返回后执行）
-    const itemsChanged = Array.isArray(d.items) && d.items.length > 0 && !piItemsEqual(d.items, oldItems);
+    const itemsChanged = Array.isArray(d.items) && !piItemsEqual(d.items, oldItems);
     const invAffectingChanged =
       (d.country !== undefined && d.country !== pi.country) ||
       (d.target_warehouse !== undefined && d.target_warehouse !== pi.target_warehouse) ||
@@ -10746,7 +10763,11 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     transaction(() => {
       // On multi-PO PI edits roll back ORIGINAL per-PO allocations first, then
       // atomically reallocate the latest combined SKU quantities in this tx.
-      if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
+      if(hasPOAssociationEdit){
+        piMultiPO.restorePIAllocations(pi,id,oldItems,query,run);
+        sourcePOsForEdit=piMultiPO.validatePOs(sourcePOIdsForEdit,sourcePOEditForm,queryOne,
+          {allowFullyTransferred:false,enforceDimensions:true});
+      }else if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
         piMultiPO.restoreMultiAllocations(id,query,run);
       }
       // 明细全量替换（批量 INSERT）
@@ -10760,7 +10781,7 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
           // 金额口径与创建一致：显式带 pi_amount 以显式值为准，否则 qty×price×(1-discount)
           const amount = (item.pi_amount !== undefined && item.pi_amount !== null && item.pi_amount !== '') ? n(item.pi_amount, 0) : baseAmount * (1 - discount);
           totalAmount += amount;
-          itemRows.push([genId('pii'), id, newPiNo, item.po_no || pi.related_po_no || '', item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
+          itemRows.push([genId('pii'), id, newPiNo, hasPOAssociationEdit ? (sourcePOsForEdit[0]?.po_no||'') : (item.po_no || pi.related_po_no || ''), item.sku_code, item.po_qty || 0, item.pi_confirmed_qty || 0, item.unit_price || 0, discount, amount, 0, item.pi_confirmed_qty || 0]);
         });
         if (itemRows.length) {
           const placeholders = itemRows.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
@@ -10780,12 +10801,14 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
         syncPayableItemAmount('pi', id, 'deposit', payableDeposit);
       }
 
-      // Multi-PO allocation handled by exact per-PO source ledger instead.
-      if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
+      // New PI editor submits exact source rows for zero, one, or many linked POs.
+      if(hasPOAssociationEdit){
+        piMultiPO.assignSourceAllocations({piId:id,poRows:sourcePOsForEdit,items:d.items,sourceItems:d.po_source_items,query,run,genId});
+      }else if(multiPOsForEdit.length>1&&Array.isArray(d.items)) {
         piMultiPO.assignMultiPO({piId:id,poRows:multiPOsForEdit,items:d.items,sourceItems:d.po_source_items,query,run,genId});
       }
       // PO transferred_pi_qty delta 同步（legacy single-PO only）
-      if (pi.related_po_id && multiPOsForEdit.length<=1) {
+      if (!hasPOAssociationEdit && pi.related_po_id && multiPOsForEdit.length<=1) {
         oldItems.forEach(it => {
           const poItem = queryOne('SELECT id, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?', [pi.related_po_id, it.sku_code]);
           if (poItem) {
@@ -10866,7 +10889,12 @@ app.put('/api/proforma-invoices/:id', requireApiPermission('pi_edit'), asyncHand
     });
     res.status(200).json({ success: true, id, total_amount: totalAmount, payable_deposit: payableDeposit });
     return;
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    const msg=e&&e.message||String(e||'未知错误');
+    if(/关联PO|多PO|PI确认数量|PO余量|PO没有商品|PO出现重复SKU|PO数量回退|PI来源明细|来源商品明细|PI汇总|原PO占用数量|原PO数量回退|PO不存在|PO已全部转PI|供应商或国家|币种必须一致|品牌必须一致|目标仓库必须一致/.test(msg))
+      return res.status(400).json({error:msg});
+    res.status(500).json({ error: msg });
+  }
 }));
 
 app.post('/api/proforma-invoices/:id/attachment', requireApiPermission('pi_edit'), asyncHandler((req, res) => {
