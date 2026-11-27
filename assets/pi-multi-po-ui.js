@@ -137,7 +137,7 @@
      const reason=ineligibility(po);
      const restorable=originalFullPO(po,reason);
      const displayReason=restorable?'':reason;
-     const conflict=!selected&&(anchor?!compatible(anchor,po):(state.editMode&&!compatibleWithEditForm(po)));
+     const conflict=!selected&&(anchor?(!compatible(anchor,po)||(state.editMode&&!compatibleWithEditForm(po))):(state.editMode&&!compatibleWithEditForm(po)));
      const forbidden=!selected&&(!!displayReason||conflict);
      const hint=displayReason||(conflict?'品牌/仓库/币种不同，不可合并':'');
      const stateText=displayReason||(restorable?'原关联可恢复':
@@ -167,7 +167,7 @@
    const first=(window._piApprovedPOs||[]).find(p=>p.id===old[0]);
    const anchor=first||null;
    if(checked&&!old.includes(id)){
-     if(anchor?!compatible(anchor,po):(state.editMode&&!compatibleWithEditForm(po))){
+     if(anchor?(!compatible(anchor,po)||(state.editMode&&!compatibleWithEditForm(po))):(state.editMode&&!compatibleWithEditForm(po))){
        showToast('只能合并同供应商、国家、品牌、币种、仓库的PO','warning');refresh();return;
      }
      state.ids.push(id);
@@ -185,7 +185,7 @@
      const fetched=await Promise.all(state.ids.map(x=>api('/api/purchase-orders/'+encodeURIComponent(x))));
      if(seq!==state.sequence||!state.enabled||!el('pi-multi-po-picker'))return;
      if(fetched.some(x=>!compatible(fetched[0],x)||!match(x)))throw Error('关联PO的属性不一致，不能合并');
-     if(state.editMode&&fetched.some(x=>!compatible(state.pi||{},x)))
+     if(state.editMode&&fetched.some(x=>!compatibleWithEditForm(x)))
        throw Error('新关联PO必须与当前PI的品牌、仓库和币种一致');
      state.details=fetched;
      const w=el('npi-wh');
