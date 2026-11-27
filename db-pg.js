@@ -1278,6 +1278,9 @@ async function initDatabase() {
 
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'");
   await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS ci_logistics_status TEXT DEFAULT ''");
+  await exec("ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS actual_arrival_date TEXT DEFAULT ''");
+  await exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
 
   await exec(`
     CREATE TABLE IF NOT EXISTS historical_commercial_invoices (

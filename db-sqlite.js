@@ -1164,12 +1164,13 @@ function initDatabase() {
     )
   `);
 
-  // CI trade mode / VAT snapshot. Historical and existing CI rows default to international / zero VAT.
-  for (const col of ["trade_mode TEXT DEFAULT 'international'", "vat_amount REAL DEFAULT 0"]) {
+  // CI trade mode / VAT snapshot and CI-level logistics summary fields.
+  for (const col of ["trade_mode TEXT DEFAULT 'international'", "vat_amount REAL DEFAULT 0", "ci_logistics_status TEXT DEFAULT ''", "actual_arrival_date TEXT DEFAULT ''"]) {
     try { d.exec('ALTER TABLE commercial_invoices ADD COLUMN ' + col); } catch (e) {
       if (!/duplicate column/i.test(e.message)) throw e;
     }
   }
+  d.exec("UPDATE commercial_invoices SET clearance_type = 'domestic' WHERE trade_mode = 'domestic' AND COALESCE(clearance_type, '') <> 'domestic'");
 
   // 历史 CI 财务导入：与运营 CI 完全隔离，只承载历史货款及其应付结算。
   d.exec(`
