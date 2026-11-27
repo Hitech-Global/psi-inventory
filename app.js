@@ -12143,7 +12143,7 @@ async function editPI(id){
     window._piRows=(window._editingPIIsMultiPO||(pi.po_allocations||[]).length>0)
       ?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
     renderCmpTable();
-    if(window.PIMultiPO)window.PIMultiPO.install({editMode:true,selectedIds:relatedIdsForRows,pi});
+
     // 仓库选项同步填充 + 回填保存值（预取数据，表单打开后立即填充，无空窗期；先加载选项→确认 option 存在→回填值）
     const wSel=document.getElementById('npi-wh');
     if(wSel){
@@ -12182,6 +12182,7 @@ async function editPI(id){
       const field=document.getElementById('npi-country');
       if(field)field.title=t('pi.multi_po_dimension_locked','多PO的国家、品牌、仓库与币种已锁定');
     }
+    if(window.PIMultiPO)window.PIMultiPO.install({editMode:true,selectedIds:relatedIdsForRows,pi});
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditPI(id){
