@@ -12006,6 +12006,8 @@ function buildMultiPOEditableRows(poRef,pi){
 }
 async function editPI(id){
   window._editingPIIsMultiPO=false;
+  window._editingPIUsesPOPicker=false;
+  window._piApprovedPOs=[];
   if(window.PIMultiPO)window.PIMultiPO.disable();
   // 先开弹窗骨架 + Loading（立即响应，不等 PI 请求）
   openModal(t('modal.title.editPI','编辑PI'),'<div style="padding:40px;text-align:center"><div style="font-size:32px;color:#1890ff;margin-bottom:8px">⏳</div><div style="color:#666">'+t('common.loading','加载中…')+'</div></div>','','modal-pi');
@@ -12020,11 +12022,12 @@ async function editPI(id){
     var _poPromise=piLoadRelatedPOItems(pi).catch(function(){return [];});
     var _whPromise=pi.country?api('/api/warehouses/by-country?country='+encodeURIComponent(pi.country)).catch(function(){return [];}):Promise.resolve([]);
     var _edData;
-    try{ _edData=await Promise.all([_getMaster(['suppliers','countries','brands']),_poPromise,_whPromise]);     }catch(e){showToast(e.message,'danger');return;}
+    try{ _edData=await Promise.all([_getMaster(['suppliers','countries','brands']),_poPromise,_whPromise,api('/api/purchase-orders')]);     }catch(e){showToast(e.message,'danger');return;}
     if(!document.getElementById('modal-overlay').classList.contains('show'))return; // 用户在 Loading 期间关闭了弹窗
     const suppliers=_edData[0].suppliers,countries=_edData[0].countries,brands=_edData[0].brands;
     let poRef=_edData[1];
     const warehouses=_edData[2]||[];
+    window._piApprovedPOs=_edData[3]||[];
     const countryOpts=countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.name===pi.country?' selected':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
     const piNoLocked=!!pi.pi_no_locked;
     const piNoField=piNoLocked
@@ -12033,13 +12036,13 @@ async function editPI(id){
     const supOpts=suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'"'+(s.id===pi.supplier_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
     const curOpts=['USD','RMB','IDR','MYR','THB'].map(c=>'<option'+(c===pi.currency?' selected':'')+'>'+c+'</option>').join('');
     const body='<div class="form-card" style="box-shadow:none;padding:0">'
-      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。「关联PO / 供应商」为锁定项不可改。</div>')
+      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；关联PO支持搜索、新增、取消及更换，供应商保持锁定。保存时系统会自动释放旧PO占用并按新的关联重新分配数量；PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。</div>')
       +'<div class="form-grid">'
       +piNoField
       +'<div class="form-group"><label>'+t('app.113','国家')+'</label><select id="npi-country" onchange="onPICountryChange()">'+countryOpts+'</select></div>'
       +'<div class="form-group"><label>'+t('app.114','仓库')+'</label><select id="npi-wh"><option value="">（请选择仓库）</option></select></div>'
       +'<div class="form-group"><label>'+t('app.112','品牌')+'</label><select id="npi-brand"></select></div>'
-      +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc((()=>{try{const v=JSON.parse(pi.related_po_nos||'[]');return v.length?v.join('、'):pi.related_po_no}catch(e){return pi.related_po_no}})()||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
+      +'<div class="form-group"><label>关联PO</label><select id="npi-po"><option value="">无关联</option></select></div>'
       +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
       +t('gen.L5473.1','<div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'"></div>'
       +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur"')+((pi.deposit_payment_status==='pending_approval')?' disabled':'')+'>'+curOpts+'</select>'
@@ -12061,9 +12064,11 @@ async function editPI(id){
       sb.insertAdjacentHTML('beforebegin','<span id="pi-edit-save-status" role="status" aria-live="polite" style="display:none;align-items:center;gap:6px;margin-right:12px;font-size:12px;color:var(--text-muted,#6e6e73)">⏳ 正在保存，请勿重复提交…</span>');
     }
     // 预填明细（复用 computePODiff + renderCmpTable）
-    const relatedIdsForRows=(()=>{try{return Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]')}catch(e){return []}})();
+    const relatedIdsForRows=(()=>{try{return Array.isArray(pi.related_po_ids)?pi.related_po_ids.slice():JSON.parse(pi.related_po_ids||'[]')}catch(e){return []}})();
+    if(!relatedIdsForRows.length&&pi.related_po_id)relatedIdsForRows.push(pi.related_po_id);
     window._editingPIIsMultiPO=relatedIdsForRows.length>1;
-    window._piRows=window._editingPIIsMultiPO?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
+    window._editingPIUsesPOPicker=true;
+    window._piRows=(pi.po_allocations||[]).length?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
     renderCmpTable();
     // 仓库选项同步填充 + 回填保存值（预取数据，表单打开后立即填充，无空窗期；先加载选项→确认 option 存在→回填值）
     const wSel=document.getElementById('npi-wh');
@@ -12092,17 +12097,9 @@ async function editPI(id){
       bSel.innerHTML='<option value="">（请选择品牌）</option>'+(brands||[]).map(function(b){return '<option value="'+esc(b)+'"'+(b===pi.brand?' selected':'')+'>'+esc(b)+'</option>';}).join('');
       if(pi.brand&&![...bSel.options].some(o=>o.value===pi.brand)){bSel.innerHTML+='<option value="'+esc(pi.brand)+'" selected>'+esc(pi.brand)+'</option>';}
     }
-    // Multi-PO PI identity is shared by every linked PO; match the server's
-    // immutable dimension guard rather than showing editable selectors.
-    let linkedIds=[];
-    try{linkedIds=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');}catch(e){}
-    if(linkedIds.length>1){
-      ['npi-country','npi-wh','npi-brand','npi-cur'].forEach(id=>{
-        const field=document.getElementById(id);if(field)field.disabled=true;
-      });
-      const field=document.getElementById('npi-country');
-      if(field)field.title=t('pi.multi_po_dimension_locked','多PO的国家、品牌、仓库与币种已锁定');
-    }
+    // The same searchable PO picker is used for edits. Existing links are
+    // preselected; supplier remains immutable while PO links can be changed.
+    if(window.PIMultiPO)window.PIMultiPO.installEdit({selectedIds:relatedIdsForRows});
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditPI(id){
@@ -12122,13 +12119,21 @@ async function saveEditPI(id){
     (window._piRows||[]).forEach(r=>{if(r.sku&&r.sku.trim())items.push({sku_code:r.sku.trim(),po_qty:parseInt(r.poQty)||0,pi_confirmed_qty:parseInt(r.piQty)||0,unit_price:parseFloat(r.piPrice)||0,discount:parseFloat(r.piDisc)||0})});
     const termId=termSel?termSel.value:'';
     const paymentTermsText=(termId&&termSel.options[termSel.selectedIndex])?termSel.options[termSel.selectedIndex].textContent:'';
-    const piIsMultiSource=(window._editingPIIsMultiPO===true);
-    const po_source_items=piIsMultiSource?(window._piRows||[]).filter(r=>r.sku&&r.sku.trim()).map(r=>({
+    const piUsesPOPicker=(window._editingPIUsesPOPicker===true&&window.PIMultiPO&&window.PIMultiPO.active());
+    if(piUsesPOPicker&&window.PIMultiPO.loading())throw new Error('关联PO明细仍在加载，请稍后保存');
+    const linkedPOIds=piUsesPOPicker?window.PIMultiPO.ids():[];
+    const linkedPOs=piUsesPOPicker?(window._piApprovedPOs||[]).filter(p=>linkedPOIds.includes(p.id)):[];
+    const po_source_items=piUsesPOPicker?(window._piRows||[]).filter(r=>r.sku&&r.sku.trim()).map(r=>({
       po_id:r.poId||'',po_no:r.poNo||'',sku_code:r.sku.trim(),po_qty:Number(r.poQty||0),
       pi_confirmed_qty:Number(r.piQty||0),unit_price:Number(r.piPrice||0),discount:Number(r.piDisc||0)
-    })):undefined;
+    })):[];
     const d={
       po_source_items,
+      ...(piUsesPOPicker?{
+        related_po_ids:linkedPOIds,
+        related_po_id:linkedPOIds[0]||'',
+        related_po_no:linkedPOs[0]?.po_no||''
+      }:{}),
       pi_date:document.getElementById('npi-date')?.value||'',
       currency:document.getElementById('npi-cur')?.value||'',
       payment_terms:paymentTermsText,
