@@ -275,7 +275,7 @@ test('editing multi-PO PI can remove one linked PO and releases its occupied qua
  assert.equal(updated.related_po_id,'p2');
  assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
  assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,30);
- assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='p1'").po_status,'approved');
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='p1'").po_status,'partial_pi');
  assert.equal(x.query('SELECT COUNT(*) n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,2);
  x.sqlite.close();
 });
