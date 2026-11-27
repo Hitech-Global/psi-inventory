@@ -258,3 +258,104 @@ test('PUT reassigns separately edited PO quantities without changing SKU aggrega
  assert.equal(x.query("SELECT * FROM pi_po_allocations").rows.length,2);
  x.sqlite.close();
 });
+
+test('PI PUT can remove one linked PO, retain another, and preserve removed PO quantity as manual PI detail',async()=>{
+ const x=fixture();
+ const sources=[
+  {po_id:'p1',po_no:'PO-A',sku_code:'SKU-1',po_qty:80,pi_confirmed_qty:70,unit_price:10,discount:0.1},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const created=await x.submit({po_source_items:sources});
+ assert.equal(created.status,200,JSON.stringify(created));
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ const changed=[
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0},
+  {po_id:'',po_no:'',sku_code:'SKU-1',po_qty:0,pi_confirmed_qty:70,unit_price:9,discount:0}
+ ];
+ const updated=await x.update(pi.id,{related_po_ids:['p2'],related_po_id:'p2',related_po_no:'PO-B',
+  po_source_items:changed,country:'泰国',brand:'Netac',target_warehouse:'Bangkok',currency:'RMB',
+  need_deposit:0,deposit_ratio:0});
+ assert.equal(updated.status,200,JSON.stringify(updated));
+ const saved=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.equal(saved.related_po_id,'p2');assert.equal(saved.related_po_no,'PO-B');
+ assert.deepEqual(JSON.parse(saved.related_po_ids),['p2']);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,30);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a3'").transferred_pi_qty,10);
+ const allocations=x.query('SELECT po_no,sku_code,allocated_qty FROM pi_po_allocations WHERE pi_id=? ORDER BY po_no,sku_code',[pi.id]).rows;
+ assert.deepEqual(allocations.map(a=>[a.po_no,a.sku_code,a.allocated_qty]),
+  [['PO-B','SKU-1',30],['PO-B','SKU-2',10]]);
+ const items=x.query('SELECT sku_code,pi_confirmed_qty,pi_amount FROM proforma_invoice_items WHERE pi_id=? ORDER BY sku_code',[pi.id]).rows;
+ assert.deepEqual(items.map(i=>[i.sku_code,i.pi_confirmed_qty,i.pi_amount]),[['SKU-1',100,990],['SKU-2',10,70]]);
+ assert.equal(saved.total_amount,1060);
+ x.sqlite.close();
+});
+test('PI PUT can unlink every PO and keep all PI quantities as manual details',async()=>{
+ const x=fixture();
+ const sources=[
+  {po_id:'p1',po_no:'PO-A',sku_code:'SKU-1',po_qty:80,pi_confirmed_qty:70,unit_price:10,discount:0.1},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const created=await x.submit({po_source_items:sources});assert.equal(created.status,200);
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ const manual=[
+  {po_id:'',po_no:'',sku_code:'SKU-1',po_qty:0,pi_confirmed_qty:100,unit_price:9.9,discount:0},
+  {po_id:'',po_no:'',sku_code:'SKU-2',po_qty:0,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const updated=await x.update(pi.id,{related_po_ids:[],related_po_id:'',related_po_no:'',
+  po_source_items:manual,country:'泰国',brand:'Netac',target_warehouse:'Bangkok',currency:'RMB',
+  need_deposit:0,deposit_ratio:0});
+ assert.equal(updated.status,200,JSON.stringify(updated));
+ const saved=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.equal(saved.related_po_id,'');assert.equal(saved.related_po_no,'');
+ assert.deepEqual(JSON.parse(saved.related_po_ids),[]);
+ assert.deepEqual(JSON.parse(saved.related_po_nos),[]);
+ assert.equal(x.query('SELECT COUNT(*) n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,0);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,0);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a3'").transferred_pi_qty,0);
+ assert.equal(saved.total_amount,1060);
+ assert.equal(x.query('SELECT COUNT(*) n FROM proforma_invoice_items WHERE pi_id=?',[pi.id]).rows[0].n,2);
+ x.sqlite.close();
+});
+test('legacy single-PO PI can be reassigned to another PO and starts an exact allocation ledger',async()=>{
+ const x=fixture();
+ const created=await x.submit({related_po_ids:['p1'],related_po_id:'p1',related_po_no:'PO-A',
+  items:[{sku_code:'SKU-1',po_qty:100,pi_confirmed_qty:30,unit_price:9,discount:0}]});
+ assert.equal(created.status,200,JSON.stringify(created));
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,50);
+ const updated=await x.update(pi.id,{related_po_ids:['p2'],related_po_id:'p2',related_po_no:'PO-B',
+  po_source_items:[{po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:11,discount:0}],
+  country:'泰国',brand:'Netac',target_warehouse:'Bangkok',currency:'RMB',
+  need_deposit:0,deposit_ratio:0});
+ assert.equal(updated.status,200,JSON.stringify(updated));
+ const saved=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.equal(saved.related_po_id,'p2');assert.deepEqual(JSON.parse(saved.related_po_ids),['p2']);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,30);
+ assert.deepEqual(x.query('SELECT po_id,sku_code,allocated_qty FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows
+  .map(a=>[a.po_id,a.sku_code,a.allocated_qty]),[['p2','SKU-1',30]]);
+ x.sqlite.close();
+});
+test('failed PI PO reassignment rolls back old PO release, new PO occupation, and header link',async()=>{
+ const x=fixture();
+ const created=await x.submit({related_po_ids:['p1'],related_po_id:'p1',related_po_no:'PO-A',
+  items:[{sku_code:'SKU-1',po_qty:100,pi_confirmed_qty:30,unit_price:9,discount:0}]});
+ assert.equal(created.status,200);
+ const pi=x.queryOne("SELECT * FROM proforma_invoices WHERE pi_no='PI-TEST-1'");
+ const result=await x.update(pi.id,{related_po_ids:['p2'],related_po_id:'p2',related_po_no:'PO-B',
+  po_source_items:[{po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:60,unit_price:11,discount:0}],
+  country:'泰国',brand:'Netac',target_warehouse:'Bangkok',currency:'RMB',
+  need_deposit:0,deposit_ratio:0});
+ assert.equal(result.status,400,JSON.stringify(result));
+ assert.equal(x.queryOne("SELECT related_po_id FROM proforma_invoices WHERE id=?",[pi.id]).related_po_id,'p1');
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,50);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,0);
+ assert.equal(x.query('SELECT COUNT(*) n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,0);
+ assert.equal(x.queryOne("SELECT pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id=?",[pi.id]).pi_confirmed_qty,30);
+ x.sqlite.close();
+});
