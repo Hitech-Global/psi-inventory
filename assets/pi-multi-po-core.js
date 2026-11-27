@@ -5,7 +5,7 @@ function parseRelatedIds(value,legacy){
  let ids=[];
  if(Array.isArray(value))ids=value;
  else if(typeof value==='string'&&value.trim()){try{ids=JSON.parse(value);}catch(e){throw Error('关联PO列表格式无效');}}
- else if(legacy)ids=[legacy];
+ if(!ids.length&&legacy)ids=[legacy];
  if(!Array.isArray(ids)||ids.some(x=>typeof x!=='string'||!x.trim()))throw Error('关联PO必须是PO ID数组');
  const unique=ids.map(x=>x.trim());
  if(new Set(unique).size!==unique.length)throw Error('关联PO不可重复选择');
@@ -169,7 +169,7 @@ function assignSourceAllocations({piId,poRows,items,sourceItems,query,run,genId}
      const marker=poItems.get(po.id).values().next().value;
      if(!marker)throw Error('PO没有商品明细：'+po.po_no);
      run('INSERT INTO pi_po_allocations (id,pi_id,po_id,po_no,sku_code,allocated_qty,pi_unit_price,pi_discount) VALUES (?,?,?,?,?,?,?,?)',
-       [genId('ppa'),piId,po.id,po.po_no,marker.sku_code,0,0,0]);
+       [genId('ppa'),piId,po.id,po.po_no,marker.sku_code,0,null,null]);
    }
    updatePOStatus(po.id,query,run);
  }
