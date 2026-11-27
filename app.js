@@ -11979,15 +11979,17 @@ async function viewPI(id, backPay, backMode){
 }
 function buildMultiPOEditableRows(poRef,pi){
   const allocations=pi.po_allocations||[],bySource=new Map(),allocatedQty=new Map(),allocatedAmount=new Map();
+  const existing=new Map((pi.items||[]).map(it=>[it.sku_code,it]));
   for(const a of allocations){
     bySource.set(a.po_no+'|'+a.sku_code,a);
     const sku=String(a.sku_code||'');
     const qty=Number(a.allocated_qty||0);
-    const price=Number(a.pi_unit_price||0),disc=Number(a.pi_discount||0);
+    const fallback=existing.get(sku);
+    const price=a.pi_unit_price!=null?Number(a.pi_unit_price):Number(fallback?.unit_price||0);
+    const disc=a.pi_discount!=null?Number(a.pi_discount):Number(fallback?.discount||0);
     allocatedQty.set(sku,(allocatedQty.get(sku)||0)+qty);
     allocatedAmount.set(sku,(allocatedAmount.get(sku)||0)+qty*price*(1-disc));
   }
-  const existing=new Map((pi.items||[]).map(it=>[it.sku_code,it]));
   const sourced=new Set(),rows=[];
   for(const item of poRef){
     const sku=String(item.sku_code||''),poNo=String(item.po_no||'');
