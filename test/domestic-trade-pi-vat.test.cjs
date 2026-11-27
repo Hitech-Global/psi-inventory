@@ -8,6 +8,7 @@ const app = read('app.js');
 const server = read('server.js');
 const pg = read('db-pg.js');
 const sqlite = read('db-sqlite.js');
+const dbAdapter = read('db.js');
 const i18n = read('i18n.js');
 
 test('PI schema stores trade mode, VAT and domestic CI claim for both drivers', () => {
@@ -17,6 +18,23 @@ test('PI schema stores trade mode, VAT and domestic CI claim for both drivers', 
     assert.match(source, /domestic_ci_id TEXT DEFAULT ''/);
     assert.match(source, /commercial_invoices ADD COLUMN/);
   }
+});
+
+test('production PG worker_threads migration installs all domestic PI and CI VAT columns', () => {
+  const start = dbAdapter.indexOf('var domesticPiVatMigrations = [');
+  const end = dbAdapter.indexOf("console.log('[DB] domestic PI VAT schema migration verified.')", start);
+  assert.ok(start >= 0 && end > start, 'production PG synchronous migration block must exist');
+  const migration = dbAdapter.slice(start, end);
+  for (const sql of [
+    "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'",
+    "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0",
+    "ALTER TABLE proforma_invoices ADD COLUMN IF NOT EXISTS domestic_ci_id TEXT DEFAULT ''",
+    "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS trade_mode TEXT DEFAULT 'international'",
+    "ALTER TABLE commercial_invoices ADD COLUMN IF NOT EXISTS vat_amount NUMERIC(18,4) DEFAULT 0"
+  ]) {
+    assert.ok(migration.includes(sql), 'production migration must include: ' + sql);
+  }
+  assert.match(migration, /syncRequest\('query', domesticPiVatMigrations\[dpvi\]\)/);
 });
 
 test('PI defaults to international and includes domestic VAT in its total and deposit basis', () => {
