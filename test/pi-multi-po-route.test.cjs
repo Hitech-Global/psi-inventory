@@ -47,6 +47,8 @@ function fixture(){
   getPILockReason:()=>'',getPINumberLockReason:()=>'',piItemsEqual:()=>false,
   syncPayableItemAmount(){},logOperation(){},cancelPayableItem(id){const r=run("UPDATE payable_items SET lifecycle_status='cancelled' WHERE id=? AND lifecycle_status='active'",[id]);return r.changes>0;},
   updateInventoryTransitDataAsync:()=>Promise.resolve(),
+  collectPIForecastKeys:()=>[],
+  refreshForecastAfterProcurementMutationBestEffort:()=>Promise.resolve(),
   transaction(fn){
    sqlite.exec('BEGIN');
    try{const r=fn();sqlite.exec('COMMIT');return r;}
@@ -256,5 +258,84 @@ test('PUT reassigns separately edited PO quantities without changing SKU aggrega
  assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,40);
  assert.equal(x.queryOne("SELECT pi_confirmed_qty FROM proforma_invoice_items WHERE sku_code='SKU-1'").pi_confirmed_qty,60);
  assert.equal(x.query("SELECT * FROM pi_po_allocations").rows.length,2);
+ x.sqlite.close();
+});
+
+test('PUT can remove one linked PO, retain its PI quantity as manual, and reassign the remaining PO atomically',async()=>{
+ const x=fixture(),created=await x.submit();assert.equal(created.status,200,JSON.stringify(created));
+ const pi=x.queryOne('SELECT * FROM proforma_invoices WHERE pi_no=?',['PI-TEST-1']);
+ const sources=[
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:20,unit_price:12,discount:0},
+  {po_id:'',po_no:'',sku_code:'SKU-1',po_qty:0,pi_confirmed_qty:90,unit_price:10,discount:0},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const result=await x.update(pi.id,{related_po_ids:['p2'],related_po_id:'p2',related_po_no:'PO-B',
+   po_source_items:sources,items:[],need_deposit:0,deposit_ratio:0});
+ assert.equal(result.status,200,JSON.stringify(result));
+ const saved=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.deepEqual(JSON.parse(saved.related_po_ids),['p2']);
+ assert.deepEqual(JSON.parse(saved.related_po_nos),['PO-B']);
+ assert.equal(saved.related_po_id,'p2');assert.equal(saved.related_po_no,'PO-B');
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a3'").transferred_pi_qty,10);
+ const allocations=x.query('SELECT po_no,sku_code,allocated_qty FROM pi_po_allocations WHERE pi_id=? ORDER BY sku_code',[pi.id]).rows;
+ assert.deepEqual(allocations.map(a=>[a.po_no,a.sku_code,a.allocated_qty]),[['PO-B','SKU-1',20],['PO-B','SKU-2',10]]);
+ const item=x.queryOne("SELECT pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id=? AND sku_code='SKU-1'",[pi.id]);
+ assert.equal(item.pi_confirmed_qty,110);
+ x.sqlite.close();
+});
+test('PUT can remove every PO association while keeping PI lines as manual supplier lines',async()=>{
+ const x=fixture(),created=await x.submit();assert.equal(created.status,200);
+ const pi=x.queryOne('SELECT * FROM proforma_invoices WHERE pi_no=?',['PI-TEST-1']);
+ const sources=[
+  {po_id:'',po_no:'',sku_code:'SKU-1',po_qty:0,pi_confirmed_qty:110,unit_price:12,discount:0},
+  {po_id:'',po_no:'',sku_code:'SKU-2',po_qty:0,pi_confirmed_qty:10,unit_price:7,discount:0}
+ ];
+ const result=await x.update(pi.id,{related_po_ids:[],related_po_id:'',related_po_no:'',
+   po_source_items:sources,items:[],need_deposit:0,deposit_ratio:0});
+ assert.equal(result.status,200,JSON.stringify(result));
+ const saved=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.deepEqual(JSON.parse(saved.related_po_ids),[]);
+ assert.deepEqual(JSON.parse(saved.related_po_nos),[]);
+ assert.equal(saved.related_po_id,'');assert.equal(saved.related_po_no,'');
+ assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,0);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,0);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a3'").transferred_pi_qty,0);
+ assert.equal(x.queryOne("SELECT pi_confirmed_qty FROM proforma_invoice_items WHERE pi_id=? AND sku_code='SKU-1'",[pi.id]).pi_confirmed_qty,110);
+ x.sqlite.close();
+});
+test('PUT can migrate a legacy single-PO PI to multiple editable PO allocations',async()=>{
+ const x=fixture();
+ const created=await x.submit({related_po_ids:['p1'],related_po_id:'p1',related_po_no:'PO-A',
+   items:[{sku_code:'SKU-1',po_qty:100,pi_confirmed_qty:40,unit_price:9,discount:0}]});
+ assert.equal(created.status,200,JSON.stringify(created));
+ const pi=x.queryOne('SELECT * FROM proforma_invoices WHERE pi_no=?',['PI-TEST-1']);
+ const sources=[
+  {po_id:'p1',po_no:'PO-A',sku_code:'SKU-1',po_qty:80,pi_confirmed_qty:20,unit_price:10,discount:0},
+  {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:20,unit_price:12,discount:0}
+ ];
+ const result=await x.update(pi.id,{related_po_ids:['p1','p2'],related_po_id:'p1',related_po_no:'PO-A',
+   po_source_items:sources,items:[],need_deposit:0,deposit_ratio:0});
+ assert.equal(result.status,200,JSON.stringify(result));
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,40);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,20);
+ assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,2);
+ assert.deepEqual(JSON.parse(x.queryOne('SELECT related_po_ids FROM proforma_invoices WHERE id=?',[pi.id]).related_po_ids),['p1','p2']);
+ x.sqlite.close();
+});
+test('failed PO reassignment rolls back old reservations, new links, and PI header',async()=>{
+ const x=fixture(),created=await x.submit();assert.equal(created.status,200);
+ const pi=x.queryOne('SELECT * FROM proforma_invoices WHERE pi_no=?',['PI-TEST-1']);
+ const result=await x.update(pi.id,{related_po_ids:['p2'],related_po_id:'p2',related_po_no:'PO-B',
+   po_source_items:[{po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:51,unit_price:12,discount:0}],
+   items:[],need_deposit:0,deposit_ratio:0});
+ assert.equal(result.status,400,JSON.stringify(result));
+ assert.match(result.data.error,/超过对应PO剩余数量/);
+ assert.deepEqual(JSON.parse(x.queryOne('SELECT related_po_ids FROM proforma_invoices WHERE id=?',[pi.id]).related_po_ids),['p1','p2']);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,100);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,30);
+ assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,3);
  x.sqlite.close();
 });

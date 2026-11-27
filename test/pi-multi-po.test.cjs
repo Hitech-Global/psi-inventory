@@ -183,9 +183,10 @@ test('PO source lines cannot impersonate other PO or double-book a PO+SKU',()=>{
  assert.throws(()=>core.aggregateSourceItems([
   {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:2,unit_price:1},
   {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:3,unit_price:1}],pos),/只能出现一行/);
- assert.throws(()=>core.aggregateSourceItems([
+ const mixed=core.aggregateSourceItems([
   {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',pi_confirmed_qty:2,unit_price:1},
-  {po_id:'',sku_code:'SKU-A',pi_confirmed_qty:3,unit_price:1}],pos),/手工行与PO来源SKU重复/);
+  {po_id:'',sku_code:'SKU-A',pi_confirmed_qty:3,unit_price:2}],pos);
+ assert.equal(mixed.find(x=>x.sku_code==='SKU-A').pi_confirmed_qty,5);
  x.sqlite.close();
 });
 test('per-PO confirmation cannot exceed just that PO residual, even when other PO has capacity',()=>{
@@ -197,5 +198,44 @@ test('per-PO confirmation cannot exceed just that PO residual, even when other P
  x.sqlite.exec('ROLLBACK');
  assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations').rows[0].n,0);
  assert.equal(x.queryOne('SELECT transferred_pi_qty FROM purchase_order_items WHERE id=?',['a1']).transferred_pi_qty,20);
+ x.sqlite.close();
+});
+
+test('single selected PO can use exact source allocations and manual residual rows',()=>{
+ const x=db(),pos=core.validatePOs(['po1'],form(),x.queryOne);
+ const sources=[
+  {po_id:'po1',po_no:'PO-1',sku_code:'SKU-A',po_qty:80,pi_confirmed_qty:30,unit_price:10,discount:0},
+  {po_id:'',po_no:'',sku_code:'SKU-A',po_qty:0,pi_confirmed_qty:5,unit_price:11,discount:0},
+  {po_id:'',po_no:'',sku_code:'MANUAL',po_qty:0,pi_confirmed_qty:2,unit_price:3,discount:0},
+  {po_id:'',po_no:'',sku_code:'MANUAL',po_qty:0,pi_confirmed_qty:1,unit_price:4,discount:0}
+ ];
+ const items=core.aggregateSourceItems(sources,pos);
+ x.sqlite.exec('BEGIN');
+ const allocations=core.assignMultiPO({piId:'single-source',poRows:pos,items,sourceItems:sources,...x});
+ x.sqlite.exec('COMMIT');
+ assert.deepEqual(allocations.map(a=>[a.po_no,a.sku_code,a.allocated_qty]),[['PO-1','SKU-A',30]]);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,50);
+ assert.equal(x.query('SELECT COUNT(*) AS n FROM pi_po_allocations WHERE pi_id=?',['single-source']).rows[0].n,1);
+ assert.equal(items.find(i=>i.sku_code==='SKU-A').pi_confirmed_qty,35);
+ assert.equal(items.find(i=>i.sku_code==='MANUAL').pi_confirmed_qty,3);
+ x.sqlite.close();
+});
+test('only original fully transferred PO may be reselected during edit',()=>{
+ const x=db();
+ x.run("UPDATE purchase_orders SET po_status='transferred_pi' WHERE id='po1'");
+ assert.equal(core.validatePOs(['po1'],form(),x.queryOne,{allowFullyTransferredIds:['po1'],strictDimensions:true}).length,1);
+ x.run("UPDATE purchase_orders SET po_status='transferred_pi' WHERE id='po2'");
+ assert.throws(()=>core.validatePOs(['po2'],form(),x.queryOne,{allowFullyTransferredIds:['po1'],strictDimensions:true}),/已全部转PI/);
+ x.sqlite.close();
+});
+test('legacy single-PO release reverses only its own PI quantity and preserves cancelled status',()=>{
+ const x=db();
+ x.run("UPDATE purchase_order_items SET transferred_pi_qty=60,untransferred_pi_qty=40 WHERE id='a1'");
+ core.restoreLegacySinglePO('po1',[{sku_code:'SKU-A',pi_confirmed_qty:40}],x.queryOne,x.query,x.run);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'partial_pi');
+ x.run("UPDATE purchase_orders SET po_status='cancelled' WHERE id='po1'");
+ core.updatePOStatus('po1',x.query,x.run);
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'cancelled');
  x.sqlite.close();
 });

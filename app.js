@@ -11978,9 +11978,18 @@ async function viewPI(id, backPay, backMode){
   }catch(e){showToast(e.message,'danger')}
 }
 function buildMultiPOEditableRows(poRef,pi){
-  const allocations=pi.po_allocations||[],bySource=new Map();
-  for(const a of allocations)bySource.set(a.po_no+'|'+a.sku_code,a);
+  const allocations=pi.po_allocations||[],bySource=new Map(),allocatedQty=new Map(),allocatedAmount=new Map();
   const existing=new Map((pi.items||[]).map(it=>[it.sku_code,it]));
+  for(const a of allocations){
+    bySource.set(a.po_no+'|'+a.sku_code,a);
+    const sku=String(a.sku_code||'');
+    const qty=Number(a.allocated_qty||0);
+    const fallback=existing.get(sku);
+    const price=a.pi_unit_price!=null?Number(a.pi_unit_price):Number(fallback?.unit_price||0);
+    const disc=a.pi_discount!=null?Number(a.pi_discount):Number(fallback?.discount||0);
+    allocatedQty.set(sku,(allocatedQty.get(sku)||0)+qty);
+    allocatedAmount.set(sku,(allocatedAmount.get(sku)||0)+qty*price*(1-disc));
+  }
   const sourced=new Set(),rows=[];
   for(const item of poRef){
     const sku=String(item.sku_code||''),poNo=String(item.po_no||'');
@@ -11995,15 +12004,89 @@ function buildMultiPOEditableRows(poRef,pi){
       piPrice:a?.pi_unit_price!=null?Number(a.pi_unit_price):Number(fallback?.unit_price||0),
       piDisc:a?.pi_discount!=null?Number(a.pi_discount):Number(fallback?.discount||0)});
   }
+  // Keep any unallocated part of an aggregated PI SKU as a manual row. This
+  // also supports a manual remainder alongside the same SKU sourced from PO.
   for(const it of pi.items||[]){
-    if(!sourced.has(it.sku_code))rows.push({
-      poId:'',poNo:'',sku:it.sku_code,fromPO:false,poQty:Number(it.po_qty||0),
-      poPrice:0,piQty:Number(it.pi_confirmed_qty||0),piPrice:Number(it.unit_price||0),
-      piDisc:Number(it.discount||0)
-    });
+    const sku=String(it.sku_code||'');
+    const totalQty=Number(it.pi_confirmed_qty||0);
+    const manualQty=Math.max(0,totalQty-(allocatedQty.get(sku)||0));
+    if(manualQty>0||!sourced.has(sku)){
+      const hasAllocated=(allocatedQty.get(sku)||0)>0;
+      if(!hasAllocated){
+        rows.push({
+          poId:'',poNo:'',sku,fromPO:false,poQty:0,poPrice:0,
+          piQty:totalQty,piPrice:Number(it.unit_price||0),piDisc:Number(it.discount||0)
+        });
+      }else{
+        const totalAmount=it.pi_amount!=null?Number(it.pi_amount):
+          totalQty*Number(it.unit_price||0)*(1-Number(it.discount||0));
+        const manualAmount=totalAmount-(allocatedAmount.get(sku)||0);
+        rows.push({
+          poId:'',poNo:'',sku,fromPO:false,poQty:0,poPrice:0,
+          piQty:manualQty,
+          piPrice:manualQty>0?Math.max(0,manualAmount/manualQty):Number(it.unit_price||0),
+          piDisc:0
+        });
+      }
+    }
   }
   return rows;
 }
+function rebuildPIEditRowsForPOSelection(pos){
+  const current=(window._piRows||[]).slice();
+  const selectedIds=new Set((pos||[]).map(po=>String(po.id)));
+  const currentSource=new Map(),removedSource=new Map();
+  for(const row of current){
+    const key=String(row.poId||'')+'|'+String(row.sku||'');
+    if(row.fromPO)currentSource.set(key,row);
+    else if(row.removedFromPOId)removedSource.set(String(row.removedFromPOId)+'|'+String(row.sku||''),row);
+  }
+  const next=[];
+  const restoredManual=new Set();
+  for(const po of (pos||[])){
+    for(const item of (po.items||[])){
+      const sku=String(item.sku_code||'').trim();
+      if(!sku)continue;
+      const key=String(po.id)+'|'+sku;
+      let old=currentSource.get(key);
+      if(!old){
+        old=removedSource.get(key);
+        if(old)restoredManual.add(old);
+      }
+      const remaining=Math.max(0,Number(item.po_qty||0)-Number(item.transferred_pi_qty||0));
+      if(!old&&remaining<=0)continue;
+      const qty=old?Number(old.piQty||0):0;
+      const row=old?{
+        ...old,poId:po.id,poNo:po.po_no,sku,fromPO:true,
+        poQty:remaining+qty,
+        poPrice:Number(item.unit_price||old.removedPoPrice||old.poPrice||0)
+      }:{
+        poId:po.id,poNo:po.po_no,sku,fromPO:true,
+        poQty:remaining,poPrice:Number(item.unit_price||0),
+        piQty:0,piPrice:0,piDisc:0
+      };
+      delete row.removedFromPOId;
+      delete row.removedPoPrice;
+      next.push(row);
+    }
+  }
+  // Removing a PO releases its source link but keeps the supplier PI line and
+  // its price/quantity as a manual line. The source marker allows undoing an
+  // uncheck before save without losing the original PO allocation.
+  for(const row of current){
+    if(row.fromPO){
+      if(!selectedIds.has(String(row.poId||''))&&Number(row.piQty||0)>0)
+        next.push({...row,removedFromPOId:String(row.poId||''),
+          removedPoPrice:Number(row.poPrice||0),poId:'',poNo:'',poQty:0,poPrice:0,fromPO:false});
+    }else if(!restoredManual.has(row))next.push({...row});
+  }
+  window._piRows=next;
+  window._poRef=next.filter(r=>r.fromPO).map(r=>({
+    po_id:r.poId,po_no:r.poNo,sku_code:r.sku,po_qty:r.poQty,unit_price:r.poPrice
+  }));
+  renderCmpTable();
+}
+window._piEditRowsForSelection=rebuildPIEditRowsForPOSelection;
 async function editPI(id){
   window._editingPIIsMultiPO=false;
   if(window.PIMultiPO)window.PIMultiPO.disable();
@@ -12019,12 +12102,14 @@ async function editPI(id){
     // 并行加载主数据(缓存) + PO 明细 + 仓库选项（预取，避免表单打开后仓库空窗期）
     var _poPromise=piLoadRelatedPOItems(pi).catch(function(){return [];});
     var _whPromise=pi.country?api('/api/warehouses/by-country?country='+encodeURIComponent(pi.country)).catch(function(){return [];}):Promise.resolve([]);
+    var _poListPromise=api('/api/purchase-orders');
     var _edData;
-    try{ _edData=await Promise.all([_getMaster(['suppliers','countries','brands']),_poPromise,_whPromise]);     }catch(e){showToast(e.message,'danger');return;}
+    try{ _edData=await Promise.all([_getMaster(['suppliers','countries','brands']),_poPromise,_whPromise,_poListPromise]);     }catch(e){showToast(e.message,'danger');return;}
     if(!document.getElementById('modal-overlay').classList.contains('show'))return; // 用户在 Loading 期间关闭了弹窗
     const suppliers=_edData[0].suppliers,countries=_edData[0].countries,brands=_edData[0].brands;
     let poRef=_edData[1];
     const warehouses=_edData[2]||[];
+    window._piApprovedPOs=Array.isArray(_edData[3])?_edData[3]:[];
     const countryOpts=countries.filter(c=>c.status==='active').map(c=>'<option value="'+esc(c.name)+'"'+(c.name===pi.country?' selected':'')+'>'+esc(c.name)+(c.flag?(' '+c.flag):'')+'</option>').join('');
     const piNoLocked=!!pi.pi_no_locked;
     const piNoField=piNoLocked
@@ -12033,13 +12118,13 @@ async function editPI(id){
     const supOpts=suppliers.map(s=>'<option value="'+s.id+'" data-name="'+esc(s.name)+'" data-last="'+esc(s.last_used_payment_term_id||'')+'"'+(s.id===pi.supplier_id?' selected':'')+'>'+esc(s.name)+'</option>').join('');
     const curOpts=['USD','RMB','IDR','MYR','THB'].map(c=>'<option'+(c===pi.currency?' selected':'')+'>'+c+'</option>').join('');
     const body='<div class="form-card" style="box-shadow:none;padding:0">'
-      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。「关联PO / 供应商」为锁定项不可改。</div>')
+      +t('gen.L5468.2','<div style="margin-bottom:12px;padding:8px 12px;background:#f0f5ff;border:1px solid #adc6ff;border-radius:6px;font-size:12px;color:#333">编辑模式：可修改表头与明细并实时预览差异；保存将调用后端 PUT（付款条件变更自动回写供应商上次使用项）。PI号在未进入后续业务阶段时可修改（修改需唯一，系统自动校验）。关联PO支持搜索、新增和取消；供应商仍保持锁定。</div>')
       +'<div class="form-grid">'
       +piNoField
       +'<div class="form-group"><label>'+t('app.113','国家')+'</label><select id="npi-country" onchange="onPICountryChange()">'+countryOpts+'</select></div>'
       +'<div class="form-group"><label>'+t('app.114','仓库')+'</label><select id="npi-wh"><option value="">（请选择仓库）</option></select></div>'
       +'<div class="form-group"><label>'+t('app.112','品牌')+'</label><select id="npi-brand"></select></div>'
-      +t('gen.L5471.1','<div class="form-group"><label>关联PO（锁定）</label><input type="text" value="')+esc((()=>{try{const v=JSON.parse(pi.related_po_nos||'[]');return v.length?v.join('、'):pi.related_po_no}catch(e){return pi.related_po_no}})()||t("app.140", "\u65e0\u5173\u8054"))+'" disabled></div>'
+      +'<div class="form-group"><label>'+t('pi.field.related_po','关联PO')+'</label><select id="npi-po"><option value="">'+t('pi.no_po','无关联')+'</option></select></div>'
       +t('gen.L5472.1','<div class="form-group"><label>供应商（锁定）</label><select id="npi-sup" disabled onchange="onPISupplierChange()">')+supOpts+'</select></div>'
       +t('gen.L5473.1','<div class="form-group"><label>PI日期</label><input type="date" id="npi-date" value="')+esc(pi.pi_date||'')+'"></div>'
       +t('gen.L5474.1','<div class="form-group"><label>币种</label><select id="npi-cur"')+((pi.deposit_payment_status==='pending_approval')?' disabled':'')+'>'+curOpts+'</select>'
@@ -12061,10 +12146,12 @@ async function editPI(id){
       sb.insertAdjacentHTML('beforebegin','<span id="pi-edit-save-status" role="status" aria-live="polite" style="display:none;align-items:center;gap:6px;margin-right:12px;font-size:12px;color:var(--text-muted,#6e6e73)">⏳ 正在保存，请勿重复提交…</span>');
     }
     // 预填明细（复用 computePODiff + renderCmpTable）
-    const relatedIdsForRows=(()=>{try{return Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]')}catch(e){return []}})();
+    const relatedIdsForRows=(()=>{try{const ids=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');return ids.length?ids:(pi.related_po_id?[pi.related_po_id]:[])}catch(e){return pi.related_po_id?[pi.related_po_id]:[]}})();
     window._editingPIIsMultiPO=relatedIdsForRows.length>1;
-    window._piRows=window._editingPIIsMultiPO?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
+    window._piRows=(window._editingPIIsMultiPO||(pi.po_allocations||[]).length>0)
+      ?buildMultiPOEditableRows(poRef,pi):computePODiff(poRef,pi.items||[]);
     renderCmpTable();
+
     // 仓库选项同步填充 + 回填保存值（预取数据，表单打开后立即填充，无空窗期；先加载选项→确认 option 存在→回填值）
     const wSel=document.getElementById('npi-wh');
     if(wSel){
@@ -12095,7 +12182,7 @@ async function editPI(id){
     // Multi-PO PI identity is shared by every linked PO; match the server's
     // immutable dimension guard rather than showing editable selectors.
     let linkedIds=[];
-    try{linkedIds=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');}catch(e){}
+    try{linkedIds=Array.isArray(pi.related_po_ids)?pi.related_po_ids:JSON.parse(pi.related_po_ids||'[]');if(!linkedIds.length&&pi.related_po_id)linkedIds=[pi.related_po_id];}catch(e){if(pi.related_po_id)linkedIds=[pi.related_po_id];}
     if(linkedIds.length>1){
       ['npi-country','npi-wh','npi-brand','npi-cur'].forEach(id=>{
         const field=document.getElementById(id);if(field)field.disabled=true;
@@ -12103,9 +12190,13 @@ async function editPI(id){
       const field=document.getElementById('npi-country');
       if(field)field.title=t('pi.multi_po_dimension_locked','多PO的国家、品牌、仓库与币种已锁定');
     }
+    if(window.PIMultiPO)window.PIMultiPO.install({editMode:true,selectedIds:relatedIdsForRows,pi});
   }catch(e){showToast(e.message,'danger')}
 }
 async function saveEditPI(id){
+  if(window.PIMultiPO&&window.PIMultiPO.active()&&window.PIMultiPO.loading()){
+    showToast('PO明细仍在加载，请稍后再保存PI','warning');return;
+  }
   const btn=document.getElementById('btn-save-edit-pi')||
     document.querySelector('#modal-content .modal-footer button[onclick^="saveEditPI("]');
   if(!btn||btn.disabled)return; // no stale modal submission or double-click
@@ -12122,13 +12213,18 @@ async function saveEditPI(id){
     (window._piRows||[]).forEach(r=>{if(r.sku&&r.sku.trim())items.push({sku_code:r.sku.trim(),po_qty:parseInt(r.poQty)||0,pi_confirmed_qty:parseInt(r.piQty)||0,unit_price:parseFloat(r.piPrice)||0,discount:parseFloat(r.piDisc)||0})});
     const termId=termSel?termSel.value:'';
     const paymentTermsText=(termId&&termSel.options[termSel.selectedIndex])?termSel.options[termSel.selectedIndex].textContent:'';
-    const piIsMultiSource=(window._editingPIIsMultiPO===true);
-    const po_source_items=piIsMultiSource?(window._piRows||[]).filter(r=>r.sku&&r.sku.trim()).map(r=>({
+    const piUsesPOPicker=!!(window.PIMultiPO&&window.PIMultiPO.active());
+    const relatedPOIds=piUsesPOPicker?window.PIMultiPO.ids():[];
+    const po_source_items=piUsesPOPicker?(window._piRows||[]).filter(r=>r.sku&&r.sku.trim()).map(r=>({
       po_id:r.poId||'',po_no:r.poNo||'',sku_code:r.sku.trim(),po_qty:Number(r.poQty||0),
       pi_confirmed_qty:Number(r.piQty||0),unit_price:Number(r.piPrice||0),discount:Number(r.piDisc||0)
     })):undefined;
+    const firstLinkedPO=(window._piApprovedPOs||[]).find(p=>p.id===relatedPOIds[0]);
     const d={
       po_source_items,
+      related_po_ids:relatedPOIds,
+      related_po_id:relatedPOIds[0]||'',
+      related_po_no:firstLinkedPO?.po_no||'',
       pi_date:document.getElementById('npi-date')?.value||'',
       currency:document.getElementById('npi-cur')?.value||'',
       payment_terms:paymentTermsText,

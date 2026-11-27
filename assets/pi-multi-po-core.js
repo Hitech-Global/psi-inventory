@@ -13,8 +13,9 @@ function parseRelatedIds(value,legacy){
  return unique;
 }
 function norm(x){return String(x||'').trim().toLocaleLowerCase();}
-function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
+function validatePOs(ids,form,queryOne,{allowFullyTransferred=false,allowFullyTransferredIds=[],strictDimensions=false}={}){
  if(!ids.length)return [];
+ const fullyTransferredAllowed=new Set((Array.isArray(allowFullyTransferredIds)?allowFullyTransferredIds:[]).map(String));
  const poRows=ids.map(id=>{
    const po=queryOne('SELECT * FROM purchase_orders WHERE id = ?',[id]);
    if(!po)throw Error('关联PO不存在：'+id);
@@ -22,7 +23,7 @@ function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
    // plan is invalid, but draft / pending-approval plans are allowed.
    if(['cancelled','rejected'].includes(po.po_status)||po.approval_status==='rejected')
      throw Error('已作废或已驳回的PO不可关联PI：'+po.po_no);
-   if(po.po_status==='transferred_pi'&&!allowFullyTransferred)
+   if(po.po_status==='transferred_pi'&&!allowFullyTransferred&&!fullyTransferredAllowed.has(String(po.id)))
      throw Error('该PO已全部转PI：'+po.po_no);
    const supplierMatch=po.supplier_id
      ? String(po.supplier_id)===String(form.supplier_id||'')
@@ -33,7 +34,7 @@ function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
  });
  // A single PI / CI is a single supplier/currency/brand/warehouse accounting
  // object. Reject rather than silently combining incompatible POs.
- if(ids.length>1){
+ if(ids.length>1||strictDimensions){
    for(const key of ['currency','brand','target_warehouse']){
      if(poRows.some(po=>norm(po[key])!==norm(poRows[0][key])))
        throw Error('多PO的'+({currency:'币种',brand:'品牌',target_warehouse:'目标仓库'}[key])+'必须一致');
@@ -57,7 +58,7 @@ function updatePOStatus(poId,query,run){
  if(!items.length)throw Error('PO没有商品明细：'+poId);
  // A PI is a sourcing fact, NOT an approval action. Preserve draft/pending
  // approval state; final PO approval will derive the transfer status afresh.
- if(po.approval_status!=='approved')return;
+ if(po.approval_status!=='approved'||['cancelled','rejected'].includes(po.po_status))return;
  const anyTransferred=items.some(i=>Number(i.transferred_pi_qty)>0);
  const status=anyTransferred&&items.every(i=>Number(i.transferred_pi_qty)>=Number(i.po_qty))?'transferred_pi':
    anyTransferred?'partial_pi':'approved';
@@ -76,8 +77,29 @@ function restoreMultiAllocations(piId,query,run){
  run('DELETE FROM pi_po_allocations WHERE pi_id = ?',[piId]);
  return [...new Set(old.map(x=>x.po_id))];
 }
+function restoreLegacySinglePO(poId,items,queryOne,query,run){
+ if(!poId)return [];
+ const quantities=new Map();
+ for(const item of (items||[])){
+   const sku=String(item.sku_code||'').trim(),qty=Number(item.pi_confirmed_qty||0);
+   if(!sku||!Number.isSafeInteger(qty)||qty<0)throw Error('原PI数量异常，拒绝释放PO占用：'+sku);
+   quantities.set(sku,(quantities.get(sku)||0)+qty);
+ }
+ for(const [sku,qty] of quantities){
+   if(!qty)continue;
+   const poItem=queryOne('SELECT id, transferred_pi_qty FROM purchase_order_items WHERE po_id = ? AND sku_code = ?',[poId,sku]);
+   if(!poItem)continue; // PI may contain a legitimate manual SKU not present on the PO.
+   if(Number(poItem.transferred_pi_qty||0)<qty)
+     throw Error('原PO占用数量已异常，拒绝修改PI：'+poId+' / '+sku);
+   const result=run('UPDATE purchase_order_items SET transferred_pi_qty=transferred_pi_qty-?, untransferred_pi_qty=po_qty-(transferred_pi_qty-?) WHERE id=? AND transferred_pi_qty>=?',
+     [qty,qty,poItem.id,qty]);
+   if(result.changes!==1)throw Error('原PO数量回退失败：'+poId+' / '+sku);
+ }
+ updatePOStatus(poId,query,run);
+ return [poId];
+}
 function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
- if(poRows.length<2)throw Error('多PO分配至少需要2张PO');
+ if(!Array.isArray(sourceItems)&&poRows.length<2)throw Error('多PO分配至少需要2张PO');
  const poItems=new Map();
  for(const po of poRows){
    const rows=query('SELECT id, sku_code, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?',[po.id]).rows;
@@ -140,7 +162,7 @@ function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
  for(const po of poRows)updatePOStatus(po.id,query,run);
  return allocations;
 }
-module.exports={parseRelatedIds,validatePOs,getExistingAllocations,updatePOStatus,restoreMultiAllocations,assignMultiPO,aggregateSourceItems};
+module.exports={parseRelatedIds,validatePOs,getExistingAllocations,updatePOStatus,restoreMultiAllocations,restoreLegacySinglePO,assignMultiPO,aggregateSourceItems};
 
 /**
  * Input: separate PO+SKU lines, including manual rows with no po_id.
@@ -150,7 +172,7 @@ module.exports={parseRelatedIds,validatePOs,getExistingAllocations,updatePOStatu
 function aggregateSourceItems(sourceRows,poRows){
  if(!Array.isArray(sourceRows)||sourceRows.length>10000)throw Error('PI来源明细格式无效');
  const poById=new Map(poRows.map(p=>[String(p.id),p]));
- const keys=new Set(),sourceSkus=new Set(),groups=new Map();
+ const keys=new Set(),groups=new Map();let manualRow=0;
  for(const line of sourceRows){
    const sku=String(line.sku_code||'').trim(),poId=String(line.po_id||'').trim();
    const poNo=String(line.po_no||'').trim();
@@ -158,13 +180,12 @@ function aggregateSourceItems(sourceRows,poRows){
    if(!sku||!Number.isSafeInteger(qty)||qty<0||!Number.isFinite(price)||price<0||
       !Number.isFinite(discount)||discount<0||discount>1)
      throw Error('PI来源行数量、单价或折扣无效：'+sku);
-   const key=poId+'|'+sku;
+   const key=poId?poId+'|'+sku:'manual|'+(++manualRow)+'|'+sku;
    if(keys.has(key))throw Error('同一PO的SKU只能出现一行：'+sku);
    keys.add(key);
    if(poId){
      const po=poById.get(poId);
      if(!po||po.po_no!==poNo)throw Error('PI来源PO不属于本次关联范围：'+poNo);
-     sourceSkus.add(sku);
    }else if(poNo)throw Error('手工PI行不能伪造关联PO号');
    let g=groups.get(sku);
    if(!g){g={sku_code:sku,po_qty:0,pi_confirmed_qty:0,gross:0,net:0};groups.set(sku,g);}
@@ -173,11 +194,8 @@ function aggregateSourceItems(sourceRows,poRows){
    g.net+=qty*price*(1-discount);
    g.po_qty+=Number(line.po_qty||0);
  }
- // Manual SKU identical to a sourced PO SKU is ambiguous to CI allocation.
- for(const line of sourceRows){
-   if(!line.po_id&&sourceSkus.has(String(line.sku_code||'').trim()))
-     throw Error('手工行与PO来源SKU重复，请在对应PO行填写数量：'+line.sku_code);
- }
+ // Manual rows may share a SKU with a PO-sourced row. The PI-facing item is
+ // aggregated by SKU while only rows carrying po_id reserve PO quantities.
  return [...groups.values()].map(g=>({
    sku_code:g.sku_code,po_qty:g.po_qty,pi_confirmed_qty:g.pi_confirmed_qty,
    unit_price:g.pi_confirmed_qty?g.gross/g.pi_confirmed_qty:0,
