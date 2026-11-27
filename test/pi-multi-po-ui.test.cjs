@@ -156,3 +156,20 @@ test('draft PO already fully converted to PI cannot be selected despite unapprov
  assert.deepEqual([...f.ids()],[]);
  assert.match(u.toast[0][0],/已全部转PI/);
 });
+
+test('editing an existing multi-PO PI can deselect one PO and preserves remaining PI quantities',async()=>{
+ const u=ui(),f=u.ctx.window.PIMultiPO;
+ u.ctx.window._piRows=[
+  {poId:'p1',poNo:'PO-1',sku:'N1',poQty:80,poPrice:10,piQty:15,piPrice:9,piDisc:0.1,fromPO:true},
+  {poId:'p2',poNo:'PO-2',sku:'N1',poQty:40,poPrice:12,piQty:10,piPrice:11,piDisc:0,fromPO:true}
+ ];
+ f.install({selectedIds:['p1','p2'],editMode:true});
+ await f.toggle('p1',false);
+ assert.deepEqual([...f.ids()],['p2']);
+ const rows=u.ctx.window._piRows.filter(x=>x.fromPO);
+ assert.equal(rows.length,1);
+ assert.equal(rows[0].poNo,'PO-2');
+ assert.equal(rows[0].piQty,10);
+ assert.equal(rows[0].piPrice,11);
+ assert.equal(rows[0].piDisc,0);
+});
