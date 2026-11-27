@@ -258,3 +258,24 @@ test('PUT reassigns separately edited PO quantities without changing SKU aggrega
  assert.equal(x.query("SELECT * FROM pi_po_allocations").rows.length,2);
  x.sqlite.close();
 });
+
+test('editing multi-PO PI can remove one linked PO and releases its occupied quantity',async()=>{
+ const x=fixture();const created=await x.submit();assert.equal(created.status,200);
+ const pi=x.queryOne('SELECT * FROM proforma_invoices WHERE pi_no=?',['PI-TEST-1']);
+ const result=await x.update(pi.id,{
+  related_po_ids:['p2'],
+  po_source_items:[
+   {po_id:'p2',po_no:'PO-B',sku_code:'SKU-1',po_qty:50,pi_confirmed_qty:30,unit_price:12,discount:0},
+   {po_id:'p2',po_no:'PO-B',sku_code:'SKU-2',po_qty:30,pi_confirmed_qty:10,unit_price:7,discount:0}
+  ],items:[],need_deposit:0,deposit_ratio:0
+ });
+ assert.equal(result.status,200,JSON.stringify(result));
+ const updated=x.queryOne('SELECT * FROM proforma_invoices WHERE id=?',[pi.id]);
+ assert.deepEqual(JSON.parse(updated.related_po_ids),['p2']);
+ assert.equal(updated.related_po_id,'p2');
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
+ assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a2'").transferred_pi_qty,30);
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='p1'").po_status,'approved');
+ assert.equal(x.query('SELECT COUNT(*) n FROM pi_po_allocations WHERE pi_id=?',[pi.id]).rows[0].n,2);
+ x.sqlite.close();
+});
