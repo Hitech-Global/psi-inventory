@@ -38,6 +38,8 @@ function validatePOs(ids,form,queryOne,{allowFullyTransferred=false}={}){
      if(poRows.some(po=>norm(po[key])!==norm(poRows[0][key])))
        throw Error('多PO的'+({currency:'币种',brand:'品牌',target_warehouse:'目标仓库'}[key])+'必须一致');
    }
+ }
+ if(poRows.length){
    if(form.currency&&norm(form.currency)!==norm(poRows[0].currency))
      throw Error('PI币种必须与关联PO一致');
    if(form.brand&&norm(form.brand)!==norm(poRows[0].brand))
@@ -77,7 +79,7 @@ function restoreMultiAllocations(piId,query,run){
  return [...new Set(old.map(x=>x.po_id))];
 }
 function assignMultiPO({piId,poRows,items,sourceItems,query,run,genId}){
- if(poRows.length<2)throw Error('多PO分配至少需要2张PO');
+ if(!poRows.length)throw Error('至少需要关联1张PO');
  const poItems=new Map();
  for(const po of poRows){
    const rows=query('SELECT id, sku_code, po_qty, transferred_pi_qty FROM purchase_order_items WHERE po_id = ?',[po.id]).rows;
