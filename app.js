@@ -12152,7 +12152,7 @@ async function saveEditPI(id){
     const po_source_items=piUsesPOPicker?(window._piRows||[]).filter(r=>r.sku&&r.sku.trim()).map(r=>({
       po_id:r.poId||'',po_no:r.poNo||'',sku_code:r.sku.trim(),po_qty:Number(r.poQty||0),
       pi_confirmed_qty:Number(r.piQty||0),unit_price:Number(r.piPrice||0),discount:Number(r.piDisc||0)
-    })):[];
+    })):undefined;
     const d={
       po_source_items,
       ...(piUsesPOPicker?{
