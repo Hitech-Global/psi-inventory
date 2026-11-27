@@ -21023,11 +21023,10 @@ async function bootFromSession(){
         +'<div class="ci-edit-items"><table class="data-table"><thead><tr><th>SKU</th><th>数量</th><th>原单价</th><th>折扣</th><th>折后单价</th><th>金额</th></tr></thead><tbody>'
         +(ci.items||[]).map(function(it){var d=Number(it.discount||0),np=Number(it.net_unit_price||0)||(Number(it.unit_price||0)*(1-d));return '<tr><td>'+esc(it.sku_code||'')+'</td><td>'+esc(it.shipped_qty||0)+'</td><td>'+fmtMoney(it.unit_price||0)+'</td><td>'+(d?(d*100).toFixed(1)+'%':'—')+'</td><td>'+fmtMoney(np)+'</td><td>'+fmtMoney(it.ci_amount||0)+'</td></tr>';}).join('')
         +'</tbody></table></div></div>';
-      var bp=backPay?String(backPay).replace(/'/g,"\\'"):'';
-      var bm=String(backMode||'view').replace(/'/g,"\\'");
-      var args=backPay?",'"+bp+"','"+bm+"'":'';
-      var footer='<button class="btn btn-secondary" onclick="viewCI(\\''+id+'\\''+args+')">取消</button>'
-        +'<button class="btn btn-primary" id="eci-save" onclick="saveCIEdit(\\''+id+'\\''+args+')">保存修改</button>';
+      var args=backPay?','+JSON.stringify(String(backPay))+','+JSON.stringify(String(backMode||'view')):'';
+      var quotedId=JSON.stringify(String(id));
+      var footer='<button class="btn btn-secondary" onclick="viewCI('+quotedId+args+')">取消</button>'
+        +'<button class="btn btn-primary" id="eci-save" onclick="saveCIEdit('+quotedId+args+')">保存修改</button>';
       openModal('编辑运营 CI - '+(ci.ci_no||''),body,footer,'modal-ci-create');
     }catch(e){showToast(e.message||String(e),'danger');}
   };
