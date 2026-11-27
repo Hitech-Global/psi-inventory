@@ -48,6 +48,7 @@ function fixture(){
   syncPayableItemAmount(){},logOperation(){},cancelPayableItem(id){const r=run("UPDATE payable_items SET lifecycle_status='cancelled' WHERE id=? AND lifecycle_status='active'",[id]);return r.changes>0;},
   updateInventoryTransitDataAsync:()=>Promise.resolve(),
   refreshForecastAfterProcurementMutationBestEffort:()=>Promise.resolve(),
+  collectPIForecastKeys:()=>[],
   transaction(fn){
    sqlite.exec('BEGIN');
    try{const r=fn();sqlite.exec('COMMIT');return r;}
