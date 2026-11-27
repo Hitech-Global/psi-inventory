@@ -11386,12 +11386,12 @@ app.get('/api/commercial-invoices/:id', requireApiPermission('ci_view'), asyncHa
     [ci.id]
   ).rows || [];
   let ciDetailMaxRank = -1;
-  let ciDetailMaxRawStatus = '';
   ciDetailLogisticsRows.forEach(row => {
     const rank = LOGISTICS_STAGE_RANK[row.logistics_status] !== undefined ? LOGISTICS_STAGE_RANK[row.logistics_status] : -1;
     if (rank > ciDetailMaxRank) { ciDetailMaxRank = rank; ciDetailMaxRawStatus = row.logistics_status || ''; }
   });
-  ci.ci_logistics_status_for_edit = String(ci.ci_logistics_status || '').trim() || ciDetailMaxRawStatus;
+  const ciDetailEditStatusByRank = ['pending', 'in_transit', 'customs', 'delivering', 'completed'];
+  ci.ci_logistics_status_for_edit = String(ci.ci_logistics_status || '').trim() || (ciDetailMaxRank >= 0 ? ciDetailEditStatusByRank[ciDetailMaxRank] : '');
   ci.ci_logistics_display_status = String(ci.ci_logistics_status || '').trim()
     ? deriveLogisticsDisplayStatus(ci.ci_logistics_status)
     : (ciDetailMaxRank >= 0 ? STAGE_KEYS[ciDetailMaxRank] : '');
