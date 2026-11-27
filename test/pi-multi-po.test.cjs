@@ -234,7 +234,7 @@ test('legacy single-PO PI edit releases only matching PO SKU quantities',()=>{
  x.sqlite.exec('COMMIT');
  assert.deepEqual(released,['po1']);
  assert.equal(x.queryOne("SELECT transferred_pi_qty FROM purchase_order_items WHERE id='a1'").transferred_pi_qty,20);
- assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'approved');
+ assert.equal(x.queryOne("SELECT po_status FROM purchase_orders WHERE id='po1'").po_status,'partial_pi');
  x.sqlite.close();
 });
 test('zero-allocation PO marker prevents legacy quantity inference and cancelled PO stays cancelled',()=>{
