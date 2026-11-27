@@ -107,6 +107,10 @@
  function refresh(){
    if(!state.enabled)return;
    const matched=candidates(),eligible=available();
+   if(!state.editMode){
+     const keep=state.ids.filter(id=>matched.some(po=>po.id===id));
+     if(keep.length!==state.ids.length){state.ids=keep;resetRows();}
+   }
    const box=el('pi-multi-po-picker');if(!box)return;
    const search=(el('pi-multi-po-search')?.value||'').trim().toLocaleLowerCase();
    const shown=matched.filter(po=>!search||(po.po_no+' '+po.supplier_name).toLocaleLowerCase().includes(search))
