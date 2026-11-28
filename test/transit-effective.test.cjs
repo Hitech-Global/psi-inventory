@@ -37,7 +37,8 @@ function createSchema() {
     CREATE TABLE IF NOT EXISTS commercial_invoices (
       id TEXT PRIMARY KEY, ci_no TEXT NOT NULL, ci_status TEXT DEFAULT 'draft',
       currency TEXT DEFAULT 'USD', country TEXT DEFAULT '', target_warehouse TEXT DEFAULT '',
-      brand TEXT DEFAULT ''
+      brand TEXT DEFAULT '', trade_mode TEXT DEFAULT 'international',
+      ci_logistics_status TEXT DEFAULT ''
     );
     CREATE TABLE IF NOT EXISTS commercial_invoice_items (
       id TEXT PRIMARY KEY, ci_id TEXT NOT NULL, ci_no TEXT DEFAULT '', sku_code TEXT NOT NULL,
@@ -78,9 +79,10 @@ function uniq(prefix) { seq += 1; return `${prefix}_${seq}`; }
 function seedCI(id, ciNo, status, opts) {
   opts = opts || {};
   run(
-    `INSERT INTO commercial_invoices (id, ci_no, ci_status, currency, country, target_warehouse, brand)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, ciNo, status, opts.currency || 'RMB', opts.country || '印度尼西亚', opts.wh || 'Bekasi', opts.brand || 'Netac']
+    `INSERT INTO commercial_invoices (id, ci_no, ci_status, currency, country, target_warehouse, brand, trade_mode, ci_logistics_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, ciNo, status, opts.currency || 'RMB', opts.country || '印度尼西亚', opts.wh || 'Bekasi',
+     opts.brand || 'Netac', opts.tradeMode || 'international', opts.ciLogisticsStatus || '']
   );
 }
 
@@ -208,4 +210,35 @@ test('Case 5: inbound_qty 不重复扣减 → 仍按 arrived 扣减', () => {
   assert.equal(Number(r.shipped_qty), 100);
   assert.equal(Number(r.arrived_qty), 40);  // 来自 PL qty，而非 inbound_qty(80)
   assert.equal(Number(r.transit_qty), 60);  // 100 - 40，而非 100 - 80
+});
+
+
+// ── Case 6 ──
+test('Case 6: 国内贸易 CI 级状态已到仓 → 无需 PL 也应整票退出在途', () => {
+  clearAll();
+  const ci = uniq('CI');
+  seedCI(ci, 'CI-C6', 'shipped', { tradeMode: 'domestic', ciLogisticsStatus: 'completed' });
+  seedCIIItem(ci, 'CI-C6', 'SKU-DOMESTIC', 100, 12000, 120);
+
+  const rows = getEffectiveTransitRows();
+  const r = findRow(rows, ci, 'SKU-DOMESTIC');
+  assert.ok(r, 'CI 明细仍保留，供到仓状态与金额核对');
+  assert.equal(Number(r.shipped_qty), 100);
+  assert.equal(Number(r.arrived_qty), 100, '国内贸易 CI completed 视为整票到仓');
+  assert.equal(Number(r.transit_qty), 0, '国内贸易 CI completed 不再计入在途');
+});
+
+// ── Case 7 ──
+test('Case 7: 国际贸易 CI 级摘要状态不覆盖多批次物理到仓事实', () => {
+  clearAll();
+  const ci = uniq('CI');
+  seedCI(ci, 'CI-C7', 'shipped', { tradeMode: 'international', ciLogisticsStatus: 'completed' });
+  seedCIIItem(ci, 'CI-C7', 'SKU-INTL', 100, 10000, 100);
+  seedBatch(ci, 'CI-C7', 'in_transit', [{ sku: 'SKU-INTL', qty: 100 }]);
+
+  const rows = getEffectiveTransitRows();
+  const r = findRow(rows, ci, 'SKU-INTL');
+  assert.ok(r, '国际贸易 CI 仍存在有效在途');
+  assert.equal(Number(r.arrived_qty), 0, '国际贸易只认 completed logistics batch + PL');
+  assert.equal(Number(r.transit_qty), 100, 'CI 级摘要状态不得整票排除国际贸易在途');
 });

@@ -124,7 +124,7 @@ for (const stmt of [
 const TOKEN = 'wave0b-test-token';
 const TOKEN_HASH = crypto.createHash('sha256').update(TOKEN).digest('hex');
 G().prepare(`INSERT OR REPLACE INTO roles (id, name, description, permissions, is_system) VALUES ('role_wave0b', 'Wave0B Test Role', '', ?, 0)`)
-  .run(JSON.stringify(['replenishment_view', 'po_create', 'user_manage']));
+  .run(JSON.stringify(['replenishment_view', 'po_create', 'user_manage', 'ci_edit']));
 G().prepare(`INSERT OR REPLACE INTO users (id, username, name, password, role_id, status) VALUES ('user_wave0b', 'wave0b', 'Wave0B Tester', '', 'role_wave0b', 'active')`).run();
 G().prepare(`INSERT OR REPLACE INTO sessions (id, token_hash, user_id, created_at, expires_at) VALUES ('sess_wave0b', ?, 'user_wave0b', datetime('now'), datetime('now', '+1 day'))`).run(TOKEN_HASH);
 
@@ -141,9 +141,12 @@ function seedInventoryRow(sku) {
 function seedSku(sku) {
   G().prepare(`INSERT OR REPLACE INTO skus (id, sku_code, product_name, brand, status) VALUES (?, ?, 'Wave0B Product', 'WaveBrand', 'normal')`).run([`sku_${sku}`, sku]);
 }
-function seedCI(id, ciNo, sku, shipped, status) {
-  G().prepare(`INSERT OR REPLACE INTO commercial_invoices (id, ci_no, ci_date, related_po_id, related_po_no, related_pi_id, related_pi_no, currency, ci_status, country, target_warehouse)
-            VALUES (?, ?, '2026-08-01', '', '', '', '', 'USD', ?, ?, ?)`).run([id, ciNo, status || 'uploaded', SK, WH]);
+function seedCI(id, ciNo, sku, shipped, status, opts) {
+  opts = opts || {};
+  G().prepare(`INSERT OR REPLACE INTO commercial_invoices (id, ci_no, ci_date, related_po_id, related_po_no, related_pi_id, related_pi_no, currency, ci_status, country, target_warehouse, trade_mode, ci_logistics_status)
+            VALUES (?, ?, '2026-08-01', '', '', '', '', 'USD', ?, ?, ?, ?, ?)`).run([
+    id, ciNo, status || 'uploaded', SK, WH, opts.tradeMode || 'international', opts.ciLogisticsStatus || ''
+  ]);
   G().prepare(`INSERT INTO commercial_invoice_items (id, ci_id, ci_no, sku_code, shipped_qty, inbound_qty, ci_amount, unit_price)
             VALUES (?, ?, ?, ?, ?, 0, 0, 0)`).run([`cii_${id}`, id, ciNo, sku, shipped]);
 }
@@ -233,6 +236,19 @@ describe('T1 §十一 mutation → refresh → expected fixture', () => {
     assert.equal(invRow('SKU-W0B-A').in_transit_qty, 0);
   });
 
+  test('J. 国内贸易 CI 级物流状态 completed → 不依赖 PL 即可整票退出在途', async () => {
+    seedSku('SKU-W0B-DOM'); seedInventoryRow('SKU-W0B-DOM');
+    seedCI('ci_w0b_dom', 'CI-W0B-DOM', 'SKU-W0B-DOM', 100, 'uploaded', {
+      tradeMode: 'domestic', ciLogisticsStatus: 'in_transit'
+    });
+    await updateInventoryTransitDataAsync();
+    assert.equal(invRow('SKU-W0B-DOM').in_transit_qty, 100, '未到仓状态整票仍在途');
+
+    G().prepare(`UPDATE commercial_invoices SET ci_logistics_status = 'completed' WHERE id = 'ci_w0b_dom'`).run();
+    await updateInventoryTransitDataAsync();
+    assert.equal(invRow('SKU-W0B-DOM').in_transit_qty, 0, '国内贸易 CI completed 后整票不再计入在途');
+  });
+
   test('E. PI pi_confirmed 50 / shipped 10 → pi_confirmed_unshipped_qty = 40', async () => {
     seedSku('SKU-W0B-E'); seedInventoryRow('SKU-W0B-E');
     seedPI('pi_w0b_e', 'PI-W0B-E', 'SKU-W0B-E', 50, 10);
@@ -308,6 +324,8 @@ describe('T3 静态结构：共享 SQL 常量 + 调用点接线', () => {
     assert.equal(TRANSIT_PG_REFRESH_SQLS.filter(s => /^UPDATE inventory SET \w+ = 0\s*$/.test(s.trim())).length, 3, '3 条清零语句');
     assert.equal(TRANSIT_PG_REFRESH_SQLS.filter(s => /UPDATE inventory i\s+SET [\s\S]* FROM \(/.test(s)).length, 3, '3 条 set-based UPDATE...FROM');
     const joined = TRANSIT_PG_REFRESH_SQLS.join('\n');
+    assert.match(joined, /LOWER\(COALESCE\(ci\.trade_mode, 'international'\)\) = 'domestic'/, '国内贸易 CI 级状态进入在途计算');
+    assert.match(joined, /ci\.ci_logistics_status/, '国内贸易 CI 级物流状态参与在途计算');
     assert.match(joined, /logistics_status = 'completed'/, 'arrived 只认 completed 物理事实');
     assert.match(joined, /ci_status NOT IN \('cancelled'\)/, 'shipped 口径排除 cancelled CI');
     assert.match(joined, /pi_status NOT IN \('cancelled', 'completed'\)/, 'PI 口径排除 cancelled/completed');
@@ -330,6 +348,13 @@ describe('T3 静态结构：共享 SQL 常量 + 调用点接线', () => {
     assert.equal(callSites, 25, 'PO create/put/delete/void, PI create/put/void/batch, CI create/void/batch/reverse(PG 分支+1), CI batch-import(PG 分支+1: Wave 2A), inbound create/batch, logistics put/create/create-with-pl, PL put, historical-CI, refreshInventoryTotals×3');
     // sync 版仅剩：定义本身 + async 版 SQLite 转调 + 注释；任何路由不得直接调用 sync 版
     assert.doesNotMatch(src, /await updateInventoryTransitData\(\)/, '不得有 await sync 版（事件循环冻结）');
+  });
+
+  test('CI 编辑国内贸易物流状态后调用采购预测同步 helper', () => {
+    const m = src.match(/app\.put\('\/api\/commercial-invoices\/:id'[\s\S]*?\n\}\)\);/);
+    assert.ok(m, 'CI edit route exists');
+    assert.match(m[0], /trade_mode[\s\S]*domestic/);
+    assert.match(m[0], /refreshForecastAfterProcurementMutationBestEffort\(ciForecastKeys, 'CI-LOGISTICS-STATUS'\)/);
   });
 
   test('GET replenishment-suggestions 路由体内无 transit 刷新调用', () => {
@@ -363,6 +388,32 @@ describe('T4 mutation route → after-commit async refresh（HTTP 级）', () =>
     // fire-and-forget：响应内不含刷新耗时；轮询等待后台刷新完成
     await waitFor(() => invRow('SKU-W0B-K').po_unconfirmed_pi_qty === 0, 'po_unconfirmed_pi_qty 回落 0');
     assert.equal(invRow('SKU-W0B-K').po_unconfirmed_pi_qty, 0);
+  });
+
+  test('PUT domestic CI logistics status → after-commit transit + forecast revision refresh', async () => {
+    seedSku('SKU-W0B-DOM-EDIT'); seedInventoryRow('SKU-W0B-DOM-EDIT');
+    seedCI('ci_w0b_dom_edit', 'CI-W0B-DOM-EDIT', 'SKU-W0B-DOM-EDIT', 100, 'uploaded', {
+      tradeMode: 'domestic', ciLogisticsStatus: 'in_transit'
+    });
+    await updateInventoryTransitDataAsync();
+    assert.equal(invRow('SKU-W0B-DOM-EDIT').in_transit_qty, 100);
+
+    const beforeRevisionRow = db.queryOne(
+      'SELECT value FROM system_config WHERE key = ?',
+      ['__internal_replenishment_data_revision']
+    );
+    const beforeRevision = beforeRevisionRow && beforeRevisionRow.value || '0';
+    const response = await fetchJSON('PUT', '/api/commercial-invoices/ci_w0b_dom_edit', {
+      ci_logistics_status: 'completed',
+      actual_arrival_date: '2026-11-24'
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.json.success, true);
+    await waitFor(() => invRow('SKU-W0B-DOM-EDIT').in_transit_qty === 0, 'domestic CI in-transit quantity falls to zero');
+    await waitFor(() => {
+      const row = db.queryOne('SELECT value FROM system_config WHERE key = ?', ['__internal_replenishment_data_revision']);
+      return !!row && row.value !== beforeRevision;
+    }, 'forecast revision changes after domestic CI logistics edit');
   });
 
   test('GET replenishment 不再触发刷新：PO void 后台刷新仅由 mutation hook 驱动', async () => {

@@ -6294,8 +6294,13 @@ const TRANSIT_PG_REFRESH_SQLS = Object.freeze([
           ),
           per_ci_transit AS (
             SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
-                   CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
-                        ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+                   CASE
+                    WHEN LOWER(COALESCE(ci.trade_mode, 'international')) = 'domestic'
+                      AND COALESCE(ci.ci_logistics_status, '') <> ''
+                    THEN CASE WHEN ci.ci_logistics_status = 'completed' THEN 0 ELSE COALESCE(s.shipped_qty, 0) END
+                    WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                    ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0)
+                   END AS in_transit_qty
             FROM shipped s
             JOIN commercial_invoices ci ON ci.id = s.ci_id
             LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
@@ -6402,8 +6407,9 @@ async function updateInventoryTransitData() {
       // SQLite: 保持原有 loop 实现（dev/test 用，生产 PG 不走此路径）
       // ================================================================
 
-      // 在途口径（方案 B）：CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
-      // 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定。
+      // 在途口径（方案 B）：国际贸易按 CI 已发货数量 - 已完成到仓物流批次对应 PL 的 SKU 数量；
+      // 国内贸易若已设置 CI 级物流状态，则以该状态判断整票是否到仓（completed=全部到仓）。
+      // 不读取 inbound_qty；国际贸易物理到仓仍由 logistics_status='completed' + PL items 决定。
       // 先全量清零（保证被作废/删除后贡献降为 0 的 SKU 也能回落，而非残留旧值），再按事实聚合写入
       run('UPDATE inventory SET in_transit_qty = 0');
       const transitData = (query(`
@@ -6427,8 +6433,13 @@ async function updateInventoryTransitData() {
         ),
         per_ci_transit AS (
           SELECT s.sku_code, ci.country, ci.target_warehouse AS warehouse,
-                 CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
-                      ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS in_transit_qty
+                 CASE
+                    WHEN LOWER(COALESCE(ci.trade_mode, 'international')) = 'domestic'
+                      AND COALESCE(ci.ci_logistics_status, '') <> ''
+                    THEN CASE WHEN ci.ci_logistics_status = 'completed' THEN 0 ELSE COALESCE(s.shipped_qty, 0) END
+                    WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+                    ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0)
+                   END AS in_transit_qty
           FROM shipped s
           JOIN commercial_invoices ci ON ci.id = s.ci_id
           LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
@@ -11018,19 +11029,21 @@ function deriveLogisticsDisplayStatus(rawStatus) {
 }
 
 // 有效在途（batch / item-level，统一口径）
-// 复用 updateInventoryTransitData() 的权威定义（server.js:4140 附近）：
-//   在途量 = CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量
+// 国际贸易复用 updateInventoryTransitData() 的批次级定义；国内贸易若 CI 级物流状态已设置，则以 CI 状态为整票到仓依据：
+//   国际贸易在途量 = CI 已发货数量 - 已完成到仓(completed)物流批次对应 PL 的 SKU 数量；国内贸易 completed = 整票到仓
 //   —— 按 (ci_id, sku_code) 聚合；只剔除已到仓 batch 承载的那部分货，保留仍在途 batch 的部分。
 //   —— 不读取 inbound_qty；物理到仓由 logistics_status='completed' + PL items 决定（与在途库存页完全一致）。
 // 事实判断用 logistics_status = 'completed'（系统正式枚举 LOGISTICS_STATUS_ARRIVED），
 // 不使用 display status（display helper 仅用于 UI 展示）。
 //
-// ⚠️ 业务假设（请勿改回 CI-level 整票排除）：
-//   completed 物流批次对应的 PL item 数量 = 该批次已退出在途的货量。
+// ⚠️ 业务假设：
+//   国际贸易必须保留 batch / item-level 口径：completed 物流批次对应的 PL item 数量 = 该批次已退出在途的货量。
+//   国内贸易没有跨境多批次拆分；当 CI 级物流状态非空时，以该状态作为整票状态（completed 才退出在途）。
 //   即：arrived_qty 的权威事实源是「logistics_status='completed' 的 logistics_batches
 //       经 packing_lists.logistics_batch_id 关联到的 packing_list_items.total_qty」。
-//   —— 一个 CI 可挂多个物流批次、且各批次处于不同物流阶段（如 Batch A 已到仓 / Batch B 在途）；
-//      CI 状态（含 completed）不代表所有批次都已到仓，最终在途 = 发货量 − 已到仓批次承载量。
+//   —— 国际贸易一个 CI 可挂多个物流批次、且各批次处于不同物流阶段（如 Batch A 已到仓 / Batch B 在途）；
+//      国际 CI 摘要状态不代表所有批次都已到仓，最终在途 = 发货量 − 已到仓批次承载量。
+//   —— 国内贸易若 ci_logistics_status 已填写，则以 CI 状态为准：completed 代表整票到仓，其他状态代表整票仍在途。
 //   —— 历史实现曾用「整票 CI 排除」(getArrivedCiIds)，方向错误：会把仍运输中的同 CI 其他批次一起误剔除。
 //   —— 未来若需支持「部分到仓 / batch partial arrival」，应在此扩展 received_qty 或 inbound allocation，
 //     而非回退到 CI 整票排除。本轮不扩大范围。
@@ -11065,9 +11078,19 @@ function getEffectiveTransitRows(ciScopeSql, ciScopeParams) {
     )
     SELECT s.ci_id, ci.ci_no, ci.currency, ci.country, ci.target_warehouse, ci.brand,
            s.sku_code, s.shipped_qty, s.ci_amount_total,
-           COALESCE(a.arrived_qty, 0) AS arrived_qty,
-           CASE WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
-                ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) END AS transit_qty
+           CASE
+             WHEN LOWER(COALESCE(ci.trade_mode, 'international')) = 'domestic'
+               AND COALESCE(ci.ci_logistics_status, '') <> ''
+             THEN CASE WHEN ci.ci_logistics_status = 'completed' THEN COALESCE(s.shipped_qty, 0) ELSE 0 END
+             ELSE COALESCE(a.arrived_qty, 0)
+           END AS arrived_qty,
+           CASE
+             WHEN LOWER(COALESCE(ci.trade_mode, 'international')) = 'domestic'
+               AND COALESCE(ci.ci_logistics_status, '') <> ''
+             THEN CASE WHEN ci.ci_logistics_status = 'completed' THEN 0 ELSE COALESCE(s.shipped_qty, 0) END
+             WHEN COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0) < 0 THEN 0
+             ELSE COALESCE(s.shipped_qty, 0) - COALESCE(a.arrived_qty, 0)
+           END AS transit_qty
     FROM shipped s
     JOIN commercial_invoices ci ON ci.id = s.ci_id
     LEFT JOIN arrived a ON a.ci_id = s.ci_id AND a.sku_code = s.sku_code
@@ -12681,6 +12704,23 @@ app.put('/api/commercial-invoices/:id', requireApiPermission('ci_edit'), asyncHa
         run("UPDATE payable_items SET source_no = ? WHERE source_type = 'ci' AND source_id = ? AND lifecycle_status = 'active'", [newCiNo, id]);
       }
     });
+
+    // 国内贸易没有跨境物流批次时，以 CI 编辑页的物流状态作为整票到仓事实。
+    // 状态/到货日期变更后，提交主记录后异步刷新在途库存与订单预测版本。
+    if (
+      String(ci.trade_mode || 'international').toLowerCase() === 'domestic' &&
+      (d.ci_logistics_status !== undefined || d.actual_arrival_date !== undefined)
+    ) {
+      const ciForecastKeys = query(
+        'SELECT DISTINCT sku_code FROM commercial_invoice_items WHERE ci_id = ?',
+        [id]
+      ).rows.map(row => ({
+        sku_code: row.sku_code,
+        country: String(ci.country || '').trim()
+      }));
+      refreshForecastAfterProcurementMutationBestEffort(ciForecastKeys, 'CI-LOGISTICS-STATUS');
+    }
+
     const updated = queryOne('SELECT * FROM commercial_invoices WHERE id = ?', [id]);
     res.json({ success: true, id: updated.id, ci_no: updated.ci_no });
   } catch (e) {

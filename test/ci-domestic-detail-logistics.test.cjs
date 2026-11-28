@@ -34,10 +34,13 @@ test('CI editor saves CI-level logistics status and actual arrival date',()=>{
   assert.ok(!server.includes('ciDetailMaxRawStatus'));
 });
 
-test('CI logistics summary does not replace batch-level physical logistics facts',()=>{
+test('domestic CI logistics summary drives whole-CI transit while international remains batch-level',()=>{
   assert.ok(server.includes('CI 层级状态是 CI 总览的人工摘要'));
   assert.ok(server.includes('ciManualLogisticsStatus'));
-  assert.ok(server.includes('logistics_batches WHERE related_ci_id = ?'));
+  assert.ok(server.includes("LOWER(COALESCE(ci.trade_mode, 'international')) = 'domestic'"));
+  assert.ok(server.includes("COALESCE(ci.ci_logistics_status, '') <> ''"));
+  assert.ok(server.includes("refreshForecastAfterProcurementMutationBestEffort(ciForecastKeys, 'CI-LOGISTICS-STATUS')"));
+  assert.ok(server.includes("WHERE lb.logistics_status = 'completed'"));
 });
 
 test('PG, SQLite, and production sync migrations include CI logistics fields',()=>{
